@@ -4,7 +4,7 @@
 
 QRE Locker is a modern desktop application designed to secure files against both current threats and future quantum computing attacks. It combines the speed of **AES-256-GCM** with the post-quantum security of **ML-KEM-1024 (Kyber)**.
 
-![Screenshot](https://via.placeholder.com/800x500?text=App+Screenshot+Here)
+![Screenshot](qrev2.jpg)
 
 ## 🛡️ Architecture & Security
 
