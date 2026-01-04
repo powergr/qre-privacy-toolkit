@@ -38,6 +38,28 @@ Go to the [Releases](https://github.com/powergr/quantum-locker/releases) page an
 - macOS: `.dmg`
 - Linux: `.AppImage` or `.deb`
 
+## QRE v2.1 Update
+
+This update introduces major performance, security, and usability improvements.
+
+### ⚡ Performance & Core
+
+**Compression:** Files are now compressed using **Zstd** before encryption, resulting in smaller `.qre` files.
+**Batch Processing:** You can now select and process multiple files at once.
+**Safety:** Added a file size limit (500MB) to prevent memory issues.
+**Smart Overwrite:** Decrypting a file no longer overwrites existing files; it creates `file (1).txt` instead.
+
+### 🛡️ Security
+
+**Memory Wiping:** Implemented `Zeroize` to securely clear keys from RAM immediately after use.
+**Integrity Check:** Added a validation token to the header. The app now instantly tells you if your password is wrong, rather than trying (and failing) to decrypt the whole file.
+
+### 🎨 User Interface
+
+**Modern Design:** Complete overhaul with a dark, cyberpunk-inspired theme.
+**File List:** View exactly which files are selected before processing.
+**Help & Guide:** Built-in documentation explaining how to use Keyfiles and Paranoid mode.
+
 ## 📖 Usage Guide
 
 ### Locking a File

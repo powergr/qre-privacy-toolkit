@@ -1,208 +1,289 @@
 :root {
-  --bg-color: #1a1b26;
-  --card-bg: #24283b;
-  --text-primary: #c0caf5;
-  --text-secondary: #9aa5ce;
+  --bg-color: #0f1016; /* Darker, more modern background */
+  --card-bg: #1a1b26;
+  --text-primary: #e0e6f5;
+  --text-secondary: #7a81a3;
   --accent: #7aa2f7;
-  --accent-hover: #5d89e8;
   --success: #9ece6a;
+  --warning: #e0af68;
   --error: #f7768e;
-  --input-bg: #16161e;
+  --input-bg: #121319;
+  --border-color: #2f3448;
 }
 
 body {
   margin: 0;
   padding: 0;
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
   background-color: var(--bg-color);
   color: var(--text-primary);
   display: flex;
   justify-content: center;
+  align-items: center;
   height: 100vh;
   overflow: hidden;
+  user-select: none; /* App-like feel */
 }
 
 .container {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   width: 100%;
-  max-width: 500px;
+  max-width: 480px;
   padding: 20px;
 }
 
-/* --- Header & Menu --- */
+/* --- Header --- */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
   margin-bottom: 20px;
 }
 
 .logo h1 {
   margin: 0;
-  font-size: 1.5rem;
-  letter-spacing: 1px;
-  background: linear-gradient(90deg, hsl(221, 89%, 72%), #bb9af7);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
 }
 
-.menu-btn {
+.menu {
+  display: flex;
+  gap: 15px;
+}
+
+.menu-link {
   background: none;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.9rem;
-  text-decoration: underline;
   transition: color 0.2s;
+  text-decoration: none;
 }
-.menu-btn:hover {
-  color: var(--accent);
+.menu-link:hover {
+  color: var(--text-primary);
 }
 
-/* --- Main Card --- */
+/* --- Card --- */
 .card {
   background-color: var(--card-bg);
-  border-radius: 12px;
-  padding: 30px;
-  width: 100%;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  border-radius: 16px;
+  padding: 25px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
   gap: 20px;
+  border: 1px solid var(--border-color);
 }
 
-/* --- File Selection Area --- */
+/* --- File List Area --- */
 .file-area {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.file-display {
-  background-color: var(--input-bg);
-  padding: 12px;
-  border-radius: 6px;
-  border: 1px solid #414868;
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  /* Handle long paths */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  direction: rtl; /* Truncate from the left so filename is visible */
-  text-align: left;
+  gap: 12px;
 }
 
 .select-btn {
   background-color: var(--accent);
   color: #15161e;
-  font-weight: bold;
+  font-weight: 600;
   border: none;
-  padding: 10px;
-  border-radius: 6px;
+  padding: 12px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: transform 0.1s, background-color 0.2s;
+  transition: filter 0.2s;
 }
 .select-btn:hover {
-  background-color: var(--accent-hover);
-}
-.select-btn:active {
-  transform: scale(0.98);
+  filter: brightness(1.1);
 }
 
-/* --- Input Area --- */
+/* New Scrollable File List */
+.file-list-container {
+  background-color: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  max-height: 100px; /* Limit height */
+  overflow-y: auto; /* Scroll if many files */
+  padding: 8px;
+}
+
+.file-item {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-bottom: 1px solid #232735;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* Show filename at end */
+  text-align: left;
+}
+.file-item:last-child {
+  border-bottom: none;
+}
+.file-item-empty {
+  padding: 10px;
+  text-align: center;
+  color: #444b6a;
+  font-style: italic;
+}
+
+/* --- Input --- */
+.input-group label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  margin-left: 2px;
+}
+
 .input-group input {
   width: 100%;
   padding: 12px;
   background-color: var(--input-bg);
-  border: 1px solid #414868;
-  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
   color: white;
-  font-size: 1rem;
+  font-size: 0.95rem;
   outline: none;
-  box-sizing: border-box; /* Fix padding issues */
+  box-sizing: border-box;
+  transition: border-color 0.2s;
 }
 .input-group input:focus {
   border-color: var(--accent);
 }
 
+/* --- Keyfile & Paranoid --- */
+.secondary-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.keyfile-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.keyfile-btn.active {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.checkbox-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.checkbox-container input {
+  accent-color: var(--accent);
+}
+
 /* --- Action Buttons --- */
 .actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 5px;
 }
 
 .action-btn {
   flex: 1;
-  padding: 12px;
+  padding: 14px;
   border: none;
-  border-radius: 6px;
-  font-weight: bold;
+  border-radius: 8px;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  transition: opacity 0.2s;
+  gap: 10px; /* Space between icon and text */
+  transition: transform 0.1s;
 }
 
 .btn-lock {
-  background-color: #ff9e64; /* A darker, richer orange */
-  color: #1a1b26; /* Dark text */
-  box-shadow: 0 4px 15px rgba(255, 158, 100, 0.3); /* Subtle glow */
+  background-color: var(--warning);
+  color: #1a1b26;
 }
-
 .btn-unlock {
-  background-color: #73daca; /* A rich teal/green */
-  color: #1a1b26; /* Dark text */
-  box-shadow: 0 4px 15px rgba(115, 218, 202, 0.3); /* Subtle glow */
-}
-
-/* Add a hover effect to make them feel responsive */
-.action-btn:hover {
-  opacity: 1;
-  transform: translateY(-2px); /* Slight lift */
-  filter: brightness(1.1);
+  background-color: var(--success);
+  color: #1a1b26;
 }
 
 .action-btn:active {
-  transform: translateY(0px);
+  transform: scale(0.98);
 }
 
-/* Style for the Paranoid Checkbox (New) */
-.checkbox-container {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-.checkbox-container input {
-  accent-color: var(--accent); /* Matches theme */
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-/* --- Status Bar --- */
+/* --- Status & Modal --- */
 .status-bar {
   margin-top: 20px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: var(--text-secondary);
   text-align: center;
   min-height: 1.2em;
 }
+.status-bar.error {
+  color: var(--error);
+}
 .status-bar.success {
   color: var(--success);
 }
-.status-bar.error {
-  color: var(--error);
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+}
+.modal {
+  background-color: var(--card-bg);
+  padding: 30px;
+  border-radius: 12px;
+  max-width: 450px;
+  width: 90%;
+  border: 1px solid var(--border-color);
+}
+.modal h2 {
+  margin-top: 0;
+  color: var(--accent);
+}
+.modal h3 {
+  font-size: 1rem;
+  color: var(--text-primary);
+  margin-bottom: 5px;
+}
+.modal p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin-bottom: 15px;
+}
+.close-btn {
+  width: 100%;
+  padding: 10px;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
 }
