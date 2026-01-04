@@ -1,7 +1,0 @@
-# src-tauri/.cargo/config.toml
-
-[build]
-# This tells Rust to use every instruction set available on YOUR specific CPU.
-# Note: The resulting .exe might crash on very old computers, 
-# but it will be blazing fast on yours.
-rustflags = ["-C", "target-cpu=native"]

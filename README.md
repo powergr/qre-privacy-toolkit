@@ -108,6 +108,8 @@ npm run tauri build
 
 The executable will be located in `src-tauri/target/release/bundle/`.
 
+> _"Note: Because this is open-source software, the executable is not digitally signed. Windows Defender SmartScreen may trigger a warning. Click 'More Info' -> 'Run Anyway' to install."_
+
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) file.
