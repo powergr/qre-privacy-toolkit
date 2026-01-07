@@ -1,50 +1,65 @@
 {
-"$schema": "https://schema.tauri.app/config/2",
-"productName": "QRE",
-"version": "2.2.3",
-"identifier": "com.qre.locker",
-"build": {
-"beforeDevCommand": "npm run dev",
-"beforeBuildCommand": "npm run build",
-"devUrl": "http://localhost:1420",
-"frontendDist": "../dist"
-},
-"app": {
-"windows": [
-{
-"title": "QRE Locker v2.2.3",
-"width": 800,
-"height": 600
-}
-],
-"security": {
-"csp": null
-}
-},
-"bundle": {
-"active": true,
-"targets": "all",
-"icon": [
-"icons/32x32.png",
-"icons/128x128.png",
-"icons/128x128@2x.png",
-"icons/icon.icns",
-"icons/icon.ico"
-],
-"copyright": "Copyright © 2026 Project QRE",
-"publisher": "Project QRE Developers",
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "QRE",
+  "version": "2.2.4",
 
-"windows": {
-  "certificateThumbprint": null,
-  "digestAlgorithm": "sha256",
-  "timestampUrl": "",
-  "wix": {
-    "language": "en-US"
+  "identifier": "com.qre.locker",
+
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
   },
-  "nsis": {
-    "installMode": "perMachine",
-    "languages": ["English"]
+  "app": {
+    "windows": [
+      {
+        "title": "QRE Locker",
+        "width": 800,
+        "height": 600,
+        "backgroundColor": "#1e1e1e"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+
+    "copyright": "Copyright © 2026 Project QRE",
+    "publisher": "Project QRE Developers",
+
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["English"],
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/icon.ico",
+        "sidebarImage": "icons/icon.bmp"
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": ["qre"],
+        "name": "QRE Encrypted File",
+        "description": "Secure file encrypted by QRE Locker",
+        "role": "Editor"
+      }
+    ]
   }
-}
-}
 }
