@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.2.4"
+version = "2.2.5"
 description = "QRE Locker"
 authors = ["you"]
 edition = "2021"
