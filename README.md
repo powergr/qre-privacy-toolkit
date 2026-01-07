@@ -1,115 +1,105 @@
-# QRE Locker (v2.1.1)
+# QRE Locker (v2.2)
 
-**A Stateless, Quantum-Resistant File Encryption Tool.**
+**A Modern, Quantum-Resistant File Encryption Tool.**
 
-QRE Locker is a modern desktop application designed to secure files against both current threats and future quantum computing attacks. It combines the speed of **AES-256-GCM** with the post-quantum security of **ML-KEM-1024 (Kyber)**.
+QRE Locker is a cross-platform desktop application designed to secure your data against both modern cyber threats and future quantum computing attacks. It combines the speed of **AES-256-GCM** with the post-quantum security of **ML-KEM-1024 (Kyber)** in a user-friendly, local-first interface.
 
 ![Screenshot](qrev2.jpg)
 
-## 🛡️ Architecture & Security
+## 🚀 What's New in v2.2?
 
-Unlike traditional tools that rely solely on passwords, QRE Locker uses a **Hybrid Cryptographic Scheme**:
+We have completely re-engineered the application from a Python prototype to a native Rust executable.
 
-1. **Ephemeral Keys:** Every time you lock a file, a fresh, random Kyber-1024 Keypair and AES-256 Session Key are generated.
-2. **Hybrid Encryption:** The file content is encrypted with AES-256. The Session Key is encapsulated using Kyber (Post-Quantum) and stored in the header.
-3. **Key Wrapping:** The Kyber Private Key is encrypted using your **Passphrase** (derived via **Argon2id**) and an optional **Keyfile**.
-4. **Metadata Protection:** The original filename is encrypted inside the payload. The output file (`.qre`) can be renamed safely without losing the original context.
+*   **⚡ Native Performance:** Rewritten in **Rust** for memory safety and blazing fast speeds.
+*   **📂 Directory Support:** Drag and drop entire folders to compress and encrypt them automatically.
+*   **🗄️ Local Keychain:** No more "Stateless" headaches. Set a Master Password once; the app handles key management securely on your device.
+*   **🔑 Multi-Factor Encryption:** Optionally use a **Keyfile** (any image, song, or document) as a second authentication factor.
+*   **🎲 Paranoid Mode:** Inject hardware-based entropy (mouse movements/system timing) into the key generation process for maximum unpredictability.
+*   **🛡️ Robust Recovery:** Built-in "Emergency Recovery Code" system in case you forget your password.
 
-### The Stack
+## 🛡️ Security Architecture
 
-- **Frontend:** React (TypeScript) + Vite
-- **Backend:** Rust
-- **Framework:** Tauri v2
-- **Crypto Libraries:** `pqcrypto-kyber`, `aes-gcm`, `argon2`, `sha2`
+QRE Locker employs a **Hybrid Cryptographic Scheme** ensuring defense-in-depth:
 
-## 🚀 Features
+1.  **Session Security:** Every time you lock a file, a unique, ephemeral **AES-256-GCM** key and **ML-KEM-1024** keypair are generated.
+2.  **Hybrid Layering:** The file content is compressed (Zstd) and encrypted with AES-256. The AES key is then encapsulated by the Kyber public key.
+3.  **Key Wrapping:** The Kyber Private Key (needed to unlock the file) is encrypted using your **Master Key**.
+4.  **Master Key Derivation:** Your Master Key is derived from your Passphrase (and optional Keyfile) using **Argon2id**, the winner of the Password Hashing Competition.
+5.  **Memory Safety:** Critical keys are marked with `Zeroize`, ensuring they are wiped from RAM immediately after use.
 
-- **Stateless:** No database or "Vault" folder to manage. Everything needed to decrypt is inside the `.qre` file (protected by your password).
-- **Keyfile Support:** Use any file (image, song, random bytes) as a second factor authentication.
-- **Paranoid Mode:** Optionally inject entropy from the OS RNG mixed with browser crypto buffers for key generation.
-- **Smart Renaming:** Automatically handles file collisions upon decryption (e.g., `file (1).txt`).
-- **Cross-Platform:** Runs on Windows, macOS, and Linux.
+### The Tech Stack
+*   **Frontend:** React (TypeScript) + Vite
+*   **Backend:** Rust (Tauri v2)
+*   **Crypto Libraries:** `pqcrypto-kyber`, `aes-gcm`, `argon2`, `sha2`
+*   **Compression:** `zstd`
 
 ## 📦 Installation
 
-Go to the [Releases](https://github.com/powergr/quantum-locker/releases) page and download the installer for your OS:
+Download the latest installer for your operating system from the [Releases Page](https://github.com/powergr/quantum-locker/releases).
 
-- Windows: `.msi` or `.exe`
-- macOS: `.dmg`
-- Linux: `.AppImage` or `.deb`
+*   **Windows:** `.exe` or `.msi`
+*   **macOS:** `.dmg`
+*   **Linux:** `.deb` or `.AppImage`
 
-## QRE v2.1 Update
+> **Note:** As this is open-source software, the installer is currently self-signed. You may need to click "More Info" -> "Run Anyway" if Windows SmartScreen prompts you.
 
-This update introduces major performance, security, and usability improvements.
+## 📖 User Guide
 
-### ⚡ Performance & Core
+### 1. Setup
+On first launch, you will be asked to create a **Master Password**.
+*   **Recovery Code:** You will be shown a code like `QRE-A1B2-C3D4...`. **Save this.** It is the *only* way to recover your data if you forget your password.
 
-**Compression:** Files are now compressed using **Zstd** before encryption, resulting in smaller `.qre` files.
-**Batch Processing:** You can now select and process multiple files at once.
-**Safety:** Added a file size limit (500MB) to prevent memory issues.
-**Smart Overwrite:** Decrypting a file no longer overwrites existing files; it creates `file (1).txt` instead.
+### 2. Locking Files
+1.  **Select Files:** Drag and drop files or folders into the app, or use the "Select Files" button.
+2.  **Options:**
+    *   **Advanced > Keyfile:** Select a secret file (e.g., a photo) to act as a physical key.
+    *   **Advanced > Paranoid Mode:** Enables entropy injection.
+3.  Click **Lock**.
+4.  Original files remain; new `.qre` encrypted files are created next to them.
 
-### 🛡️ Security
+### 3. Unlocking Files
+1.  Select the `.qre` files.
+2.  If you used a Keyfile to lock them, ensure it is selected in the **Advanced** menu.
+3.  Click **Unlock**.
+4.  The app validates integrity and restores the original files. If a file with the same name exists, it will smart-rename the output (e.g., `document (1).pdf`).
 
-**Memory Wiping:** Implemented `Zeroize` to securely clear keys from RAM immediately after use.
-**Integrity Check:** Added a validation token to the header. The app now instantly tells you if your password is wrong, rather than trying (and failing) to decrypt the whole file.
+### 4. Management
+*   **Change Password:** Update your credentials without re-encrypting your files (re-wraps the Master Key).
+*   **Reset 2FA:** If you lose your Recovery Code, generate a new one via the Options menu.
 
-### 🎨 User Interface
+## 🛠️ Development Setup
 
-**Modern Design:** Complete overhaul with a dark, cyberpunk-inspired theme.
-**File List:** View exactly which files are selected before processing.
-**Help & Guide:** Built-in documentation explaining how to use Keyfiles and Paranoid mode.
-
-## 📖 Usage Guide
-
-### Locking a File
-
-1. Click **Select File** and choose the document you want to secure.
-2. Enter a strong **Passphrase**.
-3. (Optional) Click **🔑 Keyfile** to select a secret image/file to use as a key.
-4. Click **Lock**.
-5. A new file ending in `.qre` will be created. You can verify the original and delete it safely.
-
-### Unlocking a File
-
-1. Click **Select File** and choose the `.qre` file.
-2. Enter the **Passphrase** used to lock it.
-3. (If used) Select the same **Keyfile**.
-4. Click **Unlock**.
-5. The file will be restored with its original filename.
-
-## 🛠️ Development
+If you want to build from source or contribute:
 
 ### Prerequisites
+*   [Node.js](https://nodejs.org/) (v18+)
+*   [Rust](https://www.rust-lang.org/) (latest stable)
+*   **Windows:** C++ Build Tools (via Visual Studio Installer)
+*   **Linux:** `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libssl-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
 
-- [Node.js](https://nodejs.org/) (v16+)
-- [Rust](https://www.rust-lang.org/) (latest stable)
-- Tauri CLI: `npm install -g @tauri-apps/cli`
+### Setup & Run
+1.  Clone the repo:
+    ```bash
+    git clone https://github.com/powergr/quantum-locker.git
+    cd qre-gui
+    ```
+2.  Install frontend dependencies:
+    ```bash
+    npm install
+    ```
+3.  Run in development mode:
+    ```bash
+    npm run tauri dev
+    ```
 
-### Setup
-
-```bash
-git clone https://github.com/powergr/quantum-locker.git
-cd qre-gui
-npm install
-```
-
-### Run in Development Mode
-
-```bash
-npm run tauri dev
-```
-
-### Build for Production
-
+### Building for Production
+To create the optimized executable/installer:
 ```bash
 npm run tauri build
-```
 
-The executable will be located in `src-tauri/target/release/bundle/`.
+The executable will be located in src-tauri/target/release/bundle/.
 
-> _"Note: Because this is open-source software, the executable is not digitally signed. Windows Defender SmartScreen may trigger a warning. Click 'More Info' -> 'Run Anyway' to install."_
+"Note: Because this is open-source software, the executable is not digitally signed. Windows Defender SmartScreen may trigger a warning. Click 'More Info' -> 'Run Anyway' to install."
 
-## 📄 License
-
-MIT License. See [LICENSE](LICENSE) file.
+📄 License
+MIT License. See LICENSE (LICENSE) file.
