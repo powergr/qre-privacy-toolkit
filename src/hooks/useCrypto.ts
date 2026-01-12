@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { generateBrowserEntropy } from "../utils/security";
-import { BatchResult } from "../types"; // Import type
 
 interface ProgressEvent {
   status: string;
@@ -11,15 +10,19 @@ interface ProgressEvent {
 }
 
 export function useCrypto(reloadDir: () => void) {
+  // Settings
   const [keyFile, setKeyFile] = useState<string | null>(null);
   const [isParanoid, setIsParanoid] = useState(false);
   const [compressionMode, setCompressionMode] = useState("normal");
+
+  // Progress State
   const [progress, setProgress] = useState<{
     status: string;
     percentage: number;
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Listen for backend progress
   useEffect(() => {
     const unlisten = listen<ProgressEvent>("qre:progress", (event) => {
       setProgress({
@@ -38,43 +41,47 @@ export function useCrypto(reloadDir: () => void) {
   }
 
   function clearProgress(delay: number = 0) {
-    if (delay > 0) setTimeout(() => setProgress(null), delay);
-    else setProgress(null);
+    if (delay > 0) {
+      setTimeout(() => setProgress(null), delay);
+    } else {
+      setProgress(null);
+    }
   }
 
+  // CHANGED: Added explicitEntropy optional parameter
   async function runCrypto(
     cmd: "lock_file" | "unlock_file",
-    targets: string[]
+    targets: string[],
+    explicitEntropy?: number[]
   ) {
     if (targets.length === 0) {
       setErrorMsg("No files selected.");
       return;
     }
 
+    // Init Progress
     setProgress({ status: "Preparing...", percentage: 0 });
 
     try {
-      // Expect Structured Result
-      const results = await invoke<BatchResult[]>(cmd, {
+      // Determine entropy source
+      let finalEntropy: number[] | null = null;
+
+      if (cmd === "lock_file") {
+        if (explicitEntropy) {
+          // 1. Priority: User generated mouse entropy
+          finalEntropy = explicitEntropy;
+        } else if (isParanoid) {
+          // 2. Fallback: If Paranoid is ON but no explicit data passed (shouldn't happen with new App.tsx logic, but safe to keep)
+          finalEntropy = generateBrowserEntropy(true);
+        }
+      }
+
+      await invoke(cmd, {
         filePaths: targets,
         keyfilePath: keyFile,
-        extraEntropy:
-          cmd === "lock_file" ? generateBrowserEntropy(isParanoid) : null,
+        extraEntropy: finalEntropy,
         compressionMode: cmd === "lock_file" ? compressionMode : null,
       });
-
-      // Analyze Result
-      const failures = results.filter((r) => !r.success);
-      if (failures.length > 0) {
-        // Build readable error report
-        const report = failures
-          .map((f) => `• ${f.name}: ${f.message}`)
-          .join("\n");
-        const successCount = results.length - failures.length;
-        setErrorMsg(
-          `Completed with errors (${successCount} succeeded, ${failures.length} failed):\n\n${report}`
-        );
-      }
 
       reloadDir();
     } catch (e) {

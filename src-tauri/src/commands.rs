@@ -4,7 +4,6 @@ use std::path::Path;
 use sysinfo::Disks;
 use std::process::Command;
 use sha2::{Sha256, Digest};
-use serde::Serialize; // Added Serialize
 
 use crate::state::SessionState;
 use crate::utils;
@@ -13,9 +12,7 @@ use crate::crypto;
 
 type CommandResult<T> = Result<T, String>;
 
-// --- STRUCTS ---
-
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct BatchItemResult {
     pub name: String,
     pub success: bool,
@@ -132,6 +129,27 @@ pub async fn delete_items(app: AppHandle, paths: Vec<String>) -> CommandResult<V
     }).await.map_err(|e| e.to_string())?
 }
 
+// NEW: Trash Command
+#[tauri::command]
+pub async fn trash_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Vec<BatchItemResult>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut results = Vec::new();
+        
+        for path in paths {
+            let p = Path::new(&path);
+            let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            
+            utils::emit_progress(&app, &format!("Trashing {}", filename), 50);
+            
+            match utils::move_to_trash(p) {
+                Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Moved to Trash".into() }),
+                Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e }),
+            }
+        }
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn create_dir(path: String) -> CommandResult<()> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
@@ -160,27 +178,6 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
     #[cfg(target_os = "macos")]
     { Command::new("open").args(["-R", &path]).spawn().map_err(|e| e.to_string())?; }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn trash_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Vec<BatchItemResult>> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut results = Vec::new();
-        
-        for path in paths {
-            let p = Path::new(&path);
-            let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-            
-            // Trash operations are usually instant, but we emit progress just in case
-            utils::emit_progress(&app, &format!("Trashing {}", filename), 50);
-            
-            match utils::move_to_trash(p) {
-                Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Moved to Trash".into() }),
-                Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e }),
-            }
-        }
-        Ok(results)
-    }).await.map_err(|e| e.to_string())?
 }
 
 // --- CRYPTO LOGIC ---
@@ -228,7 +225,6 @@ pub async fn lock_file(
             
             utils::emit_progress(&app, &format!("Processing: {}", filename), 10);
 
-            // Use Util for size checking
             if let Err(e) = utils::check_size_limit(path) {
                 results.push(BatchItemResult { name: filename, success: false, message: e });
                 continue;
@@ -236,7 +232,8 @@ pub async fn lock_file(
 
             utils::emit_progress(&app, &format!("Loading: {}", filename), 30);
 
-            let stored_filename = if path.is_dir() { format!("{}.zip", filename) } else { filename.clone() };
+            let original_name = filename.to_string();
+            let stored_filename = if path.is_dir() { format!("{}.zip", original_name) } else { original_name.clone() };
 
             let data_result = if path.is_dir() {
                 utils::zip_directory_to_memory(path)
@@ -264,7 +261,9 @@ pub async fn lock_file(
                             let final_str = final_path.to_string_lossy().to_string();
 
                             if let Err(e) = container.save(&final_str) {
-                                results.push(BatchItemResult { name: filename, success: false, message: e.to_string() });
+                                // FIX: CLEAN UP PARTIAL FILE
+                                let _ = fs::remove_file(&final_str);
+                                results.push(BatchItemResult { name: filename, success: false, message: format!("Failed to write encrypted file: {}", e) });
                             } else {
                                 results.push(BatchItemResult { name: filename, success: true, message: "Locked".into() });
                             }
@@ -272,7 +271,7 @@ pub async fn lock_file(
                         Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                     }
                 },
-                Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e }),
+                Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
             }
         }
         Ok(results)
@@ -317,7 +316,9 @@ pub async fn unlock_file(
                             let original_path = parent.join(&payload.filename);
                             let final_path = utils::get_unique_path(&original_path);
                             if let Err(e) = fs::write(&final_path, &payload.content) {
-                                results.push(BatchItemResult { name: filename, success: false, message: e.to_string() });
+                                // FIX: CLEAN UP PARTIAL FILE
+                                let _ = fs::remove_file(&final_path);
+                                results.push(BatchItemResult { name: filename, success: false, message: format!("Failed to write decrypted file: {}", e) });
                             } else {
                                 results.push(BatchItemResult { name: filename, success: true, message: "Unlocked".into() });
                             }

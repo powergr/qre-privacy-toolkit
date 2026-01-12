@@ -20,6 +20,7 @@ import { FileGrid } from "./components/dashboard/FileGrid";
 import { ContextMenu } from "./components/dashboard/ContextMenu";
 import { InputModal } from "./components/modals/InputModal";
 import { HelpModal } from "./components/modals/HelpModal";
+import { EntropyModal } from "./components/modals/EntropyModal";
 import {
   AboutModal,
   ResetConfirmModal,
@@ -43,27 +44,7 @@ function App() {
   const fs = useFileSystem(auth.view);
   const crypto = useCrypto(() => fs.loadDir(fs.currentPath));
 
-  // FIX: Smart Drop Handler
-  const handleDrop = useCallback(
-    async (paths: string[]) => {
-      // 1. Split paths into Lock vs Unlock based on extension
-      const toUnlock = paths.filter((p) => p.endsWith(".qre"));
-      const toLock = paths.filter((p) => !p.endsWith(".qre"));
-
-      // 2. Process sequentially to prevent UI conflicts
-      if (toUnlock.length > 0) {
-        await crypto.runCrypto("unlock_file", toUnlock);
-      }
-      if (toLock.length > 0) {
-        await crypto.runCrypto("lock_file", toLock);
-      }
-    },
-    [crypto]
-  );
-
-  const { isDragging } = useDragDrop(handleDrop);
-
-  // Local UI State
+  // --- LOCAL STATE ---
   const [showAbout, setShowAbout] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -71,6 +52,12 @@ function App() {
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
+
+  // New: Entropy State
+  const [showEntropyModal, setShowEntropyModal] = useState(false);
+  const [pendingLockTargets, setPendingLockTargets] = useState<string[] | null>(
+    null
+  );
 
   const [menuData, setMenuData] = useState<{
     x: number;
@@ -83,11 +70,50 @@ function App() {
     path: string;
   } | null>(null);
   const [itemsToDelete, setItemsToDelete] = useState<string[] | null>(null);
-
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
-  // --- HANDLERS ---
+  // --- LOGIC: Handle Lock Request (Intercept for Paranoid Mode) ---
+  const requestLock = useCallback(
+    (targets: string[]) => {
+      if (crypto.isParanoid) {
+        setPendingLockTargets(targets);
+        setShowEntropyModal(true);
+      } else {
+        crypto.runCrypto("lock_file", targets);
+      }
+    },
+    [crypto]
+  );
 
+  // --- HANDLER: Entropy Collected ---
+  const handleEntropyComplete = (entropy: number[]) => {
+    setShowEntropyModal(false);
+    if (pendingLockTargets) {
+      crypto.runCrypto("lock_file", pendingLockTargets, entropy);
+      setPendingLockTargets(null);
+    }
+  };
+
+  // --- DROP HANDLER ---
+  const handleDrop = useCallback(
+    async (paths: string[]) => {
+      const toUnlock = paths.filter((p) => p.endsWith(".qre"));
+      const toLock = paths.filter((p) => !p.endsWith(".qre"));
+
+      if (toUnlock.length > 0) {
+        await crypto.runCrypto("unlock_file", toUnlock);
+      }
+
+      if (toLock.length > 0) {
+        requestLock(toLock);
+      }
+    },
+    [crypto, requestLock]
+  );
+
+  const { isDragging } = useDragDrop(handleDrop);
+
+  // --- CONTEXT MENU HANDLERS ---
   function handleContextMenu(e: React.MouseEvent, path: string | null) {
     e.preventDefault();
     e.stopPropagation();
@@ -112,7 +138,7 @@ function App() {
     let targets = [path];
     if (fs.selectedPaths.includes(path)) targets = fs.selectedPaths;
 
-    if (action === "lock") crypto.runCrypto("lock_file", targets);
+    if (action === "lock") requestLock(targets);
     if (action === "unlock") crypto.runCrypto("unlock_file", targets);
     if (action === "share")
       invoke("show_in_folder", { path }).catch((e) =>
@@ -124,7 +150,6 @@ function App() {
 
   async function performDeleteAction(mode: "trash" | "shred") {
     if (!itemsToDelete) return;
-
     crypto.setErrorMsg(null);
     const targets = [...itemsToDelete];
     setItemsToDelete(null);
@@ -133,7 +158,6 @@ function App() {
 
     try {
       const results = await invoke<BatchResult[]>(command, { paths: targets });
-
       const failures = results.filter((r) => !r.success);
       if (failures.length > 0) {
         const report = failures
@@ -141,7 +165,6 @@ function App() {
           .join("\n");
         crypto.setErrorMsg(`Operation completed with errors:\n\n${report}`);
       }
-
       fs.loadDir(fs.currentPath);
       fs.setSelectedPaths([]);
     } catch (e) {
@@ -188,21 +211,21 @@ function App() {
     }
   }
 
-  // --- RENDER LOGIC ---
+  // --- RENDER ---
   if (auth.view === "loading")
     return <div className="auth-overlay">Loading...</div>;
 
-  const isAuthView = [
-    "setup",
-    "login",
-    "recovery_entry",
-    "recovery_display",
-  ].includes(auth.view);
-
-  return (
-    <>
-      {/* 1. AUTH SCREEN */}
-      {isAuthView && (
+  if (
+    ["setup", "login", "recovery_entry", "recovery_display"].includes(auth.view)
+  ) {
+    return (
+      <>
+        {auth.sessionExpired && (
+          <InfoModal
+            message="Session timed out due to inactivity."
+            onClose={() => auth.setSessionExpired(false)}
+          />
+        )}
         <AuthOverlay
           view={auth.view}
           password={auth.password}
@@ -214,7 +237,6 @@ function App() {
           onLogin={async () => {
             const res = await auth.handleLogin();
             if (!res.success) crypto.setErrorMsg(res.msg || "Login failed");
-            else crypto.setErrorMsg(null); // Clear any stale errors
           }}
           onInit={async () => {
             const res = await auth.handleInit();
@@ -229,76 +251,72 @@ function App() {
           onSwitchToRecovery={() => auth.setView("recovery_entry")}
           onCancelRecovery={() => auth.setView("login")}
         />
-      )}
+      </>
+    );
+  }
 
-      {/* 2. DASHBOARD (MAIN LAYOUT) */}
-      {!isAuthView && (
-        <div
-          className="main-layout"
-          onContextMenu={(e) => handleContextMenu(e, null)}
-        >
-          <Toolbar
-            onLock={() => crypto.runCrypto("lock_file", fs.selectedPaths)}
-            onUnlock={() => crypto.runCrypto("unlock_file", fs.selectedPaths)}
-            onRefresh={() => fs.loadDir(fs.currentPath)}
-            onLogout={auth.logout}
-            keyFile={crypto.keyFile}
-            setKeyFile={crypto.setKeyFile}
-            selectKeyFile={crypto.selectKeyFile}
-            isParanoid={crypto.isParanoid}
-            setIsParanoid={crypto.setIsParanoid}
-            compressionMode={crypto.compressionMode}
-            onOpenCompression={() => setShowCompression(true)}
-            onChangePassword={() => setShowChangePass(true)}
-            onReset2FA={() => setShowResetConfirm(true)}
-            onTheme={() => setShowThemeModal(true)}
-            onAbout={() => setShowAbout(true)}
-            onHelp={() => setShowHelpModal(true)}
-            onBackup={handleBackupRequest}
-          />
+  return (
+    <div
+      className="main-layout"
+      onContextMenu={(e) => handleContextMenu(e, null)}
+    >
+      <Toolbar
+        onLock={() => requestLock(fs.selectedPaths)}
+        onUnlock={() => crypto.runCrypto("unlock_file", fs.selectedPaths)}
+        onRefresh={() => fs.loadDir(fs.currentPath)}
+        onLogout={auth.logout}
+        keyFile={crypto.keyFile}
+        setKeyFile={crypto.setKeyFile}
+        selectKeyFile={crypto.selectKeyFile}
+        isParanoid={crypto.isParanoid}
+        setIsParanoid={crypto.setIsParanoid}
+        compressionMode={crypto.compressionMode}
+        onOpenCompression={() => setShowCompression(true)}
+        onChangePassword={() => setShowChangePass(true)}
+        onReset2FA={() => setShowResetConfirm(true)}
+        onTheme={() => setShowThemeModal(true)}
+        onAbout={() => setShowAbout(true)}
+        onHelp={() => setShowHelpModal(true)}
+        onBackup={handleBackupRequest}
+      />
 
-          <AddressBar
-            currentPath={fs.currentPath}
-            onGoUp={fs.goUp}
-            onNavigate={fs.loadDir}
-          />
+      <AddressBar
+        currentPath={fs.currentPath}
+        onGoUp={fs.goUp}
+        onNavigate={fs.loadDir} // <--- FIXED: Added onNavigate prop
+      />
 
-          <FileGrid
-            entries={fs.entries}
-            selectedPaths={fs.selectedPaths}
-            onSelect={(path, multi) => {
-              if (multi)
-                fs.setSelectedPaths((prev) =>
-                  prev.includes(path)
-                    ? prev.filter((p) => p !== path)
-                    : [...prev, path]
-                );
-              else fs.setSelectedPaths([path]);
-            }}
-            onNavigate={fs.loadDir}
-            onGoUp={fs.goUp}
-            onContextMenu={handleContextMenu}
-          />
+      <FileGrid
+        entries={fs.entries}
+        selectedPaths={fs.selectedPaths}
+        onSelect={(path, multi) => {
+          if (multi)
+            fs.setSelectedPaths((prev) =>
+              prev.includes(path)
+                ? prev.filter((p) => p !== path)
+                : [...prev, path]
+            );
+          else fs.setSelectedPaths([path]);
+        }}
+        onNavigate={fs.loadDir}
+        onGoUp={fs.goUp}
+        onContextMenu={handleContextMenu}
+      />
 
-          {isDragging && (
-            <div className="drag-overlay">
-              <div className="drag-content">
-                <UploadCloud />
-                <span>Drop to Lock</span>
-              </div>
-            </div>
-          )}
-
-          <div className="status-bar">
-            {fs.statusMsg} | {fs.selectedPaths.length} selected
+      {isDragging && (
+        <div className="drag-overlay">
+          <div className="drag-content">
+            <UploadCloud />
+            <span>Drop to Lock</span>
           </div>
         </div>
       )}
 
-      {/* 3. GLOBAL MODALS (Rendered on top of EVERYTHING) */}
+      <div className="status-bar">
+        {fs.statusMsg} | {fs.selectedPaths.length} selected
+      </div>
 
-      {/* Menu / Context */}
-      {menuData && !isAuthView && (
+      {menuData && (
         <ContextMenu
           x={menuData.x}
           y={menuData.y}
@@ -309,7 +327,6 @@ function App() {
         />
       )}
 
-      {/* Action Modals */}
       {inputModal && (
         <InputModal
           mode={inputModal.mode}
@@ -356,8 +373,17 @@ function App() {
 
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
 
-      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+      {showEntropyModal && (
+        <EntropyModal
+          onComplete={handleEntropyComplete}
+          onCancel={() => {
+            setShowEntropyModal(false);
+            setPendingLockTargets(null);
+          }}
+        />
+      )}
 
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
       {showBackupModal && (
         <BackupModal
           onProceed={performBackup}
@@ -365,18 +391,10 @@ function App() {
         />
       )}
 
-      {/* Warnings & Security */}
       {auth.showTimeoutWarning && (
         <TimeoutWarningModal
           seconds={auth.countdown}
           onStay={auth.stayLoggedIn}
-        />
-      )}
-
-      {auth.sessionExpired && (
-        <InfoModal
-          message="Session timed out due to inactivity."
-          onClose={() => auth.setSessionExpired(false)}
         />
       )}
 
@@ -412,25 +430,23 @@ function App() {
         />
       )}
 
-      {/* FEEDBACK OVERLAYS (Highest Priority) */}
       {crypto.errorMsg && (
         <ErrorModal
           message={crypto.errorMsg}
           onClose={() => crypto.setErrorMsg(null)}
         />
       )}
-
       {infoMsg && (
         <InfoModal message={infoMsg} onClose={() => setInfoMsg(null)} />
       )}
 
-      {crypto.progress && (
+      {!showEntropyModal && crypto.progress && (
         <ProcessingModal
           status={crypto.progress.status}
           percentage={crypto.progress.percentage}
         />
       )}
-    </>
+    </div>
   );
 }
 

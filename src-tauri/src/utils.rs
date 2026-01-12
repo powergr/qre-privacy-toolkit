@@ -80,9 +80,8 @@ pub fn get_unique_path(original_path: &Path) -> PathBuf {
     }
 }
 
-// --- TRASH LOGIC (FIXED for v3.3.1) ---
+// --- TRASH LOGIC ---
 pub fn move_to_trash(path: &Path) -> Result<(), String> {
-    // trash v3 takes a single path argument
     trash::delete(path).map_err(|e| e.to_string())
 }
 
@@ -124,6 +123,13 @@ pub fn zip_directory_to_memory(dir_path: &Path) -> Result<Vec<u8>, String> {
 // --- SHREDDING LOGIC ---
 
 fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
+    // FIX: Force removal of Read-Only attribute before shredding
+    let mut perms = fs::metadata(path)?.permissions();
+    if perms.readonly() {
+        perms.set_readonly(false);
+        fs::set_permissions(path, perms)?;
+    }
+
     let metadata = fs::metadata(path)?;
     let len = metadata.len();
 

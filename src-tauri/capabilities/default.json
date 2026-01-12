@@ -10,6 +10,7 @@
     "core:window:allow-create",
     "core:window:allow-show",
     "core:window:allow-close",
+    "core:window:allow-set-theme",
 
     "fs:allow-read-dir",
     "fs:allow-read-file",
@@ -18,11 +19,7 @@
     "fs:allow-exists",
     "fs:allow-remove",
     "fs:allow-rename",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-is-registered",
-    "global-shortcut:allow-unregister",
-    "process:allow-exit",
-    "process:allow-restart",
+    "fs:allow-watch",
 
     {
       "identifier": "fs:scope",
@@ -36,6 +33,12 @@
           "href": "^https?://.+"
         }
       ]
-    }
+    },
+
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-is-registered",
+    "global-shortcut:allow-unregister",
+    "process:allow-exit",
+    "process:allow-restart"
   ]
 }

@@ -5,6 +5,7 @@ mod keychain;
 mod state;
 mod utils;
 mod commands;
+mod tests;
 
 use std::sync::{Arc, Mutex};
 use state::SessionState;

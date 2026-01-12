@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.3.1"
+version = "2.3.2"
 description = "QRE Locker"
 authors = ["Project QRE"]
 edition = "2021"
@@ -12,7 +12,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
+tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-process = "2"

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { open as openUrl } from "@tauri-apps/plugin-shell"; // ADDED
 import {
   X,
   Info,
@@ -308,11 +309,11 @@ export function ThemeModal({
   );
 }
 
-// --- DELETE CONFIRM MODAL (FIXED) ---
+// --- DELETE CONFIRM MODAL ---
 interface DeleteConfirmModalProps {
   items: string[];
-  onTrash: () => void; // Restored
-  onShred: () => void; // Restored
+  onTrash: () => void;
+  onShred: () => void;
   onCancel: () => void;
 }
 export function DeleteConfirmModal({
@@ -327,31 +328,27 @@ export function DeleteConfirmModal({
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div
-        className="auth-card"
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: 400 }}
-      >
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <Trash2 size={20} color="var(--btn-danger)" />
           <h2>Delete {count > 1 ? "Items" : "Item"}</h2>
         </div>
         <div className="modal-body">
-          <p style={{ color: "var(--text-main)", marginBottom: 5 }}>
-            How do you want to delete{" "}
-            <strong style={{ color: "var(--text-main)" }}>{displayName}</strong>
-            ?
+          <p style={{ color: "var(--text-main)" }}>
+            Are you sure you want to permanently delete <br />
+            <strong>{displayName}</strong>?
           </p>
-
-          <div
+          <p
             style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-              marginTop: 15,
+              color: "var(--text-dim)",
+              fontSize: "0.8rem",
+              marginTop: "-10px",
             }}
           >
-            {/* Option 1: Trash */}
+            This action cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: 10 }}>
+            {/* Trash */}
             <button
               className="secondary-btn"
               onClick={onTrash}
@@ -365,10 +362,10 @@ export function DeleteConfirmModal({
               }}
             >
               <Trash2 size={18} />
-              <span>Move to Trash (Recoverable)</span>
+              <span>Move to Trash</span>
             </button>
 
-            {/* Option 2: Shred */}
+            {/* Shred */}
             <button
               className="auth-btn danger-btn"
               onClick={onShred}
@@ -381,7 +378,7 @@ export function DeleteConfirmModal({
               }}
             >
               <FileX size={18} />
-              <span>Secure Shred (Permanent)</span>
+              <span>Secure Shred</span>
             </button>
           </div>
 
@@ -496,7 +493,7 @@ export function CompressionModal({
   );
 }
 
-// --- ABOUT MODAL ---
+// --- ABOUT MODAL (UPDATED) ---
 export function AboutModal({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
@@ -526,7 +523,26 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
             Securing your files with AES-256-GCM and Post-Quantum Kyber-1024.
           </p>
-          <button className="secondary-btn" onClick={onClose}>
+
+          {/* UPDATED: WEBSITE LINK */}
+          <p
+            style={{
+              color: "var(--accent)",
+              cursor: "pointer",
+              textDecoration: "underline",
+              marginTop: 10,
+              fontWeight: "bold",
+            }}
+            onClick={() => openUrl("https://projectqre.com/")}
+          >
+            Visit projectqre.com
+          </p>
+
+          <button
+            className="secondary-btn"
+            onClick={onClose}
+            style={{ marginTop: 15 }}
+          >
             Close
           </button>
         </div>
