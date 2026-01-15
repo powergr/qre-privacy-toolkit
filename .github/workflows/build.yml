@@ -5,6 +5,7 @@ on:
       - "v*"
 
 jobs:
+  # --- JOB 1: Desktop (Windows, MacOS, Linux) ---
   release:
     permissions:
       contents: write
@@ -25,19 +26,17 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      # --- Linux Specific Dependencies ---
+      # Linux Dependencies
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          # UPDATED: Changed webkit2gtk-4.0 to 4.1 and added libsoup-3.0-dev
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev javascriptcoregtk-4.1-dev
 
-      # --- Install Frontend Deps ---
       - name: install frontend dependencies
         run: npm install
 
-      # --- Build the App ---
+      # Build Desktop Apps & Create Release
       - name: build tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -48,3 +47,62 @@ jobs:
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
+
+  # --- JOB 2: Android (APK) ---
+  release-android:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: release # Wait for the release to be created by the Desktop job first
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install
+
+      # Inject Signing Key from GitHub Secrets
+      - name: Decode Keystore
+        run: |
+          # Ensure directory exists
+          mkdir -p src-tauri/gen/android
+
+          # Decode the base64 secret into the .jks file
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/qre-release.jks
+
+          # Create key.properties file with the passwords
+          echo "storePassword=${{ secrets.ANDROID_KEY_PASSWORD }}" > src-tauri/gen/android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> src-tauri/gen/android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> src-tauri/gen/android/key.properties
+          echo "storeFile=../qre-release.jks" >> src-tauri/gen/android/key.properties
+
+      # Build the Signed APK
+      - name: Build Android APK
+        run: npm run tauri android build -- --apk true --target aarch64
+
+      # Upload the APK to the Release created by Job 1
+      - name: Upload APK
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: src-tauri/gen/android/app/build/outputs/apk/release/app-arm64-v8a-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

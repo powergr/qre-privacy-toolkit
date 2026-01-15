@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.3.2"
+version = "2.3.3"
 description = "QRE Locker"
 authors = ["Project QRE"]
 edition = "2021"
@@ -54,5 +54,5 @@ opt-level = 3
 codegen-units = 1
 lto = true
 strip = true
-opt-level = 3
+opt-level = "z"
 panic = "abort"

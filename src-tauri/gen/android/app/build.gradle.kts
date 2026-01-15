@@ -24,14 +24,12 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
-		splits {
-        abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
-            isUniversalApk = true // Keep one big one just in case
+
+        // OPTIMIZATION: Only include ARM64 libs.
+        // This makes the APK small (~30MB) by excluding x86/armv7.
+        ndk {
+            abiFilters.add("arm64-v8a")
         }
-    }
     }
 
     signingConfigs {
@@ -43,13 +41,8 @@ android {
                 
                 keyAlias = props.getProperty("keyAlias")
                 keyPassword = props.getProperty("keyPassword")
-                // Note: storeFile path in key.properties is relative to that file
-                // But Gradle usually expects it relative to project or absolute.
-                // Since we put ../../qre-release.jks, let's resolve it.
                 storeFile = file(props.getProperty("storeFile"))
                 storePassword = props.getProperty("storePassword")
-            } else {
-                println("WARNING: key.properties not found. Release build will fail signing.")
             }
         }
     }
@@ -77,6 +70,17 @@ android {
                     .toList().toTypedArray()
             )
         }
+    }
+
+    // RENAMING SCRIPT (Simplified)
+    applicationVariants.all {
+        val variant = this
+        variant.outputs
+            .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
+            .forEach { output ->
+                // Hardcoded 'arm64' because of the ndk filter above
+                output.outputFileName = "QRE-Locker-v${variant.versionName}-arm64.apk"
+            }
     }
 
     kotlinOptions {
