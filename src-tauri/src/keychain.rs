@@ -11,28 +11,41 @@ use std::fs;
 use std::path::Path;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+// Size of the cryptographic nonce used for AES-GCM (12 bytes is standard)
 const NONCE_LEN: usize = 12;
 
-// --- Defaults for Backward Compatibility ---
+// --- Default KDF Parameters ---
+// KDF = Key Derivation Function (Argon2id).
+// These settings control how "expensive" it is to check a password.
+// Higher values make brute-force attacks harder but login slower.
+
 fn default_kdf_memory() -> u32 {
-    19456
+    19456 // ~19 MB of RAM required
 }
 fn default_kdf_iterations() -> u32 {
-    2
+    2 // Number of passes
 }
 fn default_kdf_parallelism() -> u32 {
-    1
+    1 // Number of CPU threads
 }
 
 // --- Data Structures ---
 
+/// The "Master Key" is the central secret that encrypts everything else.
+/// It is a 32-byte array kept in memory only while the user is logged in.
+/// The `Zeroize` trait ensures it is securely wiped from RAM when dropped.
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct MasterKey(pub [u8; 32]);
 
+/// The structure of the `keychain.json` file stored on disk.
+/// This file does NOT contain the Master Key directly.
+/// Instead, it contains encrypted versions of the Master Key (slots).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct KeychainStore {
-    pub vault_id: String,
+    pub vault_id: String, // Unique ID for this vault
 
+    // Store KDF parameters so we can upgrade them in future versions
+    // without breaking existing vaults.
     #[serde(default = "default_kdf_memory")]
     pub kdf_memory: u32,
     #[serde(default = "default_kdf_iterations")]
@@ -40,18 +53,27 @@ pub struct KeychainStore {
     #[serde(default = "default_kdf_parallelism")]
     pub kdf_parallelism: u32,
 
+    // --- Slot 1: User Password ---
+    // Salt used to hash the user's password.
     pub password_salt: String,
+    // Random nonce used for the AES encryption of this slot.
     pub password_nonce: Vec<u8>,
+    // The Master Key encrypted with the user's password.
     pub encrypted_master_key_pass: Vec<u8>,
 
+    // --- Slot 2: Recovery Code ---
+    // Salt used to hash the recovery code.
     pub recovery_salt: String,
+    // Random nonce for the recovery slot.
     pub recovery_nonce: Vec<u8>,
+    // The Master Key encrypted with the recovery code (QRE-XXXX...).
     pub encrypted_master_key_recovery: Vec<u8>,
 }
 
-// --- Logic ---
+// --- Internal Logic ---
 
-// CHANGED: Now accepts dynamic parameters
+/// Derives a Key Encryption Key (KEK) from a secret (password) using Argon2id.
+/// This turns a weak human password into a strong cryptographic key.
 fn derive_kek(secret: &str, salt_str: &str, mem: u32, iter: u32, par: u32) -> [u8; 32] {
     let params = Params::new(mem, iter, par, Some(32)).unwrap();
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -60,23 +82,32 @@ fn derive_kek(secret: &str, salt_str: &str, mem: u32, iter: u32, par: u32) -> [u
     let hash = argon2
         .hash_password(secret.as_bytes(), &salt)
         .expect("Hashing failed");
+    
     let mut key = [0u8; 32];
+    // Copy hash bytes to fixed size array
     key.copy_from_slice(hash.hash.unwrap().as_bytes());
     key
 }
 
-/// Create a NEW Keychain (Onboarding)
+// --- Public API ---
+
+/// Initializes a NEW vault (Onboarding).
+/// 1. Generates a random Master Key.
+/// 2. Encrypts it with the User's Password (Slot 1).
+/// 3. Generates a Recovery Code (QRE-...).
+/// 4. Encrypts the Master Key with the Recovery Code (Slot 2).
+/// 5. Saves `keychain.json` to disk.
 pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)> {
     if path.exists() {
         return Err(anyhow!("Keychain already exists."));
     }
 
-    // 1. Define KDF Settings for this new vault
+    // 1. Define KDF Settings
     let mem = default_kdf_memory();
     let iter = default_kdf_iterations();
     let par = default_kdf_parallelism();
 
-    // 2. Generate Master Key
+    // 2. Generate Random Master Key
     let mut mk_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut mk_bytes);
     let master_key = MasterKey(mk_bytes);
@@ -114,7 +145,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         .encrypt(Nonce::from_slice(&rec_nonce_bytes), master_key.0.as_ref())
         .map_err(|_| anyhow!("Failed to encrypt recovery slot"))?;
 
-    // 5. Save
+    // 5. Save to Disk
     let store = KeychainStore {
         vault_id: uuid::Uuid::new_v4().to_string(),
         kdf_memory: mem,
@@ -134,7 +165,8 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     Ok((recovery_code, master_key))
 }
 
-/// Unlock the Keychain with Password
+/// Attempts to unlock the keychain using the User's Password.
+/// If successful, returns the decrypted Master Key.
 pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     if !path.exists() {
         return Err(anyhow!("No keychain found. Please initialize first."));
@@ -143,7 +175,7 @@ pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     let file = fs::File::open(path)?;
     let store: KeychainStore = serde_json::from_reader(file).context("Corrupted keychain file")?;
 
-    // Use stored params (or defaults if missing)
+    // Re-derive the key using the SAME parameters stored in the file
     let kek = derive_kek(
         password,
         &store.password_salt,
@@ -155,6 +187,7 @@ pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     let cipher = Aes256Gcm::new_from_slice(&kek).unwrap();
     let nonce = Nonce::from_slice(&store.password_nonce);
 
+    // Attempt Decryption
     let mk_bytes = cipher
         .decrypt(nonce, store.encrypted_master_key_pass.as_ref())
         .map_err(|_| anyhow!("Incorrect Password"))?;
@@ -165,7 +198,9 @@ pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     Ok(MasterKey(arr))
 }
 
-/// Recover the Vault using the Recovery Code and set a NEW Password.
+/// Used when the user forgets their password.
+/// 1. Unlocks the vault using the Recovery Code (Slot 2).
+/// 2. Immediately re-encrypts the Master Key with a NEW password (updating Slot 1).
 pub fn recover_with_code(
     path: &Path,
     recovery_code: &str,
@@ -174,7 +209,7 @@ pub fn recover_with_code(
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
-    // 1. Decrypt with Recovery Code
+    // 1. Decrypt Master Key using Recovery Code
     let rec_kek = derive_kek(
         recovery_code,
         &store.recovery_salt,
@@ -191,7 +226,7 @@ pub fn recover_with_code(
 
     let master_key = MasterKey(mk_bytes.clone().try_into().unwrap());
 
-    // 2. Re-encrypt with NEW Password (using SAME KDF params)
+    // 2. Re-encrypt Master Key with NEW Password (Slot 1)
     let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
     let new_pass_kek = derive_kek(
         new_password,
@@ -212,7 +247,7 @@ pub fn recover_with_code(
         )
         .map_err(|e| anyhow!("Failed to encrypt with new password: {}", e))?;
 
-    // 3. Update Store
+    // 3. Update Store and Save
     store.password_salt = new_pass_salt;
     store.password_nonce = new_pass_nonce_bytes.to_vec();
     store.encrypted_master_key_pass = new_enc_mk_pass;
@@ -223,12 +258,13 @@ pub fn recover_with_code(
     Ok(master_key)
 }
 
-/// Rotates the Recovery Code (Requires Decrypted MasterKey)
+/// Generates a new Recovery Code and updates Slot 2.
+/// Used if the user suspects their printed code was compromised.
 pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String> {
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
-    // 1. Generate NEW Recovery Code
+    // 1. Generate NEW Recovery Code string
     let raw_recovery: String = (0..4)
         .map(|_| {
             let n: u16 = rand::random();
@@ -238,7 +274,7 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
         .join("-");
     let recovery_code = format!("QRE-{}", raw_recovery);
 
-    // 2. Encrypt Master Key with NEW Code
+    // 2. Encrypt Master Key with new code
     let rec_salt = SaltString::generate(&mut OsRng).as_str().to_string();
     let rec_kek = derive_kek(
         &recovery_code,
@@ -268,7 +304,7 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
     Ok(recovery_code)
 }
 
-/// Change Password (requires being logged in / having the decrypted MasterKey)
+/// Changes the main User Password (Slot 1) while logged in.
 pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) -> Result<()> {
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
@@ -276,7 +312,7 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     // 1. Generate new Salt
     let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
 
-    // 2. Derive new KEK
+    // 2. Derive new Key Encryption Key (KEK)
     let new_pass_kek = derive_kek(
         new_password,
         &new_pass_salt,
@@ -309,6 +345,7 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     Ok(())
 }
 
+/// Simple check to see if a vault file exists.
 pub fn keychain_exists(path: &Path) -> bool {
     path.exists()
 }

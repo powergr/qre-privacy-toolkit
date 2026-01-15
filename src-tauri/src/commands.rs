@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 // --- PLATFORM SPECIFIC IMPORTS ---
-// We restrict these imports because Android behaves differently than Desktop.
+// Restrict these imports because Android behaves differently than Desktop.
 
 // Desktop Only: Allows running system commands (like opening File Explorer).
 #[cfg(not(target_os = "android"))]
@@ -511,7 +511,7 @@ pub async fn lock_file(
             utils::emit_progress(&app, &format!("Loading: {}", filename), 30);
 
             let original_name = filename.to_string();
-            // If locking a directory, we zip it first.
+            // If locking a directory, zip it first.
             let stored_filename = if path.is_dir() {
                 format!("{}.zip", original_name)
             } else {

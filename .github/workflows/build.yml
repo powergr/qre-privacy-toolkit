@@ -45,8 +45,8 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "QRE Locker ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
+          releaseDraft: false
+          prerelease: true
 
   # --- JOB 2: Android (APK) ---
   release-android:
