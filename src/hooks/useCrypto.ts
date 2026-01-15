@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
+import { platform } from "@tauri-apps/plugin-os";
 import { generateBrowserEntropy } from "../utils/security";
 
 interface ProgressEvent {
@@ -10,20 +12,23 @@ interface ProgressEvent {
 }
 
 export function useCrypto(reloadDir: () => void) {
-  // Settings
-  const [keyFile, setKeyFile] = useState<string | null>(null);
+  const [keyFilePath, setKeyFilePath] = useState<string | null>(null);
+  const [keyFileBytes, setKeyFileBytes] = useState<Uint8Array | null>(null);
   const [isParanoid, setIsParanoid] = useState(false);
   const [compressionMode, setCompressionMode] = useState("normal");
+  const [currentPlatform, setCurrentPlatform] = useState<string>("windows");
 
-  // Progress State
   const [progress, setProgress] = useState<{
     status: string;
     percentage: number;
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Listen for backend progress
+  // Detect Platform on Mount
   useEffect(() => {
+    const os = platform();
+    setCurrentPlatform(os);
+
     const unlisten = listen<ProgressEvent>("qre:progress", (event) => {
       setProgress({
         status: event.payload.status,
@@ -36,8 +41,36 @@ export function useCrypto(reloadDir: () => void) {
   }, []);
 
   async function selectKeyFile() {
-    const selected = await open({ multiple: false });
-    if (typeof selected === "string") setKeyFile(selected);
+    try {
+      const selected = await open({ multiple: false });
+      if (typeof selected === "string") {
+        setKeyFilePath(selected);
+
+        // HYBRID LOGIC:
+        // Only read file into memory if on Android/iOS (to handle Content URIs)
+        // On Desktop, we avoid this to prevent freezing with large files
+        if (currentPlatform === "android" || currentPlatform === "ios") {
+          try {
+            const bytes = await readFile(selected);
+            setKeyFileBytes(bytes);
+          } catch (readErr) {
+            console.error("Failed to read keyfile bytes:", readErr);
+            setErrorMsg("Failed to load keyfile data.");
+            setKeyFilePath(null); // Revert
+          }
+        } else {
+          // Desktop: Clear bytes to ensure we use the Path in backend
+          setKeyFileBytes(null);
+        }
+      }
+    } catch (e) {
+      setErrorMsg("Failed to select keyfile: " + String(e));
+    }
+  }
+
+  function clearKeyFile() {
+    setKeyFilePath(null);
+    setKeyFileBytes(null);
   }
 
   function clearProgress(delay: number = 0) {
@@ -48,7 +81,6 @@ export function useCrypto(reloadDir: () => void) {
     }
   }
 
-  // CHANGED: Added explicitEntropy optional parameter
   async function runCrypto(
     cmd: "lock_file" | "unlock_file",
     targets: string[],
@@ -59,26 +91,26 @@ export function useCrypto(reloadDir: () => void) {
       return;
     }
 
-    // Init Progress
     setProgress({ status: "Preparing...", percentage: 0 });
 
     try {
-      // Determine entropy source
       let finalEntropy: number[] | null = null;
 
       if (cmd === "lock_file") {
         if (explicitEntropy) {
-          // 1. Priority: User generated mouse entropy
           finalEntropy = explicitEntropy;
         } else if (isParanoid) {
-          // 2. Fallback: If Paranoid is ON but no explicit data passed (shouldn't happen with new App.tsx logic, but safe to keep)
           finalEntropy = generateBrowserEntropy(true);
         }
       }
 
+      // Convert Uint8Array to regular Array for serialization
+      const keyFileArray = keyFileBytes ? Array.from(keyFileBytes) : null;
+
       await invoke(cmd, {
         filePaths: targets,
-        keyfilePath: keyFile,
+        keyfilePath: keyFilePath, // Always send path (Rust decides if it uses it)
+        keyfileBytes: keyFileArray, // Sent only on mobile
         extraEntropy: finalEntropy,
         compressionMode: cmd === "lock_file" ? compressionMode : null,
       });
@@ -92,8 +124,8 @@ export function useCrypto(reloadDir: () => void) {
   }
 
   return {
-    keyFile,
-    setKeyFile,
+    keyFile: keyFilePath,
+    setKeyFile: clearKeyFile,
     selectKeyFile,
     isParanoid,
     setIsParanoid,

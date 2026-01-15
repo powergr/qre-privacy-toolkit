@@ -5,12 +5,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "opener:default",
     "dialog:default",
-    "clipboard-manager:default",
-    "core:window:allow-create",
-    "core:window:allow-show",
-    "core:window:allow-close",
-    "core:window:allow-set-theme",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-text",
 
     "fs:allow-read-dir",
     "fs:allow-read-file",
@@ -20,24 +18,11 @@
     "fs:allow-remove",
     "fs:allow-rename",
     "fs:allow-watch",
-
     {
       "identifier": "fs:scope",
       "allow": ["**"]
     },
 
-    {
-      "identifier": "shell:allow-open",
-      "allow": [
-        {
-          "href": "^https?://.+"
-        }
-      ]
-    },
-
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-is-registered",
-    "global-shortcut:allow-unregister",
     "process:allow-exit",
     "process:allow-restart"
   ]

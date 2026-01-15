@@ -13,22 +13,23 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
   const entropyPool = useRef<number[]>([]);
   const lastPos = useRef({ x: 0, y: 0 });
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  // Unified logic for processing coordinates (Mouse or Touch)
+  const processMovement = (clientX: number, clientY: number) => {
     if (progress >= 100) return;
 
     // Calculate distance to ensure they aren't just hovering
-    const deltaX = Math.abs(e.clientX - lastPos.current.x);
-    const deltaY = Math.abs(e.clientY - lastPos.current.y);
+    const deltaX = Math.abs(clientX - lastPos.current.x);
+    const deltaY = Math.abs(clientY - lastPos.current.y);
     const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
 
     // Only collect if they moved enough pixels
     if (distance > 5) {
-      lastPos.current = { x: e.clientX, y: e.clientY };
+      lastPos.current = { x: clientX, y: clientY };
 
       // Collect data: Coordinates + Timestamp + Random Jitter
       // This mixes physical world data with high-res timing
       const time = performance.now();
-      const raw = Math.floor(e.clientX * e.clientY + time);
+      const raw = Math.floor(clientX * clientY + time);
 
       // Normalize to byte range (0-255) for easy consumption by backend
       entropyPool.current.push(raw % 255);
@@ -46,6 +47,18 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
     }
   };
 
+  const handleMouseMove = (e: React.MouseEvent) => {
+    processMovement(e.clientX, e.clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    // Check if there is at least one touch point
+    if (e.touches.length > 0) {
+      const touch = e.touches[0];
+      processMovement(touch.clientX, touch.clientY);
+    }
+  };
+
   useEffect(() => {
     if (progress >= 100) {
       // Finished! Small delay for UX
@@ -58,13 +71,20 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
   return (
     <div
       className="modal-overlay"
-      style={{ zIndex: 100005, cursor: "crosshair" }}
+      // touchAction: none prevents the browser from scrolling while dragging
+      style={{ zIndex: 100005, cursor: "crosshair", touchAction: "none" }}
       onMouseMove={handleMouseMove}
+      onTouchMove={handleTouchMove}
     >
       <div
         className="auth-card"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 450, textAlign: "center", padding: "40px 20px" }}
+        style={{
+          width: 450,
+          maxWidth: "90%",
+          textAlign: "center",
+          padding: "40px 20px",
+        }}
       >
         <div
           style={{
@@ -81,8 +101,8 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
           Generating Entropy
         </h2>
         <p style={{ color: "var(--text-dim)", marginTop: 10 }}>
-          Please move your mouse randomly within this window to generate the
-          cryptographic seed.
+          Please move your mouse or finger randomly within this window to
+          generate the cryptographic seed.
         </p>
 
         {/* VISUAL HASH PREVIEW */}

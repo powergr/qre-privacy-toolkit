@@ -1,10 +1,10 @@
 import React, { useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { X, BookOpen } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 // @ts-ignore
 import helpContent from "../../assets/HELP.md?raw";
 
-// 1. Extract raw text from React children (handles bold/italic in headers)
 function extractText(children: any): string {
   if (typeof children === "string") return children;
   if (Array.isArray(children)) return children.map(extractText).join("");
@@ -12,26 +12,34 @@ function extractText(children: any): string {
   return "";
 }
 
-// 2. Convert text to ID (Matches the links in HELP.md)
-// Example: "🚀 Quick Start" -> "quick-start"
 function slugify(text: string): string {
   return text
     .toLowerCase()
-    .replace(/\s+/g, "-") // Spaces to dashes
-    .replace(/[^\w\-]+/g, "") // Remove emojis and non-word chars
-    .replace(/\-\-+/g, "-") // Collapse multiple dashes
-    .replace(/^-+/, "") // Trim leading dash
-    .replace(/-+$/, ""); // Trim trailing dash
+    .replace(/\s+/g, "-")
+    .replace(/[^\w\-]+/g, "")
+    .replace(/\-\-+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
 }
 
 export function HelpModal({ onClose }: { onClose: () => void }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // 3. Custom Scroll Logic
-  const handleLinkClick = (
+  const handleLinkClick = async (
     e: React.MouseEvent<HTMLAnchorElement>,
     href: string
   ) => {
+    if (href.startsWith("http")) {
+      e.preventDefault();
+      try {
+        await openUrl(href);
+      } catch (err) {
+        console.error("Link Error:", err);
+      }
+      return;
+    }
+
+    // 2. Handle Internal Anchors
     if (href.startsWith("#")) {
       e.preventDefault();
       const id = href.substring(1);
@@ -39,7 +47,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
       const container = scrollContainerRef.current;
 
       if (element && container) {
-        // Calculate position relative to the container
         const topPos = element.offsetTop - container.offsetTop;
         container.scrollTo({
           top: topPos,
@@ -69,7 +76,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
 
-        {/* Attach Ref to the scrollable container */}
         <div
           className="modal-body"
           ref={scrollContainerRef}
@@ -83,7 +89,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           <div className="markdown-content">
             <ReactMarkdown
               components={{
-                // Custom H2 Renderer to attach IDs
                 h2: ({ node, children, ...props }) => {
                   const text = extractText(children);
                   const id = slugify(text);
@@ -93,7 +98,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
                     </h2>
                   );
                 },
-                // Custom H3 Renderer
                 h3: ({ node, children, ...props }) => {
                   const text = extractText(children);
                   const id = slugify(text);
@@ -103,7 +107,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
                     </h3>
                   );
                 },
-                // Custom Link Renderer to intercept clicks
                 a: ({ node, href, children, ...props }) => {
                   return (
                     <a

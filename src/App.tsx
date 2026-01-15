@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 import { UploadCloud } from "lucide-react";
 import "./App.css";
 
@@ -203,7 +204,8 @@ function App() {
       });
 
       if (path) {
-        await invoke("export_keychain", { savePath: path });
+        const bytes = await invoke<number[]>("get_keychain_data");
+        await writeFile(path, Uint8Array.from(bytes));
         setInfoMsg("Backup saved successfully.\nKeep it safe!");
       }
     } catch (e) {
@@ -211,10 +213,11 @@ function App() {
     }
   }
 
-  // --- RENDER ---
+  // --- RENDER LOADING ---
   if (auth.view === "loading")
     return <div className="auth-overlay">Loading...</div>;
 
+  // --- RENDER AUTH SCREENS (Setup / Login / Recovery) ---
   if (
     ["setup", "login", "recovery_entry", "recovery_display"].includes(auth.view)
   ) {
@@ -251,10 +254,28 @@ function App() {
           onSwitchToRecovery={() => auth.setView("recovery_entry")}
           onCancelRecovery={() => auth.setView("login")}
         />
+
+        {/* --- FIX: Display Errors/Info/Progress ON TOP of Auth Screens --- */}
+        {crypto.errorMsg && (
+          <ErrorModal
+            message={crypto.errorMsg}
+            onClose={() => crypto.setErrorMsg(null)}
+          />
+        )}
+        {infoMsg && (
+          <InfoModal message={infoMsg} onClose={() => setInfoMsg(null)} />
+        )}
+        {crypto.progress && (
+          <ProcessingModal
+            status={crypto.progress.status}
+            percentage={crypto.progress.percentage}
+          />
+        )}
       </>
     );
   }
 
+  // --- RENDER DASHBOARD ---
   return (
     <div
       className="main-layout"
@@ -283,7 +304,7 @@ function App() {
       <AddressBar
         currentPath={fs.currentPath}
         onGoUp={fs.goUp}
-        onNavigate={fs.loadDir} // <--- FIXED: Added onNavigate prop
+        onNavigate={fs.loadDir}
       />
 
       <FileGrid

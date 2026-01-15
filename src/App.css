@@ -55,7 +55,15 @@ body[data-theme="light"] {
 
 body {
   margin: 0;
-  padding: 0;
+
+  /* --- ANDROID NOTCH FIX START --- */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  /* --- ANDROID NOTCH FIX END --- */
+
+  padding: 0; /* (This is overridden by the lines above, so remove or keep 0) */
   font-family: "Segoe UI", Tahoma, sans-serif;
   background-color: var(--bg-color);
   color: var(--text-main);
@@ -104,6 +112,11 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
   align-items: center;
   padding: 0 15px;
   gap: 10px;
+  /* ADD THIS: Handle Android Status Bar */
+  /* If safe-area is 0 (failed), add 35px manual padding. If it works, add safe-area */
+  padding-top: max(35px, env(safe-area-inset-top));
+  height: auto; /* Allow height to grow with the padding */
+  min-height: 80px; /* Ensure it looks tall enough */
 }
 
 .tool-btn {

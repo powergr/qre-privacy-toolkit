@@ -5,13 +5,17 @@ description = "QRE Locker"
 authors = ["Project QRE"]
 edition = "2021"
 
+[lib]
+name = "qre_core"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "2.6"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-global-shortcut = "2"
@@ -35,7 +39,12 @@ sysinfo = "0.32"
 uuid = { version = "1.8", features = ["v4"] }
 directories = "5.0"
 argon2 = "0.5"
-trash = "3.3.1" 
+tauri-plugin-os = "2"
+tauri-plugin-opener = "2"
+
+# Add trash only for non-Android targets
+[target.'cfg(not(target_os = "android"))'.dependencies]
+trash = "3.3.1"
 
 # Optimization profiles
 [profile.dev.package."*"]

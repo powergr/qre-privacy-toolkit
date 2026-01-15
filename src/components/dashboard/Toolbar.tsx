@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Lock,
   Unlock,
@@ -16,8 +17,6 @@ import {
   Monitor,
   Download,
 } from "lucide-react";
-import { open as openUrl } from "@tauri-apps/plugin-shell";
-
 interface ToolbarProps {
   onLock: () => void;
   onUnlock: () => void;
@@ -70,222 +69,205 @@ export function Toolbar(props: ToolbarProps) {
   }, []);
 
   return (
-    <div className="toolbar">
-      {/* LOCK BUTTON - Bold Green Outline */}
-      <button className="tool-btn success" onClick={props.onLock}>
-        <Lock size={26} color="#16a34a" /* Green-600 */ strokeWidth={2.5} />
-        <span style={{ fontWeight: 600, color: "var(--text-main)" }}>Lock</span>
-      </button>
-
-      {/* UNLOCK BUTTON - Bold Red Outline */}
-      <button className="tool-btn danger" onClick={props.onUnlock}>
-        <Unlock size={26} color="#dc2626" /* Red-600 */ strokeWidth={2.5} />
-        <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
-          Unlock
-        </span>
-      </button>
-
-      <div
-        style={{
-          width: 1,
-          height: 40,
-          background: "var(--border)",
-          margin: "0 10px",
-        }}
-      ></div>
-
-      <div style={{ flex: 1 }}></div>
-
-      {/* 1. OPTIONS - Standard Theme Color */}
-      <div
-        className="dropdown-container"
-        ref={menuRef}
-        style={{ marginRight: 10 }}
-      >
-        <button className="tool-btn" onClick={() => setShowMenu(!showMenu)}>
-          <Settings size={24} className="icon-default" strokeWidth={2} />
-          <span>Options</span>
+    <div className="toolbar" style={{ justifyContent: "space-between" }}>
+      {/* LEFT GROUP: Lock/Unlock Actions */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button className="tool-btn success" onClick={props.onLock}>
+          <Lock size={26} color="#16a34a" strokeWidth={2.5} />
+          <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+            Lock
+          </span>
         </button>
-        {showMenu && (
-          <div className="dropdown-menu">
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowMenu(false);
-                props.onTheme();
-              }}
-            >
-              <Monitor size={16} /> Theme
-            </div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowMenu(false);
-                props.onBackup();
-              }}
-            >
-              <Download size={16} /> Backup Keychain
-            </div>
-            <div className="dropdown-divider"></div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowMenu(false);
-                props.onChangePassword();
-              }}
-            >
-              <Key size={16} /> Change Password
-            </div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowMenu(false);
-                props.onReset2FA();
-              }}
-            >
-              <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
-            </div>
-            <div className="dropdown-divider"></div>
-            <div className="dropdown-item danger" onClick={props.onLogout}>
-              <LogOut size={16} /> Log Out
-            </div>
-          </div>
-        )}
+
+        <button className="tool-btn danger" onClick={props.onUnlock}>
+          <Unlock size={26} color="#dc2626" strokeWidth={2.5} />
+          <span style={{ fontWeight: 600, color: "var(--text-main)" }}>
+            Unlock
+          </span>
+        </button>
       </div>
 
-      {/* 2. ADVANCED */}
-      <div
-        className="dropdown-container"
-        ref={advancedRef}
-        style={{ marginRight: 10 }}
-      >
-        <button
-          className={`tool-btn ${
-            props.keyFile ||
-            props.isParanoid ||
-            props.compressionMode !== "normal"
-              ? "active-settings"
-              : ""
-          }`}
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          <Sliders size={24} className="icon-default" strokeWidth={2} />
-          <span>Advanced</span>
-          {(props.keyFile ||
-            props.isParanoid ||
-            props.compressionMode !== "normal") && (
-            <div className="indicator-dot"></div>
-          )}
-        </button>
-
-        {showAdvanced && (
-          <div className="dropdown-menu">
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                props.selectKeyFile();
-                setShowAdvanced(false);
-              }}
-            >
-              <Key
-                size={16}
-                color={props.keyFile ? "var(--btn-success)" : "currentColor"}
-              />
-              {props.keyFile ? "Keyfile Active" : "Select Keyfile"}
-            </div>
-            {props.keyFile && (
+      {/* RIGHT GROUP: Settings & Help */}
+      <div style={{ display: "flex", gap: 6 }}>
+        {/* 1. OPTIONS */}
+        <div className="dropdown-container" ref={menuRef}>
+          <button className="tool-btn" onClick={() => setShowMenu(!showMenu)}>
+            <Settings size={24} className="icon-default" strokeWidth={2} />
+            <span style={{ fontSize: "0.7rem" }}>Options</span>
+          </button>
+          {showMenu && (
+            <div className="dropdown-menu">
               <div
-                className="dropdown-item danger"
-                onClick={() => props.setKeyFile(null)}
-                style={{ fontSize: "0.8rem", paddingLeft: "36px" }}
-              >
-                Clear Keyfile
-              </div>
-            )}
-
-            <div className="dropdown-divider"></div>
-
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowAdvanced(false);
-                props.onOpenCompression();
-              }}
-            >
-              <Archive size={16} />
-              <span>Zip Options</span>
-              <span
-                style={{
-                  marginLeft: "auto",
-                  fontSize: "0.7rem",
-                  color: "var(--accent)",
+                className="dropdown-item"
+                onClick={() => {
+                  setShowMenu(false);
+                  props.onTheme();
                 }}
               >
-                {props.compressionMode.toUpperCase()}
-              </span>
+                <Monitor size={16} /> Theme
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowMenu(false);
+                  props.onBackup();
+                }}
+              >
+                <Download size={16} /> Backup Keychain
+              </div>
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowMenu(false);
+                  props.onChangePassword();
+                }}
+              >
+                <Key size={16} /> Change Password
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowMenu(false);
+                  props.onReset2FA();
+                }}
+              >
+                <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
+              </div>
+              <div className="dropdown-divider"></div>
+              <div className="dropdown-item danger" onClick={props.onLogout}>
+                <LogOut size={16} /> Log Out
+              </div>
             </div>
+          )}
+        </div>
 
-            <div className="dropdown-divider"></div>
+        {/* 2. ADVANCED */}
+        <div className="dropdown-container" ref={advancedRef}>
+          <button
+            className={`tool-btn ${
+              props.keyFile ||
+              props.isParanoid ||
+              props.compressionMode !== "normal"
+                ? "active-settings"
+                : ""
+            }`}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            <Sliders size={24} className="icon-default" strokeWidth={2} />
+            <span style={{ fontSize: "0.7rem" }}>Advanced</span>
+            {(props.keyFile ||
+              props.isParanoid ||
+              props.compressionMode !== "normal") && (
+              <div className="indicator-dot"></div>
+            )}
+          </button>
 
-            <div
-              className="dropdown-item"
-              onClick={() => props.setIsParanoid(!props.isParanoid)}
-            >
-              <ShieldAlert
-                size={16}
-                color={props.isParanoid ? "var(--accent)" : "currentColor"}
-              />
-              <span>Paranoid Mode</span>
-              {props.isParanoid && (
-                <Check
+          {showAdvanced && (
+            <div className="dropdown-menu">
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  props.selectKeyFile();
+                  setShowAdvanced(false);
+                }}
+              >
+                <Key
                   size={16}
-                  color="var(--accent)"
-                  style={{ marginLeft: "auto" }}
+                  color={props.keyFile ? "var(--btn-success)" : "currentColor"}
                 />
+                {props.keyFile ? "Keyfile Active" : "Select Keyfile"}
+              </div>
+              {props.keyFile && (
+                <div
+                  className="dropdown-item danger"
+                  onClick={() => props.setKeyFile(null)}
+                  style={{ fontSize: "0.8rem", paddingLeft: "36px" }}
+                >
+                  Clear Keyfile
+                </div>
               )}
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowAdvanced(false);
+                  props.onOpenCompression();
+                }}
+              >
+                <Archive size={16} />
+                <span>Zip Options</span>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    fontSize: "0.7rem",
+                    color: "var(--accent)",
+                  }}
+                >
+                  {props.compressionMode.toUpperCase()}
+                </span>
+              </div>
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => props.setIsParanoid(!props.isParanoid)}
+              >
+                <ShieldAlert
+                  size={16}
+                  color={props.isParanoid ? "var(--accent)" : "currentColor"}
+                />
+                <span>Paranoid Mode</span>
+                {props.isParanoid && (
+                  <Check
+                    size={16}
+                    color="var(--accent)"
+                    style={{ marginLeft: "auto" }}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* 3. HELP */}
-      <div className="dropdown-container" ref={helpRef}>
-        <button className="tool-btn" onClick={() => setShowHelp(!showHelp)}>
-          <CircleHelp size={24} className="icon-default" strokeWidth={2} />
-          <span>Help</span>
-        </button>
-        {showHelp && (
-          <div className="dropdown-menu">
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowHelp(false);
-                props.onHelp();
-              }}
-            >
-              <BookOpen size={16} /> Help Topics
+        {/* 3. HELP (Moved closer) */}
+        <div className="dropdown-container" ref={helpRef}>
+          <button className="tool-btn" onClick={() => setShowHelp(!showHelp)}>
+            <CircleHelp size={24} className="icon-default" strokeWidth={2} />
+            <span style={{ fontSize: "0.7rem" }}>Help</span>
+          </button>
+          {showHelp && (
+            <div className="dropdown-menu" style={{ right: 0 }}>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowHelp(false);
+                  props.onHelp();
+                }}
+              >
+                <BookOpen size={16} /> Help Topics
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={async () => {
+                  setShowHelp(false);
+                  await openUrl("https://github.com/powergr/quantum-locker/");
+                }}
+              >
+                <GithubIcon size={16} /> GitHub Page
+              </div>
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowHelp(false);
+                  props.onAbout();
+                }}
+              >
+                <Info size={16} /> About
+              </div>
             </div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowHelp(false);
-                openUrl("https://github.com/powergr/quantum-locker/");
-              }}
-            >
-              <GithubIcon size={16} /> GitHub Page
-            </div>
-            <div className="dropdown-divider"></div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowHelp(false);
-                props.onAbout();
-              }}
-            >
-              <Info size={16} /> About
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { open as openUrl } from "@tauri-apps/plugin-shell"; // ADDED
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   X,
   Info,
@@ -533,7 +533,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
               marginTop: 10,
               fontWeight: "bold",
             }}
-            onClick={() => openUrl("https://projectqre.com/")}
+            onClick={async () => await openUrl("https://projectqre.com/")}
           >
             Visit projectqre.com
           </p>
