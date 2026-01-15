@@ -27,3 +27,5 @@ dist-ssr
 *.keystore
 key.properties
 keystore_b64.txt
+*.jks
+key.properties
