@@ -2,7 +2,7 @@ use crate::state::MAX_FILE_SIZE;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Cursor, Read, Write}; // Added Read back
+use std::io::{Cursor, Read, Write}; // "Read" is required for hashing the keyfile
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -11,6 +11,8 @@ use zip::write::SimpleFileOptions;
 
 // --- EVENT HELPERS ---
 
+/// Sends a progress update event to the Frontend (React).
+/// This allows the UI to show a progress bar during long operations.
 pub fn emit_progress(app: &AppHandle, label: &str, percentage: u8) {
     let _ = app.emit(
         "qre:progress",
@@ -23,6 +25,8 @@ pub fn emit_progress(app: &AppHandle, label: &str, percentage: u8) {
 
 // --- FILE HELPERS ---
 
+/// Recursively calculates the total size of a directory.
+/// Used to check if a folder exceeds the 4GB processing limit.
 pub fn get_dir_size(path: &Path) -> Result<u64, String> {
     let mut total_size = 0;
     for entry in WalkDir::new(path) {
@@ -34,6 +38,8 @@ pub fn get_dir_size(path: &Path) -> Result<u64, String> {
     Ok(total_size)
 }
 
+/// Verifies that a file or directory is small enough to be processed in RAM.
+/// Currently, the app loads files into memory for encryption, so we limit it to 4GB.
 pub fn check_size_limit(path: &Path) -> Result<(), String> {
     let total_size = if path.is_dir() {
         get_dir_size(path)?
@@ -47,7 +53,11 @@ pub fn check_size_limit(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// RESTORED: Needed for Desktop to read keyfiles without freezing the UI
+/// Reads a Keyfile from disk and hashes it.
+/// - Used on **Desktop** where we have direct file access.
+/// - On Android, the frontend sends raw bytes instead, skipping this function.
+/// 
+/// Returns the SHA-256 hash of the file content, which is then used as part of the encryption key.
 pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, String> {
     match path_opt {
         Some(p) => {
@@ -65,6 +75,7 @@ pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, Stri
             let mut hasher = Sha256::new();
             let mut buffer = [0u8; 4096];
 
+            // Read file in chunks to handle large keyfiles efficiently
             loop {
                 let count = file
                     .read(&mut buffer)
@@ -81,6 +92,8 @@ pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, Stri
     }
 }
 
+/// Generates a unique filename if the target file already exists.
+/// Example: "photo.jpg" -> "photo (1).jpg" -> "photo (2).jpg"
 pub fn get_unique_path(original_path: &Path) -> PathBuf {
     if !original_path.exists() {
         return original_path.to_path_buf();
@@ -107,16 +120,17 @@ pub fn get_unique_path(original_path: &Path) -> PathBuf {
 
 // --- TRASH LOGIC ---
 
+/// Moves a file to the System Trash / Recycle Bin.
+/// - Desktop: Supported via the `trash` crate.
+/// - Android: Not supported (returns error).
 #[allow(dead_code)]
 pub fn move_to_trash(path: &Path) -> Result<(), String> {
-    // Android: Trash not supported
     #[cfg(target_os = "android")]
     {
         let _ = path;
         Err("Trash is not supported on Android".to_string())
     }
 
-    // Desktop: Use trash crate
     #[cfg(not(target_os = "android"))]
     {
         trash::delete(path).map_err(|e| e.to_string())
@@ -125,12 +139,15 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
 
 // --- ZIP LOGIC ---
 
+/// Compresses a directory into a ZIP archive in memory.
+/// This is necessary because QRE encryption works on a single blob of data.
+/// Folders are first zipped, then the resulting ZIP blob is encrypted.
 pub fn zip_directory_to_memory(dir_path: &Path) -> Result<Vec<u8>, String> {
     let buffer = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(buffer);
 
     let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored)
+        .compression_method(zip::CompressionMethod::Stored) // No compression here (Zstd handles it later)
         .unix_permissions(0o755);
 
     let prefix = dir_path.parent().unwrap_or(Path::new(""));
@@ -139,12 +156,13 @@ pub fn zip_directory_to_memory(dir_path: &Path) -> Result<Vec<u8>, String> {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
 
+        // Create relative path inside the zip
         let name = path
             .strip_prefix(prefix)
             .map_err(|_| "Path error")?
             .to_str()
             .ok_or("Non-UTF8 path")?
-            .replace("\\", "/");
+            .replace("\\", "/"); // Normalize for Windows
 
         if path.is_file() {
             zip.start_file(name, options).map_err(|e| e.to_string())?;
@@ -162,9 +180,11 @@ pub fn zip_directory_to_memory(dir_path: &Path) -> Result<Vec<u8>, String> {
 
 // --- SHREDDING LOGIC ---
 
+/// Securely deletes a single file by overwriting it with random data.
+/// WARNING: Flash memory (SSDs/Phones) makes this unreliable due to wear leveling.
 #[allow(dead_code)]
 fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
-    // FIX: Force removal of Read-Only attribute before shredding
+    // 1. Force removal of Read-Only attribute so we can write to it
     let mut perms = fs::metadata(path)?.permissions();
     if perms.readonly() {
         perms.set_readonly(false);
@@ -174,6 +194,7 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     let metadata = fs::metadata(path)?;
     let len = metadata.len();
 
+    // 2. Overwrite file content with random garbage
     if len > 0 {
         let mut file = fs::OpenOptions::new().write(true).open(path)?;
         let mut rng = rand::thread_rng();
@@ -185,7 +206,7 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
         while written < len {
             let bytes_to_write = std::cmp::min(chunk_size as u64, len - written);
             let slice = &mut buffer[0..bytes_to_write as usize];
-            rng.fill_bytes(slice);
+            rng.fill_bytes(slice); // Fill buffer with random noise
             file.write_all(slice)?;
             written += bytes_to_write;
 
@@ -196,9 +217,10 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
                 last_percent = percent;
             }
         }
-        file.sync_all()?;
+        file.sync_all()?; // Ensure data is flushed to disk
     }
 
+    // 3. Rename file to random UUID to hide original filename
     let parent = path.parent().unwrap_or(Path::new("/"));
     let new_name = Uuid::new_v4().to_string();
     let new_path = parent.join(new_name);
@@ -206,19 +228,23 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     if fs::rename(path, &new_path).is_ok() {
         let _ = fs::remove_file(new_path);
     } else {
+        // Fallback if rename fails
         let _ = fs::remove_file(path);
     }
 
     Ok(())
 }
 
+/// Recursively shreds a directory and its contents.
 #[allow(dead_code)]
 pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
     if path.is_dir() {
+        // Delete all children first
         for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             shred_recursive(app, &entry.path())?;
         }
+        // Remove the empty directory
         fs::remove_dir(path).map_err(|e| e.to_string())?;
     } else {
         shred_file_internal(app, path)
