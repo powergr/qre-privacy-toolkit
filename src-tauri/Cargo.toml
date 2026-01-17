@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.3.3"
+version = "2.4.0"
 description = "QRE Locker"
 authors = ["Project QRE"]
 edition = "2021"
@@ -26,8 +26,6 @@ serde_json = "1"
 zip = "2.3.0"
 walkdir = "2"
 aes-gcm = "0.10"
-pqcrypto-kyber = "0.8"
-pqcrypto-traits = "0.3.5"
 rand = "0.8"
 rand_chacha = "0.3"
 sha2 = "0.10"

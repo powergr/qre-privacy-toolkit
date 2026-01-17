@@ -1,64 +1,74 @@
 // --- MODULE DECLARATIONS ---
-// These files contain the logic for specific features of the application.
-mod commands;   // Frontend-callable functions
-mod crypto;     // Encryption/Decryption engine (Kyber + AES)
-mod entropy;    // Randomness generation
-mod keychain;   // Password and Key management
-mod secure_rng; // Secure Random Number Generator wrappers
-mod state;      // Global application state (Memory-only)
-mod tests;      // Unit tests
-mod utils;      // Helper functions (File I/O, Progress tracking)
+// These modules organize the backend logic into distinct functional areas.
+mod commands;       // Exports functions callable from the React frontend.
+mod crypto;         // Legacy V4 Encryption Engine (Memory-based).
+mod crypto_stream;  // Modern V5 Encryption Engine (Stream-based for large files).
+mod entropy;        // Logic for collecting random data (Entropy) from user input.
+mod keychain;       // Manages the secure storage of keys and passwords.
+mod secure_rng;     // Wrappers for Cryptographically Secure Pseudo-Random Number Generators.
+mod state;          // Holds global application state (like the decrypted Master Key) in RAM.
+mod tests;          // Internal unit tests.
+mod utils;          // General utility functions (File I/O helpers, Shredding logic).
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
 
-// --- DESKTOP SPECIFIC IMPORTS ---
-// The Global Shortcut plugin allows detecting keyboard combinations even when the app
-// is not in focus. This is not supported on Mobile/Android, so it is strictly gated.
+// --- PLATFORM SPECIFIC IMPORTS ---
+// The Global Shortcut plugin allows the application to listen for keystrokes
+// even when the window is not in focus (used for the Panic Button).
+//
+// Android/iOS do not allow background key interception for security and lifecycle reasons,
+// so this library is strictly excluded from mobile builds to prevent compilation errors.
 #[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
-/// The Main Entry Point for the Tauri Application.
-/// This function configures the environment, loads plugins, and starts the event loop.
+/// The Main Entry Point for the Tauri Backend.
+///
+/// This function is called by `main.rs` (Desktop) or the Android/iOS Activity.
+/// It configures the runtime environment, initializes all plugins, sets up global state,
+/// and starts the main event loop.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Note: `unused_mut` allows the builder to be mutable on Desktop (where we add shortcuts)
-    // but remains valid on Mobile where that block is skipped.
+    // 'unused_mut' suppression is required because 'builder' is mutated
+    // only on Desktop (to add the shortcut plugin). On Mobile, it remains immutable.
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
-        // --- PLUGIN REGISTRATION ---
+        // --- CORE PLUGIN REGISTRATION ---
         
-        // OS: Detects if running on Windows, Linux, macOS, or Android.
+        // OS: Provides information about the operating system (Platform detection).
         .plugin(tauri_plugin_os::init())
         
-        // State Management: Holds the Master Key in RAM. 
-        // Wrapped in Mutex for thread safety across async commands.
+        // STATE MANAGEMENT:
+        // Initializes the global session state. The Master Key is stored inside an
+        // Arc<Mutex<...>> to allow safe concurrent access from multiple threads/commands.
+        // Initially, the key is 'None' (Locked).
         .manage(SessionState {
             master_key: Arc::new(Mutex::new(None)),
         })
         
-        // Clipboard: Allows copying recovery codes/text.
+        // CLIPBOARD: Allows the app to securely copy/clear text (e.g., Recovery Codes).
         .plugin(tauri_plugin_clipboard_manager::init())
         
-        // Shell: Used for opening files in the OS file explorer.
+        // SHELL: Provides capabilities to execute system commands (restricted by capabilities config).
         .plugin(tauri_plugin_shell::init())
         
-        // Dialog: Native file pickers (Open/Save).
+        // DIALOG: Opens native system file pickers (Open/Save dialogs).
         .plugin(tauri_plugin_dialog::init())
         
-        // FS: Access to the filesystem (Read/Write files).
+        // FS: Provides direct access to the filesystem for reading/writing encrypted files.
         .plugin(tauri_plugin_fs::init())
         
-        // Opener: Handles opening external URLs (e.g., Help links) reliably across platforms.
+        // OPENER: The standard way in Tauri v2 to open external URLs (e.g., Help, Website)
+        // in the user's default browser across Windows, Linux, macOS, and Android.
         .plugin(tauri_plugin_opener::init())
         
-        // Process: Allows the app to exit or restart programmatically.
+        // PROCESS: Allows the application to programmatically exit or restart.
         .plugin(tauri_plugin_process::init());
 
     // --- PANIC BUTTON (DESKTOP ONLY) ---
-    // Registers a Global Shortcut (Ctrl + Shift + Q) that instantly kills the process.
-    // This acts as a "Dead Man's Switch" or emergency exit to wipe memory.
-    // On Android, the OS manages app lifecycle, so this is disabled.
+    // Registers a low-level global hook for "Ctrl + Shift + Q".
+    // This acts as a "Dead Man's Switch". When triggered, it bypasses standard
+    // cleanup routines and kills the process immediately to protect data.
     #[cfg(not(mobile))]
     {
         builder = builder.plugin(
@@ -68,7 +78,7 @@ pub fn run() {
                         && shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyQ)
                     {
                         println!("🔥 PANIC BUTTON TRIGGERED (RUST) - KILLING PROCESS 🔥");
-                        std::process::exit(0); // Instant termination
+                        std::process::exit(0); // Terminates the app instantly
                     }
                 })
                 .build(),
@@ -77,8 +87,10 @@ pub fn run() {
 
     builder
         .setup(|_app| {
-            // --- SETUP HOOK ---
-            // Registers the actual key combination for the Panic Button on startup.
+            // --- LIFECYCLE SETUP ---
+            // This block runs once when the application starts.
+            
+            // Registers the specific key combination for the Panic Button logic defined above.
             #[cfg(not(mobile))]
             {
                 let ctrl_shift_q =
@@ -88,8 +100,9 @@ pub fn run() {
             }
             Ok(())
         })
-        // --- COMMAND REGISTRATION ---
-        // Exposes Rust functions to the Frontend (TypeScript/React).
+        // --- COMMAND HANDLER REGISTRATION ---
+        // Exposes specific Rust functions to the JavaScript frontend.
+        // The frontend calls these via `invoke('command_name', { args })`.
         .invoke_handler(tauri::generate_handler![
             // Authentication & Vault Management
             commands::check_auth_status,
@@ -104,6 +117,7 @@ pub fn run() {
             commands::get_drives,
             commands::get_startup_file,
             commands::export_keychain,
+            commands::get_keychain_data, // Helper for Android backups (writes via frontend)
             
             // File Operations
             commands::delete_items,
@@ -111,12 +125,12 @@ pub fn run() {
             commands::create_dir,
             commands::rename_item,
             commands::show_in_folder,
-            commands::get_keychain_data, // Helper for Android backups
             
             // Cryptography Core
             commands::lock_file,
             commands::unlock_file
         ])
+        // Starts the application loop. This blocks the main thread until the app exits.
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
