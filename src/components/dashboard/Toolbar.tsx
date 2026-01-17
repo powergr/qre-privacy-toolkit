@@ -148,7 +148,7 @@ export function Toolbar(props: ToolbarProps) {
             className={`tool-btn ${
               props.keyFile ||
               props.isParanoid ||
-              props.compressionMode !== "normal"
+              props.compressionMode !== "auto"
                 ? "active-settings"
                 : ""
             }`}
@@ -158,7 +158,7 @@ export function Toolbar(props: ToolbarProps) {
             <span style={{ fontSize: "0.7rem" }}>Advanced</span>
             {(props.keyFile ||
               props.isParanoid ||
-              props.compressionMode !== "normal") && (
+              props.compressionMode !== "auto") && (
               <div className="indicator-dot"></div>
             )}
           </button>

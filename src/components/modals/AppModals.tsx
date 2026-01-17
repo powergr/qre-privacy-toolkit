@@ -429,19 +429,19 @@ export function CompressionModal({
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[
               {
-                id: "fast",
-                label: "Fast (Low Compression)",
-                desc: "Quickest, larger file size.",
+                id: "auto",
+                label: "Auto (Smart)",
+                desc: "Best balance. Fast for video, compressed for docs.",
               },
               {
-                id: "normal",
-                label: "Normal (Default)",
-                desc: "Balanced speed and size.",
+                id: "extreme",
+                label: "Extreme (Slow)",
+                desc: "Maximum compression (Level 19). Takes longer.",
               },
               {
-                id: "best",
-                label: "Best (High Compression)",
-                desc: "Slowest, smallest file size.",
+                id: "store",
+                label: "Store (None)",
+                desc: "No compression. Instant.",
               },
             ].map((opt) => (
               <div
@@ -521,7 +521,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
             <strong>Version {appVersion}</strong>
           </p>
           <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-            Securing your files with AES-256-GCM and Post-Quantum Kyber-1024.
+            Securing your files with military-grade AES-256-GCM encryption.
           </p>
 
           {/* UPDATED: WEBSITE LINK */}

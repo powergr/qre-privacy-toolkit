@@ -15,7 +15,7 @@ export function useCrypto(reloadDir: () => void) {
   const [keyFilePath, setKeyFilePath] = useState<string | null>(null);
   const [keyFileBytes, setKeyFileBytes] = useState<Uint8Array | null>(null);
   const [isParanoid, setIsParanoid] = useState(false);
-  const [compressionMode, setCompressionMode] = useState("normal");
+  const [compressionMode, setCompressionMode] = useState("auto");
   const [currentPlatform, setCurrentPlatform] = useState<string>("windows");
 
   const [progress, setProgress] = useState<{
@@ -84,7 +84,7 @@ export function useCrypto(reloadDir: () => void) {
   async function runCrypto(
     cmd: "lock_file" | "unlock_file",
     targets: string[],
-    explicitEntropy?: number[]
+    explicitEntropy?: number[],
   ) {
     if (targets.length === 0) {
       setErrorMsg("No files selected.");

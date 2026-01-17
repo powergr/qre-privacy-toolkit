@@ -1,107 +1,128 @@
-# QRE Locker (v2.3.3)
+# QRE Locker
 
-**A Modern, Quantum-Resistant File Encryption Tool.**
+**Secure, Local-First, Cross-Platform File Encryption.**
 
-QRE Locker is a cross-platform desktop application designed to secure your data against both modern cyber threats and future quantum computing attacks. It combines the speed of **AES-256-GCM** with the post-quantum security of **ML-KEM-1024 (Kyber)** in a user-friendly, local-first interface.
+![Build Status](https://img.shields.io/github/actions/workflow/status/powergr/quantum-locker/build.yml?branch=main)
+![Version](https://img.shields.io/github/v/release/powergr/quantum-locker)
+![License](https://img.shields.io/github/license/powergr/quantum-locker)
 
-![Screenshot](qrev2.jpg)
+QRE Locker is a modern file encryption tool designed for privacy. It runs natively on **Windows, macOS, Linux, and Android**, allowing you to secure your sensitive documents, photos, and videos with a single drag-and-drop action.
 
-## 🚀 What's New in v2.3.3?
+**[📥 Download the Latest Release](https://github.com/powergr/quantum-locker/releases)**
 
-We have introduced major security and usability upgrades in this release:
+---
 
-- **🚨 Panic Button:** Global hotkey (`Ctrl+Shift+Q`) to instantly wipe keys from RAM and kill the application process.
-- **🗑️ Secure Shredding:** Option to securely overwrite files with random data (3-pass) before deletion, making recovery impossible.
-- **🎨 Themes:** Support for **Dark**, **Light**, and **System** modes.
-- **💾 Keychain Backup:** Built-in tool to export your encrypted keychain for disaster recovery.
-- **🖱️ Enhanced UX:** Resizable file columns, right-click context menus, and drag-and-drop file locking.
-- **⏱️ Auto-Lock:** Session timeout after 15 minutes of inactivity.
-- **🗜️ Smart Compression:** Customizable Zip compression levels (Fast, Normal, Best).
+## 🔒 Key Features
 
-## 🛡️ Security Architecture
+### **1. Military-Grade Security**
 
-QRE Locker employs a **Hybrid Cryptographic Scheme** ensuring defense-in-depth:
+Your data is protected using **AES-256-GCM** (Galois/Counter Mode). This provides both confidentiality (they can't read it) and integrity (they can't modify it). Passwords are hardened using **Argon2id**, the winner of the Password Hashing Competition, making GPU brute-force attacks prohibitively expensive.
 
-1. **Session Security:** Every time you lock a file, a unique, ephemeral **AES-256-GCM** key and **ML-KEM-1024** keypair are generated.
-2. **Hybrid Layering:** The file content is compressed (Zstd) and encrypted with AES-256. The AES key is then encapsulated by the Kyber public key.
-3. **Key Wrapping:** The Kyber Private Key (needed to unlock the file) is encrypted using your **Master Key**.
-4. **Master Key Derivation:** Your Master Key is derived from your Passphrase (and optional Keyfile) using **Argon2id** (Memory-Hard Function).
-5. **Memory Safety:** Critical keys are marked with `Zeroize`, ensuring they are wiped from RAM immediately after use.
+### **2. Unlimited File Size**
 
-## "Why Use ML-KEM for Local Files?"
+Powered by a custom **Rust Streaming Engine**, QRE Locker processes files chunk-by-chunk. You can encrypt 10GB, 50GB, or even 1TB files without using up your RAM, even on mobile devices.
 
-A valid criticism is that ML-KEM (Kyber) is designed for key exchange
-over networks, not local file encryption. The honest answer: this
-implementation serves three purposes:
+### **3. Smart Compression**
 
-1. Educational - demonstrating hybrid PQC implementation
-2. Future-proofing - preparing for potential file-sharing features
-3. Defense-in-depth philosophy (even if redundant)
+The app uses **Zstd** compression to save space.
+**Auto-Detect:** Automatically applies fast compression to media files (images/video) and high compression to documents/text.
+**Extreme Mode:** Forces maximum compression levels for archival storage.
 
-For pure local file encryption with passwords, AES-256-GCM + Argon2id
-is already quantum-resistant. The Kyber layer adds cryptographic
-diversity but not strictly necessary security for this threat model.
+### **4. Cross-Platform & Mobile Ready**
 
-### The Tech Stack
+The exact same encryption engine runs on your Desktop and your **Android Phone**.
+**Desktop:** Drag & Drop files or folders.
+**Android:** Fully native app. Encrypt photos directly from your Gallery or transfer secured files from your PC to your phone.
 
-- **Frontend:** React (TypeScript) + Vite
-- **Backend:** Rust (Tauri v2)
-- **Crypto Libraries:** `pqcrypto-kyber`, `aes-gcm`, `argon2`, `sha2`
-- **Compression:** `zstd` + `zip` (v2.x)
+### **5. Zero Knowledge**
 
-## 📦 Installation
+**No Cloud:** Files never leave your device.
+**No Accounts:** No email signup, no tracking.
+**No Backdoors:** We cannot recover your password. Only you hold the keys.
 
-Download the latest installer for your operating system from the [Releases Page](https://github.com/powergr/quantum-locker/releases).
+---
 
-- **Windows:** `.exe` or `.msi`
-- **macOS:** `.dmg`
-- **Linux:** `.deb` or `.AppImage`
+## 🛡️ Operational Security
 
-> **Note:** As this is open-source software, the installer is currently self-signed. You may need to click "More Info" -> "Run Anyway" if Windows SmartScreen prompts you.
+QRE Locker includes features designed for high-risk scenarios and physical security:
 
-## 📖 User Guide
+### **🚨 Panic Button (Desktop)**
 
-### 1. Setup & Backup
+A global "Dead Man's Switch." Pressing **`Ctrl + Shift + Q`** (or `Cmd + Shift + Q` on macOS) instantly kills the application process and wipes encryption keys from RAM. This works even if the app is minimized or in the background.
 
-On first launch, create a **Master Password**.
+### **⏱️ Auto-Lock**
 
-**Recovery Code:** Save the displayed code (e.g., `QRE-A1...`). It is your only way back if you forget the password.
-**Backup:** Go to **Options > Backup Keychain** and save the JSON file to a USB drive. This file + your password can restore your account on any computer.
+To prevent unauthorized access if you step away from your device, the vault includes an inactivity watchdog.
+**15 Minutes:** If no mouse/keyboard/touch activity is detected, a timer starts.
+**60 Seconds:** A warning countdown appears.
+**Action:** The app automatically logs out and wipes memory if you do not respond.
 
-### 2. Locking & Unlocking
+### **🖱️ Paranoid Mode**
 
-**Lock:** Drag files into the window or use **Right Click > Lock**. Original files are processed; encrypted `.qre` files are created.
-**Unlock:** Select `.qre` files and click **Unlock**.
-**Double-Click:** You can double-click a `.qre` file in your OS File Manager to open it directly in QRE Locker.
+Don't trust the computer's random number generator?
+**Paranoid Mode** allows you to inject your own entropy by moving your mouse (Desktop) or swiping your screen (Mobile). This physical chaos is mixed into the encryption seed, ensuring your keys are truly unpredictable.
 
-### 3. Advanced Security
+---
 
-**Keyfile:** (Optional) Go to **Advanced** to select a file (image/song) as a second factor. You must have this exact file present to unlock your data.
-**Paranoid Mode:** Injects hardware-based entropy (mouse movements) into the key generation.
-**Panic Button:** Press **`Ctrl + Shift + Q`** at any time to instantly terminate the app and wipe memory.
+## 🚀 How to Use
 
-## 🛠️ Development Setup
+1.**Create a Vault:** Set a strong Master Password. 2.**Save your Recovery Code:** This `QRE-XXXX` code is the _only_ way to restore access if you forget your password. 3.**Lock:** Drag files or folders into the app. They are compressed and encrypted into `.qre` files. 4.**Unlock:** Drag a `.qre` file back into the app to restore the original.
+
+---
+
+## 🛠️ Technical Stack
+
+**Core:** Rust (Performance & Memory Safety)
+**Frontend:** React + TypeScript + Vite
+**Mobile Bridge:** Tauri v2 + Android NDK
+**Cryptography:**
+_Encryption:_ AES-256-GCM
+_KDF:_ Argon2id (19MB memory hardness)
+_RNG:_ ChaCha20 seeded via OS + User Entropy \* _Compression:_ Zstd (Zstandard)
+
+---
+
+## 📦 Building from Source
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18+)
-- [Rust](https://www.rust-lang.org/) (latest stable)
-- **Windows:** C++ Build Tools (via Visual Studio Installer)
-- **Linux:** `libwebkit2gtk-4.1-dev`, `build-essential`
+**Rust:** `rustup` (latest stable)
+**Node.js:** v20+
+**Android (Optional):** Android Studio + NDK
 
-### Build
+### Desktop Build
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Run in Dev Mode
+# 2. Run in Development Mode
 npm run tauri dev
 
-# Build Release
+# 3. Build Release Bundle
 npm run tauri build
+```
+
+### Android Build
+
+```bash
+# 1. Setup Android Environment
+npm run tauri android init
+
+# 2. Build APK (Signed Debug)
+npm run tauri android build -- --debug --apk true --target aarch64
 ```
 
 ---
 
-**License:** MIT License. See [LICENSE](LICENSE) file.
+## ⚠️ Important Security Notice
+
+QRE Locker follows a **Zero-Knowledge** architecture.
+If you lose your **Master Password** AND your **Recovery Code**, your data is mathematically inaccessible. There is no "Password Reset" button because there is no server.
+
+**Backup your `keychain.json` file and store your Recovery Code safely.**
+
+---
+
+**License:** MIT
+**Copyright:** © 2026 Project QRE
