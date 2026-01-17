@@ -1,4 +1,4 @@
-# QRE Locker (v2.3.0)
+# QRE Locker (v2.3.3)
 
 **A Modern, Quantum-Resistant File Encryption Tool.**
 
@@ -6,7 +6,7 @@ QRE Locker is a cross-platform desktop application designed to secure your data 
 
 ![Screenshot](qrev2.jpg)
 
-## 🚀 What's New in v2.3.0?
+## 🚀 What's New in v2.3.3?
 
 We have introduced major security and usability upgrades in this release:
 
@@ -27,6 +27,20 @@ QRE Locker employs a **Hybrid Cryptographic Scheme** ensuring defense-in-depth:
 3. **Key Wrapping:** The Kyber Private Key (needed to unlock the file) is encrypted using your **Master Key**.
 4. **Master Key Derivation:** Your Master Key is derived from your Passphrase (and optional Keyfile) using **Argon2id** (Memory-Hard Function).
 5. **Memory Safety:** Critical keys are marked with `Zeroize`, ensuring they are wiped from RAM immediately after use.
+
+## "Why Use ML-KEM for Local Files?"
+
+A valid criticism is that ML-KEM (Kyber) is designed for key exchange
+over networks, not local file encryption. The honest answer: this
+implementation serves three purposes:
+
+1. Educational - demonstrating hybrid PQC implementation
+2. Future-proofing - preparing for potential file-sharing features
+3. Defense-in-depth philosophy (even if redundant)
+
+For pure local file encryption with passwords, AES-256-GCM + Argon2id
+is already quantum-resistant. The Kyber layer adds cryptographic
+diversity but not strictly necessary security for this threat model.
 
 ### The Tech Stack
 
