@@ -10,6 +10,7 @@ mod state;          // Holds global application state (like the decrypted Master
 mod tests;          // Internal unit tests.
 mod utils;          // General utility functions (File I/O helpers, Shredding logic).
 mod vault;
+mod notes;
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
@@ -119,6 +120,8 @@ pub fn run() {
             commands::get_startup_file,
             commands::export_keychain,
             commands::get_keychain_data, // Helper for Android backups (writes via frontend)
+            commands::load_notes_vault,
+            commands::save_notes_vault,
             
             // File Operations
             commands::delete_items,

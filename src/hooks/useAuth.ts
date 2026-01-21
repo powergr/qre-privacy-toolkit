@@ -1,110 +1,119 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ViewState } from "../types";
 import { getPasswordScore } from "../utils/security";
 
 type ActionResult = { success: boolean; msg?: string };
 
-// Configuration
-const WARNING_DELAY_MS = 14 * 60 * 1000; // Show warning after 14 mins
-const COUNTDOWN_SECONDS = 60; // Count down for 60s
+const WARNING_DELAY_MS = 14 * 60 * 1000;
+const COUNTDOWN_SECONDS = 60;
+
+// Helper to detect if we are in the Tauri App or a Browser
+const isTauri = () =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export function useAuth() {
   const [view, setView] = useState<ViewState>("loading");
   const [password, setPassword] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
-
   const [sessionExpired, setSessionExpired] = useState(false);
-
-  // NEW: Warning State
   const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
 
-  const idleTimerRef = useRef<number | null>(null);
-  const countdownIntervalRef = useRef<number | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
 
-  // --- AUTO LOCK LOGIC ---
-
-  // Function to reset the idle timer (called on user activity)
-  const resetIdleTimer = () => {
-    // 1. Clear existing timers
-    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
-    if (countdownIntervalRef.current)
-      window.clearInterval(countdownIntervalRef.current);
-
-    // 2. Reset State
-    setShowTimeoutWarning(false);
-    setCountdown(COUNTDOWN_SECONDS);
-
-    // 3. Start new Warning Timer
-    if (view === "dashboard") {
-      idleTimerRef.current = window.setTimeout(() => {
-        triggerWarning();
-      }, WARNING_DELAY_MS);
+  const logout = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        await invoke("logout");
+      } catch (e) {
+        console.error(e);
+      }
     }
-  };
+    setView("login");
+    setPassword("");
+    setShowTimeoutWarning(false);
+  }, []);
 
-  // Triggered when 14 mins have passed
-  const triggerWarning = () => {
+  const performLogout = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    if (countdownIntervalRef.current)
+      clearInterval(countdownIntervalRef.current);
+    logout();
+    setSessionExpired(true);
+  }, [logout]);
+
+  const triggerWarning = useCallback(() => {
     setShowTimeoutWarning(true);
-
-    // Start countdown tick
-    countdownIntervalRef.current = window.setInterval(() => {
+    countdownIntervalRef.current = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
-          // Time is up!
           performLogout();
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-  };
+  }, [performLogout]);
 
-  const performLogout = () => {
-    if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (countdownIntervalRef.current)
-      window.clearInterval(countdownIntervalRef.current);
-
-    logout();
+      clearInterval(countdownIntervalRef.current);
     setShowTimeoutWarning(false);
-    setSessionExpired(true);
-  };
+    setCountdown(COUNTDOWN_SECONDS);
+    if (view === "dashboard") {
+      idleTimerRef.current = setTimeout(
+        () => triggerWarning(),
+        WARNING_DELAY_MS,
+      );
+    }
+  }, [view, triggerWarning]);
 
-  // Activity Listeners
   useEffect(() => {
     if (view !== "dashboard") return;
-
-    window.addEventListener("mousemove", resetIdleTimer);
-    window.addEventListener("keydown", resetIdleTimer);
-    window.addEventListener("click", resetIdleTimer);
-
-    resetIdleTimer(); // Start initial timer
-
+    const events = ["mousemove", "keydown", "click", "touchstart"];
+    const handler = () => resetIdleTimer();
+    events.forEach((event) => window.addEventListener(event, handler));
+    resetIdleTimer();
     return () => {
-      window.removeEventListener("mousemove", resetIdleTimer);
-      window.removeEventListener("keydown", resetIdleTimer);
-      window.removeEventListener("click", resetIdleTimer);
-      if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
+      events.forEach((event) => window.removeEventListener(event, handler));
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       if (countdownIntervalRef.current)
-        window.clearInterval(countdownIntervalRef.current);
+        clearInterval(countdownIntervalRef.current);
     };
-  }, [view]);
+  }, [view, resetIdleTimer]);
 
   // --- INIT ---
   useEffect(() => {
+    let mounted = true;
     async function init() {
+      // Browser Fallback (Dev Mode)
+      if (!isTauri()) {
+        console.warn("Running in Browser Mode - Backend skipped");
+        if (mounted) setView("login"); // Default to login in browser
+        return;
+      }
+
       try {
-        const status = await invoke("check_auth_status");
+        const status = await invoke<string>("check_auth_status");
+        if (!mounted) return;
         if (status === "unlocked") setView("dashboard");
         else if (status === "setup_needed") setView("setup");
         else setView("login");
       } catch (e) {
-        console.error(e);
+        console.error("Auth Check Failed:", e);
+        if (mounted) setView("login");
       }
     }
     init();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   async function handleInit(): Promise<ActionResult> {
@@ -113,8 +122,10 @@ export function useAuth() {
     if (password !== confirmPass)
       return { success: false, msg: "Passwords do not match." };
     try {
-      const code = (await invoke("init_vault", { password })) as string;
-      setRecoveryCode(code);
+      if (isTauri()) {
+        const code = (await invoke("init_vault", { password })) as string;
+        setRecoveryCode(code);
+      }
       setView("recovery_display");
       return { success: true };
     } catch (e) {
@@ -124,7 +135,7 @@ export function useAuth() {
 
   async function handleLogin(): Promise<ActionResult> {
     try {
-      await invoke("login", { password });
+      if (isTauri()) await invoke("login", { password });
       setPassword("");
       setView("dashboard");
       setSessionExpired(false);
@@ -138,10 +149,11 @@ export function useAuth() {
     if (!recoveryCode || password !== confirmPass)
       return { success: false, msg: "Check inputs." };
     try {
-      await invoke("recover_vault", {
-        recoveryCode: recoveryCode.trim(),
-        newPassword: password,
-      });
+      if (isTauri())
+        await invoke("recover_vault", {
+          recoveryCode: recoveryCode.trim(),
+          newPassword: password,
+        });
       setPassword("");
       setConfirmPass("");
       setRecoveryCode("");
@@ -155,10 +167,9 @@ export function useAuth() {
 
   async function handleChangePassword(): Promise<ActionResult> {
     if (password !== confirmPass) return { success: false, msg: "Mismatch." };
-    if (getPasswordScore(password) < 3)
-      return { success: false, msg: "Weak Password." };
     try {
-      await invoke("change_user_password", { newPassword: password });
+      if (isTauri())
+        await invoke("change_user_password", { newPassword: password });
       setPassword("");
       setConfirmPass("");
       return { success: true, msg: "Password updated." };
@@ -169,20 +180,15 @@ export function useAuth() {
 
   async function handleReset2FA(): Promise<ActionResult> {
     try {
-      const code = (await invoke("regenerate_recovery_code")) as string;
-      setRecoveryCode(code);
+      if (isTauri()) {
+        const code = (await invoke("regenerate_recovery_code")) as string;
+        setRecoveryCode(code);
+      }
       setView("recovery_display");
       return { success: true };
     } catch (e) {
       return { success: false, msg: String(e) };
     }
-  }
-
-  async function logout() {
-    await invoke("logout");
-    setView("login");
-    setPassword("");
-    setShowTimeoutWarning(false);
   }
 
   return {
@@ -196,12 +202,9 @@ export function useAuth() {
     setRecoveryCode,
     sessionExpired,
     setSessionExpired,
-
-    // Export new state
     showTimeoutWarning,
     countdown,
-    stayLoggedIn: resetIdleTimer, // Helper to manually reset
-
+    stayLoggedIn: resetIdleTimer,
     handleInit,
     handleLogin,
     handleRecovery,

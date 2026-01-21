@@ -630,6 +630,7 @@ export function ChangePassModal({
               className="auth-input has-icon"
               placeholder="New Password"
               onChange={(e) => setPass(e.target.value)}
+              autoFocus
             />
             <button
               className="password-toggle"
@@ -675,6 +676,64 @@ export function ChangePassModal({
           <div style={{ display: "flex", gap: 10 }}>
             <button className="auth-btn" style={{ flex: 1 }} onClick={onUpdate}>
               Update
+            </button>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- ENTRY DELETE MODAL (For Vault/Notes) ---
+export function EntryDeleteModal({
+  title,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onCancel}
+      style={{ zIndex: 100005 }}
+    >
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <Trash2 size={20} color="var(--btn-danger)" />
+          <h2 style={{ color: "var(--btn-danger)" }}>Delete Item</h2>
+        </div>
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", textAlign: "center" }}>
+            Are you sure you want to delete <br />
+            <strong>"{title}"</strong>?
+          </p>
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.85rem",
+              textAlign: "center",
+              marginTop: "-10px",
+            }}
+          >
+            This action cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button
+              className="auth-btn danger-btn"
+              style={{ flex: 1 }}
+              onClick={onConfirm}
+            >
+              Delete
             </button>
             <button
               className="secondary-btn"

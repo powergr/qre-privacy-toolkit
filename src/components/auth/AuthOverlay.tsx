@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Shield, Copy, Check, Eye, EyeOff } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ViewState } from "../../types";
@@ -23,9 +23,20 @@ interface AuthOverlayProps {
 export function AuthOverlay(props: AuthOverlayProps) {
   const { view, password, recoveryCode } = props;
   const [copied, setCopied] = useState(false);
-
-  // NEW: State to toggle password visibility
   const [showPass, setShowPass] = useState(false);
+
+  // FIX: Create a ref for the password input
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // FIX: Force focus whenever the view changes to 'login' or 'setup'
+  useEffect(() => {
+    if (view === "login" || view === "setup") {
+      // Small timeout ensures the DOM is ready
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+    }
+  }, [view]);
 
   async function handleCopy() {
     try {
@@ -114,12 +125,14 @@ export function AuthOverlay(props: AuthOverlayProps) {
                   className="auth-input"
                   placeholder="Recovery Code (QRE-...)"
                   onChange={(e) => props.setRecoveryCode(e.target.value)}
+                  autoFocus // Autofocus for recovery screen
                 />
               )}
 
               {/* --- CUSTOM PASSWORD INPUT START --- */}
               <div className="password-wrapper">
                 <input
+                  ref={inputRef} // FIX: Attach Ref
                   type={showPass ? "text" : "password"}
                   className="auth-input has-icon"
                   placeholder={
@@ -131,10 +144,11 @@ export function AuthOverlay(props: AuthOverlayProps) {
                     e.key === "Enter" &&
                     (view === "login" ? props.onLogin() : null)
                   }
+                  // We remove autoFocus here because the useEffect handles it robustly now
                 />
                 <button
                   className="password-toggle"
-                  tabIndex={-1} // Skip tab selection
+                  tabIndex={-1}
                   onClick={() => setShowPass(!showPass)}
                   title={showPass ? "Hide Password" : "Show Password"}
                 >
@@ -167,7 +181,6 @@ export function AuthOverlay(props: AuthOverlayProps) {
                     </div>
                   )}
 
-                  {/* --- CONFIRM PASSWORD INPUT START --- */}
                   <div className="password-wrapper">
                     <input
                       type={showPass ? "text" : "password"}
@@ -175,16 +188,7 @@ export function AuthOverlay(props: AuthOverlayProps) {
                       placeholder="Confirm Password"
                       onChange={(e) => props.setConfirmPass(e.target.value)}
                     />
-                    {/* Optional: Add eye here too, or let the top eye control both. 
-                         I usually let the top eye control both for cleaner UI. 
-                         If you want separate control, uncomment below. */}
-                    {/*
-                     <button className="password-toggle" onClick={() => setShowPass(!showPass)}>
-                        {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                     </button>
-                     */}
                   </div>
-                  {/* --- CONFIRM PASSWORD INPUT END --- */}
                 </>
               )}
 
@@ -199,8 +203,8 @@ export function AuthOverlay(props: AuthOverlayProps) {
                 {view === "setup"
                   ? "Initialize"
                   : view === "recovery_entry"
-                  ? "Reset & Login"
-                  : "Unlock"}
+                    ? "Reset & Login"
+                    : "Unlock"}
               </button>
 
               {view === "login" && (

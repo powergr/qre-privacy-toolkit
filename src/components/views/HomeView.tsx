@@ -1,4 +1,4 @@
-import { Lock, Trash2, Key, Fingerprint } from "lucide-react"; // CHANGED
+import { Lock, Trash2, Key, Fingerprint, StickyNote } from "lucide-react";
 
 interface HomeViewProps {
   setTab: (tab: string) => void;
@@ -10,18 +10,17 @@ export function HomeView({ setTab }: HomeViewProps) {
       style={{
         height: "100%",
         width: "100%",
-        overflowY: "auto" /* Allow scrolling */,
+        overflowY: "auto",
         padding: "40px 20px",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        /* Remove 'justifyContent: center' to prevent clipping at top */
       }}
     >
       {/* Header Section */}
-      <div style={{ marginBottom: 40, textAlign: "center", marginTop: "5vh" }}>
+      <div style={{ marginBottom: 40, textAlign: "center", marginTop: "2vh" }}>
         <Fingerprint
-          size={90}
+          size={80}
           color="var(--accent)"
           strokeWidth={1}
           style={{ marginBottom: 15 }}
@@ -34,7 +33,7 @@ export function HomeView({ setTab }: HomeViewProps) {
             fontWeight: 800,
           }}
         >
-          QRE Privacy Toolkit
+          QRE Toolkit
         </h1>
         <p
           style={{
@@ -59,6 +58,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Encrypt Files</h3>
           <p>Secure documents with military-grade AES-256.</p>
+        </div>
+
+        {/* Notes Card (NEW) */}
+        <div onClick={() => setTab("notes")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(255, 170, 0, 0.1)" }}
+          >
+            <StickyNote size={36} color="#ffaa00" />
+          </div>
+          <h3>Secure Notes</h3>
+          <p>Encrypted notepad for PINs and sensitive text.</p>
         </div>
 
         {/* Vault Card */}

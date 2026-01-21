@@ -2,28 +2,38 @@ import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export function useTheme() {
+  // Load saved theme or default to 'system'
   const [theme, setTheme] = useState(
-    () => localStorage.getItem("qre-theme") || "system"
+    localStorage.getItem("qre_theme") || "system",
   );
 
   useEffect(() => {
-    const updateTheme = async () => {
-      const appWindow = getCurrentWindow();
-
-      if (theme === "system") {
-        delete document.body.dataset.theme;
-        // Reset to system default (null lets OS decide)
-        await appWindow.setTheme(null);
-      } else {
-        document.body.dataset.theme = theme;
-        // Force the OS Title Bar to match ("light" or "dark")
-        await appWindow.setTheme(theme as "light" | "dark");
-      }
-    };
-
-    updateTheme();
-    localStorage.setItem("qre-theme", theme);
+    applyTheme(theme);
   }, [theme]);
+
+  async function applyTheme(t: string) {
+    // 1. Update DOM for CSS
+    document.body.setAttribute("data-theme", t);
+
+    // 2. Persist
+    localStorage.setItem("qre_theme", t);
+
+    // 3. Try to update native Window frame (Desktop only)
+    // We wrap this in try/catch because it often fails on Android or during early init
+    try {
+      if (typeof window !== "undefined" && "os" in window.navigator) {
+        // Only attempt on desktop platforms if needed
+        // Note: Tauri v2 handles some of this automatically, but explicit setting can help
+        const appWindow = getCurrentWindow();
+        if (appWindow && typeof appWindow.setTheme === "function") {
+          await appWindow.setTheme(t as any);
+        }
+      }
+    } catch (e) {
+      // Ignore errors here to prevent app crash (common on Android)
+      // console.warn("Native theme update failed:", e);
+    }
+  }
 
   return { theme, setTheme };
 }

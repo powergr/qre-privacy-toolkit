@@ -13,6 +13,7 @@ import {
   Monitor,
   Download,
   RotateCcw,
+  StickyNote,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -22,8 +23,6 @@ interface SidebarProps {
   onOpenHelpModal: () => void;
   onOpenAboutModal: () => void;
   onLogout: () => void;
-
-  // NEW: Global Option Handlers
   onTheme: () => void;
   onBackup: () => void;
   onChangePassword: () => void;
@@ -50,6 +49,11 @@ export function Sidebar({
   const tabs = [
     { id: "home", label: "Home", icon: <Home size={22} strokeWidth={2.5} /> },
     { id: "files", label: "Files", icon: <Lock size={22} strokeWidth={2.5} /> },
+    {
+      id: "notes",
+      label: "Notes",
+      icon: <StickyNote size={22} strokeWidth={2.5} />,
+    }, // <--- ADDED
     {
       id: "vault",
       label: "Passwords",
@@ -103,7 +107,6 @@ export function Sidebar({
         ))}
       </div>
 
-      {/* Spacer pushes everything down */}
       <div style={{ marginTop: "auto" }}></div>
 
       {/* --- HELP MENU --- */}
@@ -156,7 +159,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* --- OPTIONS MENU (NEW) --- */}
+      {/* --- OPTIONS MENU --- */}
       <div style={{ position: "relative", width: "100%" }} ref={optionsRef}>
         {showOptionsMenu && (
           <div className="help-menu">
@@ -209,7 +212,6 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* --- LOG OUT --- */}
       <button
         className="nav-btn"
         onClick={onLogout}

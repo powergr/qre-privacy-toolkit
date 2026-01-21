@@ -19,6 +19,7 @@ use sysinfo::Disks;
 use crate::state::SessionState;
 use crate::utils;
 use crate::keychain;
+use crate::notes::NotesVault;
 use crate::crypto;        // V4 Engine: Memory-based (Legacy support & Folders)
 use crate::crypto_stream; // V5 Engine: Stream-based (Current standard for Files)
 
@@ -622,6 +623,62 @@ pub fn load_password_vault(app: AppHandle, state: tauri::State<SessionState>) ->
         .map_err(|_| "Failed to parse vault data".to_string())?;
 
     Ok(vault)
+}
+
+#[tauri::command]
+pub fn load_notes_vault(app: AppHandle, state: tauri::State<SessionState>) -> CommandResult<NotesVault> {
+    let master_key = {
+        let guard = state.master_key.lock().unwrap();
+        match &*guard {
+            Some(mk) => mk.clone(),
+            None => return Err("Vault is locked".to_string()),
+        }
+    };
+
+    let path = resolve_keychain_path(&app)?.parent().unwrap().join("notes.qre");
+    
+    if !path.exists() {
+        return Ok(NotesVault::new());
+    }
+
+    let container = crypto::EncryptedFileContainer::load(path.to_str().unwrap())
+        .map_err(|e| e.to_string())?;
+        
+    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
+        .map_err(|e| e.to_string())?;
+
+    let vault: NotesVault = serde_json::from_slice(&payload.content)
+        .map_err(|_| "Failed to parse notes data".to_string())?;
+
+    Ok(vault)
+}
+
+#[tauri::command]
+pub fn save_notes_vault(
+    app: AppHandle, 
+    state: tauri::State<SessionState>, 
+    vault: NotesVault
+) -> CommandResult<()> {
+    let master_key = {
+        let guard = state.master_key.lock().unwrap();
+        match &*guard {
+            Some(mk) => mk.clone(),
+            None => return Err("Vault is locked".to_string()),
+        }
+    };
+
+    let path = resolve_keychain_path(&app)?.parent().unwrap().join("notes.qre");
+    
+    let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
+    
+    // Encrypt using V4 engine (Level 3 compression - Text compresses very well)
+    let container = crypto::encrypt_file_with_master_key(
+        &master_key, None, "notes.json", &json_data, None, 3
+    ).map_err(|e| e.to_string())?;
+
+    container.save(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    
+    Ok(())
 }
 
 #[tauri::command]
