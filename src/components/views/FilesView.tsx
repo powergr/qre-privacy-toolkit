@@ -25,7 +25,11 @@ import {
 // Types
 import { BatchResult } from "../../types";
 
-export function FilesView() {
+interface FilesViewProps {
+  onShowBackupReminder: () => void; // <--- ADDED PROP
+}
+
+export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(() => fs.loadDir(fs.currentPath));
 
@@ -50,22 +54,27 @@ export function FilesView() {
 
   // --- LOGIC: Lock Request ---
   const requestLock = useCallback(
-    (targets: string[]) => {
+    async (targets: string[]) => {
       if (crypto.isParanoid) {
         setPendingLockTargets(targets);
         setShowEntropyModal(true);
       } else {
-        crypto.runCrypto("lock_file", targets);
+        // Run Encryption
+        await crypto.runCrypto("lock_file", targets);
+        // Trigger Reminder Check
+        props.onShowBackupReminder();
       }
     },
-    [crypto],
+    [crypto, props],
   );
 
-  const handleEntropyComplete = (entropy: number[]) => {
+  const handleEntropyComplete = async (entropy: number[]) => {
     setShowEntropyModal(false);
     if (pendingLockTargets) {
-      crypto.runCrypto("lock_file", pendingLockTargets, entropy);
+      await crypto.runCrypto("lock_file", pendingLockTargets, entropy);
       setPendingLockTargets(null);
+      // Trigger Reminder Check
+      props.onShowBackupReminder();
     }
   };
 

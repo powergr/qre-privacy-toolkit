@@ -1,4 +1,12 @@
-import { Lock, Trash2, Key, Fingerprint, StickyNote } from "lucide-react";
+import {
+  Lock,
+  Trash2,
+  Key,
+  Fingerprint,
+  StickyNote,
+  Radar,
+  Eraser,
+} from "lucide-react"; // Added Radar
 
 interface HomeViewProps {
   setTab: (tab: string) => void;
@@ -18,9 +26,9 @@ export function HomeView({ setTab }: HomeViewProps) {
       }}
     >
       {/* Header Section */}
-      <div style={{ marginBottom: 40, textAlign: "center", marginTop: "2vh" }}>
+      <div style={{ marginBottom: 40, textAlign: "center", marginTop: "5vh" }}>
         <Fingerprint
-          size={80}
+          size={90}
           color="var(--accent)"
           strokeWidth={1}
           style={{ marginBottom: 15 }}
@@ -60,7 +68,7 @@ export function HomeView({ setTab }: HomeViewProps) {
           <p>Secure documents with military-grade AES-256.</p>
         </div>
 
-        {/* Notes Card (NEW) */}
+        {/* Notes Card */}
         <div onClick={() => setTab("notes")} className="home-card">
           <div
             className="card-icon"
@@ -82,6 +90,30 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Password Vault</h3>
           <p>Store your digital secrets securely offline.</p>
+        </div>
+
+        {/* NEW: Breach Check Card */}
+        <div onClick={() => setTab("breach")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(168, 85, 247, 0.1)" }}
+          >
+            <Radar size={36} color="#a855f7" />
+          </div>
+          <h3>Breach Check</h3>
+          <p>Scan your passwords against 2B+ leaked records.</p>
+        </div>
+
+        {/* Cleaner Card */}
+        <div onClick={() => setTab("cleaner")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(34, 197, 94, 0.1)" }}
+          >
+            <Eraser size={36} color="#22c55e" />
+          </div>
+          <h3>Metadata Cleaner</h3>
+          <p>Remove hidden GPS and author data from photos.</p>
         </div>
 
         {/* Shredder Card */}

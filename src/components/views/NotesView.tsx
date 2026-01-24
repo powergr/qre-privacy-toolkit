@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Trash2, StickyNote } from "lucide-react";
 import { useNotes, NoteEntry } from "../../hooks/useNotes";
-import { EntryDeleteModal } from "../modals/AppModals"; // Import new modal
+import { EntryDeleteModal } from "../modals/AppModals"; // Custom Modal
 
 export function NotesView() {
   const { entries, loading, saveNote, deleteNote } = useNotes();
   const [editing, setEditing] = useState<Partial<NoteEntry> | null>(null);
 
-  // NEW: State for deletion
+  // State for deletion modal
   const [itemToDelete, setItemToDelete] = useState<NoteEntry | null>(null);
 
   if (loading)
@@ -36,6 +36,19 @@ export function NotesView() {
         </button>
       </div>
 
+      {entries.length === 0 && (
+        <div
+          style={{
+            textAlign: "center",
+            marginTop: 50,
+            color: "var(--text-dim)",
+          }}
+        >
+          <StickyNote size={48} style={{ marginBottom: 10, opacity: 0.5 }} />
+          <p>Your notebook is empty.</p>
+        </div>
+      )}
+
       <div className="modern-grid">
         {entries.map((note) => (
           <div
@@ -54,12 +67,13 @@ export function NotesView() {
               <div className="card-actions">
                 <button
                   className="icon-btn-ghost danger"
+                  title="Delete Note"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setItemToDelete(note); // Trigger Modal
+                    setItemToDelete(note);
                   }}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={18} />
                 </button>
               </div>
             </div>
@@ -85,7 +99,7 @@ export function NotesView() {
             <div
               style={{
                 display: "flex",
-                justifyContent: "space-between",
+                justifyContent: "center",
                 marginBottom: 15,
                 alignItems: "center",
               }}
@@ -93,23 +107,6 @@ export function NotesView() {
               <h3 style={{ margin: 0 }}>
                 {editing.id ? "Edit Note" : "New Note"}
               </h3>
-              {editing.id && (
-                <Trash2
-                  size={20}
-                  color="var(--btn-danger)"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => {
-                    setItemToDelete({
-                      id: editing.id!,
-                      title: editing.title || "Note",
-                      content: "",
-                      created_at: 0,
-                      updated_at: 0,
-                    });
-                    setEditing(null);
-                  }}
-                />
-              )}
             </div>
 
             <div
@@ -117,7 +114,7 @@ export function NotesView() {
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 10,
+                gap: 15,
                 padding: 0,
               }}
             >
@@ -147,16 +144,21 @@ export function NotesView() {
                     // FIX: Generate ID here to prevent overwrites
                     const finalId = editing.id || crypto.randomUUID();
                     const now = Date.now();
+
                     saveNote({
                       ...editing,
                       created_at: editing.created_at || now,
                       updated_at: now,
                       id: finalId,
+                      // Ensure required fields
+                      title: editing.title || "Untitled",
+                      content: editing.content || "",
                     } as NoteEntry);
+
                     setEditing(null);
                   }}
                 >
-                  Save Note
+                  Save
                 </button>
                 <button
                   className="secondary-btn"

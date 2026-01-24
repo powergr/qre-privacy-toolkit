@@ -14,6 +14,8 @@ import {
   Download,
   RotateCcw,
   StickyNote,
+  Radar,
+  Eraser,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -53,11 +55,22 @@ export function Sidebar({
       id: "notes",
       label: "Notes",
       icon: <StickyNote size={22} strokeWidth={2.5} />,
-    }, // <--- ADDED
+    },
     {
       id: "vault",
       label: "Passwords",
       icon: <Key size={22} strokeWidth={2.5} />,
+    },
+    // NEW TAB ADDED HERE
+    {
+      id: "breach",
+      label: "Breach Check",
+      icon: <Radar size={22} strokeWidth={2.5} />,
+    },
+    {
+      id: "cleaner",
+      label: "Cleaner",
+      icon: <Eraser size={22} strokeWidth={2.5} />,
     },
     {
       id: "shred",

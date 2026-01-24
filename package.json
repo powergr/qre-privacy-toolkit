@@ -1,7 +1,7 @@
 {
   "name": "qre-privacy-toolki",
   "private": true,
-  "version": "2.5.2",
+  "version": "2.5.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,9 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.3",
     "@types/zxcvbn": "^4.4.5",
+    "@zxcvbn-ts/core": "^3.0.4",
+    "@zxcvbn-ts/language-common": "^3.0.4",
+    "@zxcvbn-ts/language-en": "^3.0.2",
     "lucide-react": "^0.562.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

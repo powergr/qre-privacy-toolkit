@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.5.2"
+version = "2.5.3"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
 edition = "2021"
@@ -29,6 +29,8 @@ aes-gcm = "0.10"
 rand = "0.8"
 rand_chacha = "0.3"
 sha2 = "0.10"
+sha1 = "0.10"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 bincode = "1.3"
 zstd = "0.13"
 zeroize = { version = "1.7", features = ["derive"] }
@@ -39,6 +41,11 @@ directories = "5.0"
 argon2 = "0.5"
 tauri-plugin-os = "2"
 tauri-plugin-opener = "2"
+
+# Metadata Cleaning Dependencies
+exif = { package = "kamadak-exif", version = "0.5" }
+img-parts = "0.3"
+lopdf = "0.31"
 
 # Add trash only for non-Android targets
 [target.'cfg(not(target_os = "android"))'.dependencies]

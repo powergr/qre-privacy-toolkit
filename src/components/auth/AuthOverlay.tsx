@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
-import { Shield, Copy, Check, Eye, EyeOff } from "lucide-react";
+import { useState } from "react";
+import { Shield, Copy, Check } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ViewState } from "../../types";
-import { getPasswordScore, getStrengthColor } from "../../utils/security";
+import { PasswordInput } from "../common/PasswordInput";
 
 interface AuthOverlayProps {
   view: ViewState;
@@ -23,20 +23,6 @@ interface AuthOverlayProps {
 export function AuthOverlay(props: AuthOverlayProps) {
   const { view, password, recoveryCode } = props;
   const [copied, setCopied] = useState(false);
-  const [showPass, setShowPass] = useState(false);
-
-  // FIX: Create a ref for the password input
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // FIX: Force focus whenever the view changes to 'login' or 'setup'
-  useEffect(() => {
-    if (view === "login" || view === "setup") {
-      // Small timeout ensures the DOM is ready
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 50);
-    }
-  }, [view]);
 
   async function handleCopy() {
     try {
@@ -45,21 +31,27 @@ export function AuthOverlay(props: AuthOverlayProps) {
       setTimeout(() => setCopied(false), 2000);
       setTimeout(async () => {
         await writeText("");
-      }, 30000);
+      }, 30000); // Clear clipboard after 30s
     } catch (e) {
       console.error("Clipboard error", e);
     }
   }
+
+  // Handle Form Submission (Enter Key)
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault(); // Stop page reload
+    if (view === "setup") props.onInit();
+    else if (view === "recovery_entry") props.onRecovery();
+    else props.onLogin();
+  };
 
   let title = "Unlock Vault";
   if (view === "setup") title = "Setup QRE";
   if (view === "recovery_entry") title = "Recovery";
   if (view === "recovery_display") title = "Recovery Code";
 
-  const score =
-    view === "setup" || view === "recovery_entry"
-      ? getPasswordScore(password)
-      : -1;
+  // Determine if we need the strength meter (Only for creating new passwords)
+  const isCreationMode = view === "setup" || view === "recovery_entry";
 
   return (
     <div className="auth-overlay">
@@ -71,6 +63,7 @@ export function AuthOverlay(props: AuthOverlayProps) {
 
         <div className="modal-body">
           {view === "recovery_display" ? (
+            /* --- RECOVERY CODE DISPLAY --- */
             <>
               <p style={{ color: "var(--warning)", textAlign: "center" }}>
                 SAVE THIS CODE SECURELY
@@ -119,87 +112,43 @@ export function AuthOverlay(props: AuthOverlayProps) {
               </button>
             </>
           ) : (
-            <>
+            /* --- LOGIN / SETUP FORM --- */
+            <form
+              onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: "15px" }}
+            >
               {view === "recovery_entry" && (
                 <input
                   className="auth-input"
                   placeholder="Recovery Code (QRE-...)"
                   onChange={(e) => props.setRecoveryCode(e.target.value)}
-                  autoFocus // Autofocus for recovery screen
+                  autoFocus
                 />
               )}
 
-              {/* --- CUSTOM PASSWORD INPUT START --- */}
-              <div className="password-wrapper">
-                <input
-                  ref={inputRef} // FIX: Attach Ref
-                  type={showPass ? "text" : "password"}
-                  className="auth-input has-icon"
-                  placeholder={
-                    view === "login" ? "Master Password" : "New Password"
-                  }
-                  value={password}
-                  onChange={(e) => props.setPassword(e.target.value)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" &&
-                    (view === "login" ? props.onLogin() : null)
-                  }
-                  // We remove autoFocus here because the useEffect handles it robustly now
+              {/* Password Input with Strength Meter & Generator */}
+              <PasswordInput
+                key={view} // Reset state/autofocus when switching views
+                value={password}
+                onChange={props.setPassword}
+                placeholder={
+                  view === "login" ? "Master Password" : "New Master Password"
+                }
+                showStrength={isCreationMode} // Show meter for Setup/Recovery
+                allowGenerate={isCreationMode} // Allow generating for Setup/Recovery
+                autoFocus={view !== "recovery_entry"} // Autofocus here unless recovery code is first
+              />
+
+              {isCreationMode && (
+                <PasswordInput
+                  value={props.confirmPass}
+                  onChange={props.setConfirmPass}
+                  placeholder="Confirm Password"
+                  showStrength={false}
                 />
-                <button
-                  className="password-toggle"
-                  tabIndex={-1}
-                  onClick={() => setShowPass(!showPass)}
-                  title={showPass ? "Hide Password" : "Show Password"}
-                >
-                  {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-              {/* --- CUSTOM PASSWORD INPUT END --- */}
-
-              {(view === "setup" || view === "recovery_entry") && (
-                <>
-                  {score >= 0 && (
-                    <div style={{ marginTop: "5px", marginBottom: "5px" }}>
-                      <div
-                        style={{
-                          height: "4px",
-                          width: "100%",
-                          background: "#2f3448",
-                          borderRadius: "2px",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: "100%",
-                            width: `${(score + 1) * 20}%`,
-                            background: getStrengthColor(score),
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="password-wrapper">
-                    <input
-                      type={showPass ? "text" : "password"}
-                      className="auth-input has-icon"
-                      placeholder="Confirm Password"
-                      onChange={(e) => props.setConfirmPass(e.target.value)}
-                    />
-                  </div>
-                </>
               )}
 
-              <button
-                className="auth-btn"
-                onClick={() => {
-                  if (view === "setup") props.onInit();
-                  else if (view === "recovery_entry") props.onRecovery();
-                  else props.onLogin();
-                }}
-              >
+              <button type="submit" className="auth-btn">
                 {view === "setup"
                   ? "Initialize"
                   : view === "recovery_entry"
@@ -208,7 +157,7 @@ export function AuthOverlay(props: AuthOverlayProps) {
               </button>
 
               {view === "login" && (
-                <div style={{ textAlign: "center", marginTop: 10 }}>
+                <div style={{ textAlign: "center", marginTop: -5 }}>
                   <span
                     style={{
                       fontSize: "0.8rem",
@@ -224,13 +173,15 @@ export function AuthOverlay(props: AuthOverlayProps) {
               )}
               {view === "recovery_entry" && (
                 <button
+                  type="button"
                   className="secondary-btn"
                   onClick={props.onCancelRecovery}
+                  style={{ marginTop: 0 }}
                 >
                   Cancel
                 </button>
               )}
-            </>
+            </form>
           )}
         </div>
       </div>

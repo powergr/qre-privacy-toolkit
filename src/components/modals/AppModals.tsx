@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import {
   X,
   Info,
@@ -14,11 +14,9 @@ import {
   XCircle,
   Download,
   CheckCircle,
-  Eye,
-  EyeOff,
-  FileX,
+  FileX, // <--- ADDED THIS IMPORT
 } from "lucide-react";
-import { getPasswordScore, getStrengthColor } from "../../utils/security";
+import { PasswordInput } from "../common/PasswordInput";
 
 // --- INFO MODAL (Success) ---
 export function InfoModal({
@@ -119,6 +117,62 @@ export function BackupModal({
               onClick={onCancel}
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- BACKUP REMINDER MODAL ---
+export function BackupReminderModal({
+  onBackup,
+  onCancel,
+}: {
+  onBackup: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="modal-overlay" style={{ zIndex: 100005 }}>
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-header"
+          style={{ borderBottomColor: "var(--warning)" }}
+        >
+          <AlertTriangle size={20} color="var(--warning)" />
+          <h2 style={{ color: "var(--warning)" }}>Security Reminder</h2>
+        </div>
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", lineHeight: "1.5" }}>
+            You have successfully encrypted your first file.
+          </p>
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.9rem",
+              lineHeight: "1.4",
+            }}
+          >
+            If you lose your password or your hard drive fails, your data will
+            be <strong>gone forever</strong> unless you have a backup of your
+            Keychain.
+          </p>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button
+              className="auth-btn"
+              style={{ flex: 1, backgroundColor: "var(--accent)" }}
+              onClick={onBackup}
+            >
+              Backup Now
+            </button>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Later
             </button>
           </div>
         </div>
@@ -309,7 +363,65 @@ export function ThemeModal({
   );
 }
 
-// --- DELETE CONFIRM MODAL ---
+// --- ENTRY DELETE MODAL (For Vault/Notes) ---
+export function EntryDeleteModal({
+  title,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onCancel}
+      style={{ zIndex: 100005 }}
+    >
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <Trash2 size={20} color="var(--btn-danger)" />
+          <h2 style={{ color: "var(--btn-danger)" }}>Delete Item</h2>
+        </div>
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", textAlign: "center" }}>
+            Are you sure you want to delete <br />
+            <strong>"{title}"</strong>?
+          </p>
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.85rem",
+              textAlign: "center",
+              marginTop: "-10px",
+            }}
+          >
+            This action cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button
+              className="auth-btn danger-btn"
+              style={{ flex: 1 }}
+              onClick={onConfirm}
+            >
+              Delete
+            </button>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- DELETE CONFIRM MODAL (For Files) ---
 interface DeleteConfirmModalProps {
   items: string[];
   onTrash: () => void;
@@ -424,7 +536,7 @@ export function CompressionModal({
         </div>
         <div className="modal-body">
           <p style={{ color: "var(--text-main)", marginBottom: 10 }}>
-            Select compression level:
+            Select compression mode:
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[
@@ -493,7 +605,7 @@ export function CompressionModal({
   );
 }
 
-// --- ABOUT MODAL (UPDATED) ---
+// --- ABOUT MODAL ---
 export function AboutModal({ onClose }: { onClose: () => void }) {
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
@@ -502,17 +614,18 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         const v = await getVersion();
         setAppVersion(v);
       } catch (e) {
-        setAppVersion("Unknown");
+        setAppVersion("2.5.2");
       }
     }
     loadVer();
   }, []);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <Info size={20} color="var(--accent)" />
-          <h2>About QRE Privacy Toolkit</h2>
+          <h2>About QRE Toolkit</h2>
           <div style={{ flex: 1 }}></div>
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
@@ -532,16 +645,17 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
             Secure Encryption • Password Vault • File Shredder
           </p>
 
-          {/* UPDATED: WEBSITE LINK */}
           <p
             style={{
               color: "var(--accent)",
               cursor: "pointer",
               textDecoration: "underline",
-              marginTop: 10,
+              marginTop: 15,
               fontWeight: "bold",
             }}
-            onClick={async () => await openUrl("https://projectqre.com/")}
+            onClick={() =>
+              invoke("plugin:opener|open", { path: "https://projectqre.com/" })
+            }
           >
             Visit projectqre.com
           </p>
@@ -549,7 +663,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           <button
             className="secondary-btn"
             onClick={onClose}
-            style={{ marginTop: 15 }}
+            style={{ marginTop: 20 }}
           >
             Close
           </button>
@@ -609,13 +723,11 @@ interface ChangePassProps {
 export function ChangePassModal({
   pass,
   setPass,
+  confirm,
   setConfirm,
   onUpdate,
   onCancel,
 }: ChangePassProps) {
-  const score = getPasswordScore(pass);
-  const [showPass, setShowPass] = useState(false);
-
   return (
     <div className="modal-overlay">
       <div className="auth-card">
@@ -624,116 +736,25 @@ export function ChangePassModal({
           <h2>Change Password</h2>
         </div>
         <div className="modal-body">
-          <div className="password-wrapper">
-            <input
-              type={showPass ? "text" : "password"}
-              className="auth-input has-icon"
-              placeholder="New Password"
-              onChange={(e) => setPass(e.target.value)}
-              autoFocus
-            />
-            <button
-              className="password-toggle"
-              tabIndex={-1}
-              onClick={() => setShowPass(!showPass)}
-              title={showPass ? "Hide Password" : "Show Password"}
-            >
-              {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
-          </div>
+          {/* New Password Input with Strength & Generator */}
+          <PasswordInput
+            value={pass}
+            onChange={setPass}
+            placeholder="New Password"
+            showStrength={true}
+            allowGenerate={true}
+            autoFocus
+          />
 
-          {pass && (
-            <div style={{ marginTop: "5px", marginBottom: "5px" }}>
-              <div
-                style={{
-                  height: "4px",
-                  width: "100%",
-                  background: "var(--highlight)",
-                  borderRadius: "2px",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${(score + 1) * 20}%`,
-                    background: getStrengthColor(score),
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="password-wrapper">
-            <input
-              type={showPass ? "text" : "password"}
-              className="auth-input has-icon"
-              placeholder="Confirm"
-              onChange={(e) => setConfirm(e.target.value)}
-            />
-          </div>
+          <PasswordInput
+            value={confirm}
+            onChange={setConfirm}
+            placeholder="Confirm Password"
+          />
 
           <div style={{ display: "flex", gap: 10 }}>
             <button className="auth-btn" style={{ flex: 1 }} onClick={onUpdate}>
               Update
-            </button>
-            <button
-              className="secondary-btn"
-              style={{ flex: 1 }}
-              onClick={onCancel}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- ENTRY DELETE MODAL (For Vault/Notes) ---
-export function EntryDeleteModal({
-  title,
-  onConfirm,
-  onCancel,
-}: {
-  title: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div
-      className="modal-overlay"
-      onClick={onCancel}
-      style={{ zIndex: 100005 }}
-    >
-      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <Trash2 size={20} color="var(--btn-danger)" />
-          <h2 style={{ color: "var(--btn-danger)" }}>Delete Item</h2>
-        </div>
-        <div className="modal-body">
-          <p style={{ color: "var(--text-main)", textAlign: "center" }}>
-            Are you sure you want to delete <br />
-            <strong>"{title}"</strong>?
-          </p>
-          <p
-            style={{
-              color: "var(--text-dim)",
-              fontSize: "0.85rem",
-              textAlign: "center",
-              marginTop: "-10px",
-            }}
-          >
-            This action cannot be undone.
-          </p>
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            <button
-              className="auth-btn danger-btn"
-              style={{ flex: 1 }}
-              onClick={onConfirm}
-            >
-              Delete
             </button>
             <button
               className="secondary-btn"

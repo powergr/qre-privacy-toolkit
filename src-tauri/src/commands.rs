@@ -2,26 +2,26 @@ use tauri::{AppHandle, Manager};
 use std::fs;
 use std::path::{Path, PathBuf};
 use sha2::{Sha256, Digest};
-use std::io::Read; // Needed for reading version headers
-use crate::vault::PasswordVault;
+use std::io::Read;
 
-// --- PLATFORM SPECIFIC IMPORTS ---
-// Android does not support standard system commands (like opening Explorer) 
-// or standard drive letters (like C:\). We restrict these imports to Desktop only.
-
+// Fix: Only import Command on Desktop
 #[cfg(not(target_os = "android"))]
 use std::process::Command;
 
 #[cfg(not(target_os = "android"))]
 use sysinfo::Disks;
 
-// --- INTERNAL MODULES ---
 use crate::state::SessionState;
 use crate::utils;
 use crate::keychain;
+use crate::crypto;        
+use crate::crypto_stream;
+use crate::vault::PasswordVault;
 use crate::notes::NotesVault;
-use crate::crypto;        // V4 Engine: Memory-based (Legacy support & Folders)
-use crate::crypto_stream; // V5 Engine: Stream-based (Current standard for Files)
+use crate::breach;
+use crate::wordlist::WORDLIST;
+use rand::RngCore;
+use crate::cleaner::{self, MetadataReport};
 
 type CommandResult<T> = Result<T, String>;
 
@@ -32,15 +32,10 @@ pub struct BatchItemResult {
     pub message: String,
 }
 
-// --- HELPER FUNCTIONS ---
-
-/// Determines the correct location to store the password database (`keychain.json`).
-/// - **Desktop:** Uses the standard AppData/Config directory.
-/// - **Android:** Uses the application's internal data directory (Sandboxed).
+// --- HELPER: Resolve Keychain Path ---
 fn resolve_keychain_path(app: &AppHandle) -> Result<PathBuf, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     
-    // Create the directory if it doesn't exist (First run)
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     }
@@ -48,9 +43,7 @@ fn resolve_keychain_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("keychain.json"))
 }
 
-/// Checks if a file extension represents an already compressed format.
-/// Used by the "Smart Compression" logic to avoid wasting CPU time re-compressing
-/// images or videos.
+// --- HELPER: Smart Compression Detection ---
 fn is_already_compressed(filename: &str) -> bool {
     let ext = Path::new(filename)
         .extension()
@@ -63,13 +56,16 @@ fn is_already_compressed(filename: &str) -> bool {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | 
         "zip" | "7z" | "rar" | "gz" | "bz2" | "xz" | 
         "mp4" | "mkv" | "mov" | "avi" | "webm" | 
-        "mp3" | "aac" | "flac" | "wav" | "pdf"
+        "mp3" | "aac" | "flac" | "pkg" | "wav" | "pdf"
     )
 }
 
-/// Reads the raw bytes of the keychain file.
-/// **Purpose:** On Android, saving files to specific locations often requires 
-/// the Frontend to handle the write operation. This command hands the data to the UI.
+#[tauri::command]
+pub async fn check_password_breach(password: String) -> CommandResult<breach::BreachResult> {
+    breach::check_pwned(&password).await.map_err(|e| e.to_string())
+}
+
+// --- NEW COMMAND: Get Keychain Data (For Android Backup) ---
 #[tauri::command]
 pub fn get_keychain_data(app: AppHandle) -> CommandResult<Vec<u8>> {
     let path = resolve_keychain_path(&app)?;
@@ -79,11 +75,35 @@ pub fn get_keychain_data(app: AppHandle) -> CommandResult<Vec<u8>> {
     fs::read(path).map_err(|e| format!("Failed to read keychain: {}", e))
 }
 
-// --- AUTHENTICATION & SYSTEM COMMANDS ---
+// --- METADATA CLEANER COMMANDS ---
 
-/// Lists available storage roots.
-/// - **Desktop:** Returns drive letters (e.g., "C:\", "D:\").
-/// - **Android:** Returns the standard internal storage path.
+#[tauri::command]
+pub async fn analyze_file_metadata(path: String) -> CommandResult<MetadataReport> {
+    cleaner::analyze_file(std::path::Path::new(&path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clean_file_metadata(path: String) -> CommandResult<String> {
+    let out_path = cleaner::remove_metadata(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+// --- NEW COMMAND: Generate Passphrase ---
+#[tauri::command]
+pub fn generate_passphrase() -> String {
+    let mut rng = rand::thread_rng();
+    // Generate 6 random words separated by hyphens
+    (0..6)
+        .map(|_| {
+            let idx = (rng.next_u64() as usize) % WORDLIST.len();
+            WORDLIST[idx]
+        })
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+// --- AUTH & SYSTEM ---
+
 #[tauri::command]
 pub fn get_drives() -> Vec<String> {
     #[cfg(not(target_os = "android"))]
@@ -99,10 +119,6 @@ pub fn get_drives() -> Vec<String> {
     }
 }
 
-/// Determines the current state of the application:
-/// 1. **unlocked:** User is logged in (Key is in RAM).
-/// 2. **locked:** User is logged out, but a vault exists on disk.
-/// 3. **setup_needed:** No vault found (New user).
 #[tauri::command]
 pub fn check_auth_status(app: AppHandle, state: tauri::State<SessionState>) -> String {
     let guard = state.master_key.lock().unwrap();
@@ -119,21 +135,18 @@ pub fn check_auth_status(app: AppHandle, state: tauri::State<SessionState>) -> S
     }
 }
 
-/// Creates a new vault with the provided password.
-/// Automatically logs the user in upon success.
 #[tauri::command]
 pub fn init_vault(app: AppHandle, password: String, state: tauri::State<SessionState>) -> CommandResult<String> {
     let path = resolve_keychain_path(&app)?;
     let (recovery_code, master_key) = keychain::init_keychain(&path, &password).map_err(|e| e.to_string())?;
     
-    // Auto-login: Store key in memory immediately
+    // Auto-login
     let mut guard = state.master_key.lock().unwrap();
     *guard = Some(master_key);
 
     Ok(recovery_code)
 }
 
-/// Decrypts the Master Key using the password and stores it in RAM (SessionState).
 #[tauri::command]
 pub fn login(app: AppHandle, password: String, state: tauri::State<SessionState>) -> CommandResult<String> {
     let path = resolve_keychain_path(&app)?;
@@ -143,7 +156,6 @@ pub fn login(app: AppHandle, password: String, state: tauri::State<SessionState>
     Ok("Logged in".to_string())
 }
 
-/// Wipes the Master Key from RAM, locking the application.
 #[tauri::command]
 pub fn logout(state: tauri::State<SessionState>) {
     let mut guard = state.master_key.lock().unwrap();
@@ -163,7 +175,6 @@ pub fn change_user_password(app: AppHandle, new_password: String, state: tauri::
     Ok("Password changed successfully.".to_string())
 }
 
-/// Uses the Recovery Code (QRE-XXXX) to unlock the vault and set a new password.
 #[tauri::command]
 pub fn recover_vault(app: AppHandle, recovery_code: String, new_password: String, state: tauri::State<SessionState>) -> CommandResult<String> {
     let path = resolve_keychain_path(&app)?;
@@ -186,7 +197,6 @@ pub fn regenerate_recovery_code(app: AppHandle, state: tauri::State<SessionState
     Ok(new_code)
 }
 
-/// Used for "Open With..." context menu integration on Desktop.
 #[tauri::command]
 pub fn get_startup_file() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -197,7 +207,6 @@ pub fn get_startup_file() -> Option<String> {
     None
 }
 
-/// Copies the keychain.json file to a user-specified location.
 #[tauri::command]
 pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
     let src = resolve_keychain_path(&app)?;
@@ -210,9 +219,6 @@ pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
 
 // --- FILE OPERATIONS ---
 
-/// Permanently deletes files.
-/// - **Desktop:** Uses "Secure Shredding" (Overwriting data).
-/// - **Android:** Uses standard deletion (Shredding damages Flash memory/SD cards).
 #[tauri::command]
 pub async fn delete_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Vec<BatchItemResult>> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -222,11 +228,9 @@ pub async fn delete_items(app: AppHandle, paths: Vec<String>) -> CommandResult<V
             let p = Path::new(&path);
             let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
             
-            // ANDROID: Standard Delete
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
-                // Handle folders vs files
                 let res = if p.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) };
                 match res {
                      Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Deleted".into() }),
@@ -234,7 +238,6 @@ pub async fn delete_items(app: AppHandle, paths: Vec<String>) -> CommandResult<V
                 }
             }
 
-            // DESKTOP: Secure Shredding
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Preparing to shred {}", filename), 0);
@@ -248,9 +251,6 @@ pub async fn delete_items(app: AppHandle, paths: Vec<String>) -> CommandResult<V
     }).await.map_err(|e| e.to_string())?
 }
 
-/// Moves files to the Trash/Recycle Bin.
-/// - **Desktop:** Moves to OS Trash.
-/// - **Android:** Permanently Deletes (Android has no unified Trash).
 #[tauri::command]
 pub async fn trash_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Vec<BatchItemResult>> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -260,7 +260,6 @@ pub async fn trash_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Ve
             let p = Path::new(&path);
             let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-            // ANDROID LOGIC
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
@@ -271,7 +270,6 @@ pub async fn trash_items(app: AppHandle, paths: Vec<String>) -> CommandResult<Ve
                 }
             }
 
-            // DESKTOP LOGIC
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Trashing {}", filename), 50);
@@ -300,17 +298,16 @@ pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
     Ok(())
 }
 
-/// Opens the OS File Explorer and highlights the file.
 #[tauri::command]
 pub fn show_in_folder(path: String) -> CommandResult<()> {
-    // ANDROID: Return Error (Not supported)
+    // ANDROID: Return Error
     #[cfg(target_os = "android")]
     {
         let _ = path; 
         Err("Reveal in Explorer is not supported on Android".to_string())
     }
 
-    // DESKTOP: Execute OS-specific command
+    // DESKTOP: Execute Command
     #[cfg(not(target_os = "android"))]
     {
         #[cfg(target_os = "windows")]
@@ -341,9 +338,6 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
 
 // --- CRYPTO LOGIC ---
 
-/// ENCRYPTS files or folders using the QRE Engine.
-/// - **Files:** Uses V5 Streaming Engine (Unlimited Size, Low RAM).
-/// - **Folders:** Zips to a temp file, then uses V5 Streaming Engine.
 #[tauri::command]
 pub async fn lock_file(
     app: AppHandle,
@@ -355,7 +349,6 @@ pub async fn lock_file(
     compression_mode: Option<String> 
 ) -> CommandResult<Vec<BatchItemResult>> {
     
-    // Retrieve Master Key from RAM
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -364,8 +357,6 @@ pub async fn lock_file(
         }
     };
 
-    // Hybrid Keyfile Logic:
-    // Android sends raw bytes. Desktop sends a file path (for efficiency).
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
          let mut hasher = Sha256::new();
          hasher.update(&bytes);
@@ -374,7 +365,6 @@ pub async fn lock_file(
          utils::process_keyfile(keyfile_path)?
     };
 
-    // Entropy Injection (Mouse movements/Touch data)
     let entropy_seed = if let Some(bytes) = extra_entropy {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -395,9 +385,6 @@ pub async fn lock_file(
             utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
 
             // --- SMART COMPRESSION LOGIC ---
-            // "store" -> Level 0 (No compression)
-            // "extreme" -> Level 19 (Max compression, slow)
-            // "auto" -> Level 1 (if already compressed media) or Level 3 (if doc/text)
             let level = match mode_str.as_str() {
                 "store" => 0,
                 "extreme" => 19,
@@ -413,8 +400,6 @@ pub async fn lock_file(
             // --- INPUT DETERMINATION (File vs Folder) ---
             
             let (input_path_str, is_temp) = if path.is_dir() {
-                // FOLDER: Zip it to a temporary file on disk first.
-                // This prevents loading the whole folder into RAM.
                 let parent = path.parent().unwrap_or(Path::new("."));
                 let temp_zip_name = format!("{}.zip", filename);
                 let temp_zip_path = utils::get_unique_path(&parent.join(&temp_zip_name));
@@ -428,7 +413,6 @@ pub async fn lock_file(
                 
                 (temp_zip_path.to_string_lossy().to_string(), true)
             } else {
-                // FILE: Encrypt directly.
                 (file_path.clone(), false)
             };
 
@@ -444,7 +428,6 @@ pub async fn lock_file(
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
                     let pct = (processed as f64 / total as f64 * 100.0) as u8;
-                    // If using a temp zip, scale progress to 20-100% (0-20% was zipping time)
                     let display_pct = if is_temp { 20 + (pct as f64 * 0.8) as u8 } else { pct };
                     utils::emit_progress(&app_handle, &format!("Encrypting: {}", f_name_clone), display_pct);
                 }
@@ -457,11 +440,11 @@ pub async fn lock_file(
                 &master_key,
                 keyfile_hash.as_deref(),
                 entropy_seed,
-                level,
+                level, // Pass the smart level
                 progress_cb
             );
 
-            // Cleanup Temp Zip if used
+            // Cleanup Temp Zip
             if is_temp {
                 let _ = fs::remove_file(&input_path_str);
             }
@@ -488,7 +471,6 @@ pub async fn lock_file(
     }).await.map_err(|e| e.to_string())?
 }
 
-/// DECRYPTS files. Automatically detects version (V4 or V5).
 #[tauri::command]
 pub async fn unlock_file(
     app: AppHandle,
@@ -522,7 +504,7 @@ pub async fn unlock_file(
             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             utils::emit_progress(&app, &format!("Checking: {}", filename), 5);
 
-            // --- VERSION DETECTION ---
+            // DETECT VERSION (V4 vs V5)
             let mut file = match fs::File::open(path) {
                 Ok(f) => f,
                 Err(e) => {
@@ -539,7 +521,7 @@ pub async fn unlock_file(
             let version = u32::from_le_bytes(ver_buf);
 
             if version == 4 {
-                // V4 (Legacy Memory Engine - Backward Compatibility)
+                // V4 (Legacy Memory Engine)
                 match crypto::EncryptedFileContainer::load(&file_path) {
                     Ok(container) => {
                         utils::emit_progress(&app, &format!("Decrypting (Legacy V4): {}", filename), 50);
@@ -562,7 +544,7 @@ pub async fn unlock_file(
                     Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
             } else if version == 5 {
-                // V5 (Streaming Engine - Standard)
+                // V5 (Streaming Engine)
                 let parent = Path::new(&file_path).parent().unwrap_or(Path::new("."));
                 let output_dir_str = parent.to_string_lossy().to_string();
 
@@ -594,36 +576,7 @@ pub async fn unlock_file(
     }).await.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub fn load_password_vault(app: AppHandle, state: tauri::State<SessionState>) -> CommandResult<PasswordVault> {
-    let master_key = {
-        let guard = state.master_key.lock().unwrap();
-        match &*guard {
-            Some(mk) => mk.clone(),
-            None => return Err("Vault is locked".to_string()),
-        }
-    };
-
-    let path = resolve_keychain_path(&app)?.parent().unwrap().join("passwords.qre");
-    
-    if !path.exists() {
-        return Ok(PasswordVault::new()); // Return empty vault if none exists
-    }
-
-    // Load V4 Container
-    let container = crypto::EncryptedFileContainer::load(path.to_str().unwrap())
-        .map_err(|e| e.to_string())?;
-        
-    // Decrypt
-    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
-        .map_err(|e| e.to_string())?;
-
-    // Parse JSON
-    let vault: PasswordVault = serde_json::from_slice(&payload.content)
-        .map_err(|_| "Failed to parse vault data".to_string())?;
-
-    Ok(vault)
-}
+// --- SECURE NOTES COMMANDS ---
 
 #[tauri::command]
 pub fn load_notes_vault(app: AppHandle, state: tauri::State<SessionState>) -> CommandResult<NotesVault> {
@@ -671,7 +624,6 @@ pub fn save_notes_vault(
     
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
     
-    // Encrypt using V4 engine (Level 3 compression - Text compresses very well)
     let container = crypto::encrypt_file_with_master_key(
         &master_key, None, "notes.json", &json_data, None, 3
     ).map_err(|e| e.to_string())?;
@@ -679,6 +631,36 @@ pub fn save_notes_vault(
     container.save(path.to_str().unwrap()).map_err(|e| e.to_string())?;
     
     Ok(())
+}
+
+// --- PASSWORD VAULT COMMANDS ---
+
+#[tauri::command]
+pub fn load_password_vault(app: AppHandle, state: tauri::State<SessionState>) -> CommandResult<PasswordVault> {
+    let master_key = {
+        let guard = state.master_key.lock().unwrap();
+        match &*guard {
+            Some(mk) => mk.clone(),
+            None => return Err("Vault is locked".to_string()),
+        }
+    };
+
+    let path = resolve_keychain_path(&app)?.parent().unwrap().join("passwords.qre");
+    
+    if !path.exists() {
+        return Ok(PasswordVault::new());
+    }
+
+    let container = crypto::EncryptedFileContainer::load(path.to_str().unwrap())
+        .map_err(|e| e.to_string())?;
+        
+    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
+        .map_err(|e| e.to_string())?;
+
+    let vault: PasswordVault = serde_json::from_slice(&payload.content)
+        .map_err(|_| "Failed to parse vault data".to_string())?;
+
+    Ok(vault)
 }
 
 #[tauri::command]
@@ -697,15 +679,12 @@ pub fn save_password_vault(
 
     let path = resolve_keychain_path(&app)?.parent().unwrap().join("passwords.qre");
     
-    // Serialize Vault to JSON bytes
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
     
-    // Encrypt using V4 engine (Level 3 compression)
     let container = crypto::encrypt_file_with_master_key(
         &master_key, None, "passwords.json", &json_data, None, 3
     ).map_err(|e| e.to_string())?;
 
-    // Write to disk
     container.save(path.to_str().unwrap()).map_err(|e| e.to_string())?;
     
     Ok(())

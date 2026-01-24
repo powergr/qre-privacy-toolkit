@@ -7,9 +7,10 @@ import "./App.css";
 import "./styles/components.css";
 import "./styles/dashboard.css";
 import "./components/layout/Sidebar.css";
+import "./styles/modern-cards.css";
 import "./components/views/ShredderView.css";
 import "./components/views/VaultView.css";
-import "./components/views/NotesView.css"; // <--- ADDED CSS
+import "./components/views/NotesView.css";
 
 // Hooks
 import { useTheme } from "./hooks/useTheme";
@@ -22,7 +23,8 @@ import { FilesView } from "./components/views/FilesView";
 import { ShredderView } from "./components/views/ShredderView";
 import { VaultView } from "./components/views/VaultView";
 import { NotesView } from "./components/views/NotesView";
-import "./styles/modern-cards.css";
+import { BreachView } from "./components/views/BreachView";
+import { CleanerView } from "./components/views/CleanerView";
 
 // Auth & Modals
 import { AuthOverlay } from "./components/auth/AuthOverlay";
@@ -33,6 +35,7 @@ import {
   ChangePassModal,
   ThemeModal,
   BackupModal,
+  BackupReminderModal,
   InfoModal,
   TimeoutWarningModal,
 } from "./components/modals/AppModals";
@@ -41,18 +44,28 @@ function App() {
   const { theme, setTheme } = useTheme();
   const auth = useAuth();
 
+  // --- GLOBAL STATE ---
   const [activeTab, setActiveTab] = useState("home");
 
+  // Modals
   const [showAbout, setShowAbout] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
+
+  // NEW: Backup Reminder State
+  const [showBackupReminder, setShowBackupReminder] = useState(false);
+
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+
+  // --- GLOBAL HELPERS ---
 
   async function performBackup() {
     setShowBackupModal(false);
+    setShowBackupReminder(false); // Close reminder if it was open
+
     try {
       const path = await save({
         filters: [{ name: "QRE Keychain", extensions: ["json"] }],
@@ -60,8 +73,14 @@ function App() {
       });
 
       if (path) {
+        // 1. Get bytes from Rust
         const bytes = await invoke<number[]>("get_keychain_data");
+        // 2. Write using JS Plugin
         await writeFile(path, Uint8Array.from(bytes));
+
+        // NEW: Mark backup as done so we don't nag the user again
+        localStorage.setItem("qre_backup_done", "true");
+
         setInfoMsg("Backup saved successfully.\nKeep it safe!");
       }
     } catch (e) {
@@ -69,6 +88,7 @@ function App() {
     }
   }
 
+  // --- AUTH SCREEN RENDERING ---
   if (
     [
       "loading",
@@ -118,6 +138,7 @@ function App() {
     );
   }
 
+  // --- MAIN APP LAYOUT ---
   return (
     <div className="app-container">
       <Sidebar
@@ -134,12 +155,27 @@ function App() {
 
       <div className="content-area">
         {activeTab === "home" && <HomeView setTab={setActiveTab} />}
-        {activeTab === "files" && <FilesView />}
-        {activeTab === "notes" && <NotesView />} {/* <--- ADDED ROUTE */}
+
+        {activeTab === "files" && (
+          <FilesView
+            // Check if backup is done; if not, show reminder
+            onShowBackupReminder={() => {
+              const done = localStorage.getItem("qre_backup_done");
+              if (done !== "true") {
+                setShowBackupReminder(true);
+              }
+            }}
+          />
+        )}
+
         {activeTab === "shred" && <ShredderView />}
         {activeTab === "vault" && <VaultView />}
+        {activeTab === "notes" && <NotesView />}
+        {activeTab === "breach" && <BreachView />}
+        {activeTab === "cleaner" && <CleanerView />}
       </div>
 
+      {/* --- GLOBAL MODALS --- */}
       {showThemeModal && (
         <ThemeModal
           currentTheme={theme}
@@ -158,6 +194,15 @@ function App() {
           onCancel={() => setShowBackupModal(false)}
         />
       )}
+
+      {/* NEW: Backup Reminder Modal */}
+      {showBackupReminder && (
+        <BackupReminderModal
+          onBackup={performBackup}
+          onCancel={() => setShowBackupReminder(false)}
+        />
+      )}
+
       {auth.showTimeoutWarning && (
         <TimeoutWarningModal
           seconds={auth.countdown}

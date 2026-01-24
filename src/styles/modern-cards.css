@@ -1,7 +1,10 @@
 /* Shared Grid Layout */
 .modern-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(300px, 1fr)
+  ); /* Wider cards */
   gap: 20px;
   padding-bottom: 40px;
 }
@@ -10,23 +13,138 @@
 .modern-card {
   background-color: var(--panel-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: 16px; /* Softer corners */
+  padding: 24px; /* More breathing room */
   position: relative;
-  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: all 0.25s ease;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Subtle depth */
 }
 
 .modern-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
   border-color: var(--accent);
 }
 
-/* --- ACTION BUTTON (Header) --- */
+/* --- VAULT SPECIFIC --- */
+.vault-service-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.service-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.02)
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.service-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.service-name {
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: var(--text-main);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.service-user {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  font-family: "Segoe UI", sans-serif; /* Cleaner font for email */
+}
+
+/* The "Secret Pill" for passwords */
+.secret-pill {
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto; /* Push to bottom */
+}
+
+.secret-text {
+  flex: 1;
+  font-family: "Consolas", monospace;
+  font-size: 1.1rem;
+  color: var(--text-main);
+  letter-spacing: 2px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* --- NOTES SPECIFIC --- */
+.note-card-modern {
+  height: 240px; /* Taller */
+  justify-content: flex-start;
+  gap: 12px;
+  border-left: 4px solid var(--accent);
+  background: linear-gradient(
+    to bottom right,
+    var(--panel-bg),
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+.note-header {
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.note-body {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  flex: 1;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  -webkit-box-orient: vertical;
+}
+
+.note-footer {
+  margin-top: auto;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  opacity: 0.6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/* --- ACTION BUTTONS --- */
 .header-action-btn {
   background: var(--accent);
   color: white;
@@ -39,140 +157,13 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  transition:
-    filter 0.2s,
-    transform 0.1s;
+  transition: all 0.2s;
   box-shadow: 0 4px 12px rgba(0, 122, 204, 0.3);
 }
-
 .header-action-btn:hover {
   filter: brightness(1.1);
-  transform: translateY(-1px);
-}
-
-.header-action-btn:active {
-  transform: translateY(1px);
-}
-
-/* --- VAULT SPECIFIC --- */
-.vault-service-row {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  margin-bottom: 15px;
-}
-
-.service-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.1),
-    rgba(255, 255, 255, 0.05)
-  );
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  font-weight: bold;
-  color: var(--accent);
-  border: 1px solid var(--border);
-}
-
-.service-info {
-  flex: 1;
-  overflow: hidden;
-}
-
-.service-name {
-  font-weight: 700;
-  font-size: 1.1rem;
-  color: var(--text-main);
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.service-user {
-  font-size: 0.85rem;
-  color: var(--text-dim);
-  font-family: monospace;
-}
-
-/* The "Secret Pill" for passwords */
-.secret-pill {
-  background-color: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.secret-text {
-  flex: 1;
-  font-family: "JetBrains Mono", "Consolas", monospace;
-  font-size: 1rem;
-  color: var(--text-main);
-  letter-spacing: 1px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-/* --- NOTES SPECIFIC --- */
-.note-card-modern {
-  height: 220px; /* Fixed height for uniformity */
-  justify-content: flex-start;
-  gap: 10px;
-  border-left: 4px solid var(--accent); /* Visual accent */
-}
-
-.note-header {
-  font-weight: 700;
-  font-size: 1.1rem;
-  color: var(--text-main);
-  margin-bottom: 5px;
-}
-
-.note-body {
-  font-size: 0.9rem;
-  color: var(--text-dim);
-  line-height: 1.5;
-  flex: 1;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  line-clamp: 6;
-  -webkit-box-orient: vertical;
-}
-
-.note-footer {
-  margin-top: auto;
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  opacity: 0.7;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding-top: 10px;
-}
-
-/* --- COMMON UTILS --- */
-.card-actions {
-  display: flex;
-  gap: 5px;
-  opacity: 0; /* Hidden by default */
-  transition: opacity 0.2s;
-}
-
-/* Show actions only on hover for cleaner look */
-.modern-card:hover .card-actions {
-  opacity: 1;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 122, 204, 0.4);
 }
 
 .icon-btn-ghost {
@@ -180,8 +171,8 @@
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  padding: 6px;
-  border-radius: 4px;
+  padding: 8px;
+  border-radius: 6px;
   transition: all 0.2s;
 }
 .icon-btn-ghost:hover {
