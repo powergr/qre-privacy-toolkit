@@ -65,9 +65,10 @@
 
 /* Help Button Open State (GRAY HIGHLIGHT) - Solves the color conflict */
 .nav-btn.menu-open {
-  background-color: var(--highlight);
-  color: var(--text-main);
-  border-color: var(--border);
+  background-color: var(--accent);
+  color: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border-color: var(--accent);
 }
 
 /* --- POPUP MENUS (Flyout Style) --- */

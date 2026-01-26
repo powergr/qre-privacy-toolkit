@@ -11,8 +11,9 @@ mod tests;
 mod utils;
 mod vault;
 mod wordlist;
-mod breach; // <--- ADDED MODULE REGISTRATION
-mod cleaner; // <--- ADDED MODULE REGISTRATION
+mod breach;
+mod cleaner;
+mod email;
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
