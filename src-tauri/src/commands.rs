@@ -130,6 +130,32 @@ pub fn save_bookmarks_vault(
     Ok(())
 }
 
+#[tauri::command]
+pub fn import_browser_bookmarks(
+    app: AppHandle, 
+    state: tauri::State<SessionState>
+) -> CommandResult<usize> {
+    // 1. Parse Chrome/Edge file
+    let new_bookmarks = crate::bookmarks::import_chrome_bookmarks()?;
+    let count = new_bookmarks.len();
+
+    if count == 0 {
+        return Err("No bookmarks found.".to_string());
+    }
+
+    // 2. Load existing Vault
+    let mut vault = load_bookmarks_vault(app.clone(), state.clone())?;
+
+    // 3. Append (avoid duplicates based on URL?)
+    // For now, just append.
+    vault.entries.extend(new_bookmarks);
+
+    // 4. Save
+    save_bookmarks_vault(app, state, vault)?;
+
+    Ok(count)
+}
+
 // --- QR CODE COMMAND ---
 #[tauri::command]
 pub fn generate_qr_code(text: String) -> CommandResult<String> {

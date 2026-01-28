@@ -3,7 +3,6 @@ import {
   Lock,
   Trash2,
   Key,
-  Fingerprint,
   Home,
   CircleHelp,
   BookOpen,
@@ -18,7 +17,6 @@ import {
   Eraser,
   ClipboardList,
   ChevronRight,
-  QrCode,
   Bookmark,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -30,7 +28,6 @@ interface SidebarProps {
   onOpenAboutModal: () => void;
   onLogout: () => void;
 
-  // Global Option Handlers
   onTheme: () => void;
   onBackup: () => void;
   onChangePassword: () => void;
@@ -68,6 +65,11 @@ export function Sidebar({
       icon: <Key size={22} strokeWidth={2.5} />,
     },
     {
+      id: "bookmarks",
+      label: "Bookmarks",
+      icon: <Bookmark size={22} strokeWidth={2.5} />,
+    },
+    {
       id: "clipboard",
       label: "Clipboard",
       icon: <ClipboardList size={22} strokeWidth={2.5} />,
@@ -83,19 +85,28 @@ export function Sidebar({
       icon: <Eraser size={22} strokeWidth={2.5} />,
     },
     {
-      id: "bookmarks",
-      label: "Bookmarks",
-      icon: <Bookmark size={22} strokeWidth={2.5} />,
-    },
-    {
       id: "shred",
       label: "Shredder",
       icon: <Trash2 size={22} strokeWidth={2.5} />,
     },
-    { id: "qr", label: "QR Gen", icon: <QrCode size={22} strokeWidth={2.5} /> },
+    {
+      id: "qr",
+      label: "QR Gen",
+      icon: (
+        <div
+          style={{
+            fontWeight: "bold",
+            fontSize: 14,
+            width: 22,
+            textAlign: "center",
+          }}
+        >
+          QR
+        </div>
+      ),
+    },
   ];
 
-  // Close menus when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (helpRef.current && !helpRef.current.contains(event.target as Node)) {
@@ -114,15 +125,7 @@ export function Sidebar({
 
   return (
     <div className="sidebar">
-      <div
-        className="sidebar-header"
-        onClick={() => setTab("home")}
-        style={{ cursor: "pointer" }}
-      >
-        <Fingerprint size={32} color="var(--accent)" strokeWidth={2} />
-        <span className="app-title">QRE Toolkit</span>
-      </div>
-
+      {/* --- TOP NAVIGATION --- */}
       <div className="nav-links">
         {tabs.map((t) => (
           <button
@@ -136,139 +139,149 @@ export function Sidebar({
         ))}
       </div>
 
-      {/* Spacer pushes everything down */}
       <div style={{ marginTop: "auto" }}></div>
 
-      {/* --- HELP MENU (Flyout) --- */}
-      <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
-        {showHelpMenu && (
-          <div className="help-menu">
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowHelpMenu(false);
-                onOpenHelpModal();
-              }}
-            >
-              <BookOpen size={16} /> Help Topics
+      {/* --- BOTTOM SECTION --- */}
+      <div className="sidebar-bottom">
+        {/* 1. HELP MENU */}
+        <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
+          {showHelpMenu && (
+            <div className="help-menu">
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowHelpMenu(false);
+                  onOpenHelpModal();
+                }}
+              >
+                <BookOpen size={16} /> Help Topics
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={async () => {
+                  setShowHelpMenu(false);
+                  try {
+                    await openUrl(
+                      "https://github.com/powergr/qre-privacy-toolkit/",
+                    );
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+              >
+                <GithubIcon size={16} /> GitHub Page
+              </div>
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowHelpMenu(false);
+                  onOpenAboutModal();
+                }}
+              >
+                <Info size={16} /> About
+              </div>
             </div>
-            <div
-              className="dropdown-item"
-              onClick={async () => {
-                setShowHelpMenu(false);
-                try {
-                  await openUrl(
-                    "https://github.com/powergr/qre-privacy-toolkit/",
-                  );
-                } catch (e) {
-                  console.error(e);
-                }
-              }}
-            >
-              <GithubIcon size={16} /> GitHub Page
-            </div>
-            <div className="dropdown-divider"></div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowHelpMenu(false);
-                onOpenAboutModal();
-              }}
-            >
-              <Info size={16} /> About
-            </div>
-          </div>
-        )}
-
-        <button
-          className={`nav-btn ${showHelpMenu ? "menu-open" : ""}`}
-          onClick={() => {
-            setShowHelpMenu(!showHelpMenu);
-            setShowOptionsMenu(false);
-          }}
-          style={{ marginBottom: 5, justifyContent: "space-between" }}
-        >
-          <div style={{ display: "flex", gap: 15, alignItems: "center" }}>
-            <CircleHelp size={22} strokeWidth={2.5} />
-            <span>Help</span>
-          </div>
-          {/* Chevron indicator */}
-          {showHelpMenu && <ChevronRight size={16} style={{ opacity: 0.7 }} />}
-        </button>
-      </div>
-
-      {/* --- OPTIONS MENU (Flyout) --- */}
-      <div style={{ position: "relative", width: "100%" }} ref={optionsRef}>
-        {showOptionsMenu && (
-          <div className="help-menu">
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowOptionsMenu(false);
-                onTheme();
-              }}
-            >
-              <Monitor size={16} /> Theme
-            </div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowOptionsMenu(false);
-                onBackup();
-              }}
-            >
-              <Download size={16} /> Backup Keychain
-            </div>
-            <div className="dropdown-divider"></div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowOptionsMenu(false);
-                onChangePassword();
-              }}
-            >
-              <Key size={16} /> Change Password
-            </div>
-            <div
-              className="dropdown-item"
-              onClick={() => {
-                setShowOptionsMenu(false);
-                onReset2FA();
-              }}
-            >
-              <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
-            </div>
-          </div>
-        )}
-
-        <button
-          className={`nav-btn ${showOptionsMenu ? "menu-open" : ""}`}
-          onClick={() => {
-            setShowOptionsMenu(!showOptionsMenu);
-            setShowHelpMenu(false);
-          }}
-          style={{ marginBottom: 5, justifyContent: "space-between" }}
-        >
-          <div style={{ display: "flex", gap: 15, alignItems: "center" }}>
-            <Settings size={22} strokeWidth={2.5} />
-            <span>Options</span>
-          </div>
-          {/* Chevron indicator */}
-          {showOptionsMenu && (
-            <ChevronRight size={16} style={{ opacity: 0.7 }} />
           )}
+
+          {/* FIX: Removed inline style, added 'btn-split' class, replaced inline inner div style with class */}
+          <button
+            className={`nav-btn btn-split ${showHelpMenu ? "menu-open" : ""}`}
+            onClick={() => {
+              setShowHelpMenu(!showHelpMenu);
+              setShowOptionsMenu(false);
+            }}
+          >
+            <div className="btn-inner">
+              <CircleHelp size={22} strokeWidth={2.5} />
+              <span>Help</span>
+            </div>
+            {showHelpMenu && (
+              <ChevronRight
+                size={16}
+                style={{ opacity: 0.7 }}
+                className="chevron"
+              />
+            )}
+          </button>
+        </div>
+
+        {/* 2. OPTIONS MENU */}
+        <div style={{ position: "relative", width: "100%" }} ref={optionsRef}>
+          {showOptionsMenu && (
+            <div className="help-menu">
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowOptionsMenu(false);
+                  onTheme();
+                }}
+              >
+                <Monitor size={16} /> Theme
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowOptionsMenu(false);
+                  onBackup();
+                }}
+              >
+                <Download size={16} /> Backup Keychain
+              </div>
+              <div className="dropdown-divider"></div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowOptionsMenu(false);
+                  onChangePassword();
+                }}
+              >
+                <Key size={16} /> Change Password
+              </div>
+              <div
+                className="dropdown-item"
+                onClick={() => {
+                  setShowOptionsMenu(false);
+                  onReset2FA();
+                }}
+              >
+                <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
+              </div>
+            </div>
+          )}
+
+          {/* FIX: Removed inline style, added 'btn-split' class */}
+          <button
+            className={`nav-btn btn-split ${showOptionsMenu ? "menu-open" : ""}`}
+            onClick={() => {
+              setShowOptionsMenu(!showOptionsMenu);
+              setShowHelpMenu(false);
+            }}
+          >
+            <div className="btn-inner">
+              <Settings size={22} strokeWidth={2.5} />
+              <span>Options</span>
+            </div>
+            {showOptionsMenu && (
+              <ChevronRight
+                size={16}
+                style={{ opacity: 0.7 }}
+                className="chevron"
+              />
+            )}
+          </button>
+        </div>
+
+        {/* 3. LOG OUT */}
+        <button
+          className="nav-btn"
+          onClick={onLogout}
+          style={{ color: "#d94040" }}
+        >
+          <LogOut size={22} strokeWidth={2.5} />
+          <span>Log Out</span>
         </button>
       </div>
-
-      {/* --- LOG OUT --- */}
-      <button
-        className="nav-btn"
-        onClick={onLogout}
-        style={{ color: "#d94040", marginTop: 5 }}
-      >
-        <LogOut size={22} strokeWidth={2.5} />
-        <span>Log Out</span>
-      </button>
     </div>
   );
 }

@@ -12,6 +12,10 @@ QRE Toolkit is a secure, cross-platform application designed to handle your sens
 
 ---
 
+![QRE Privacy Toolkit](qrev2.jpg)
+
+---
+
 ## 🛠️ The Toolkit
 
 QRE Toolkit combines 9 essential privacy tools into one secure application:
@@ -113,15 +117,15 @@ If you lose your **Master Password** AND your **Recovery Code**, your data is ma
 
 ---
 
-## Download Security
+## 🛡️ Download Security
 
 ### Windows SmartScreen Warning
 
-You may see "Windows protected your PC" when running QRE Locker.
+You may see "Windows protected your PC" when running QRE Privacy Toolkit.
 
 **Why this happens:**
 
-- QRE Locker is not yet code-signed (we're working on it)
+- QRE Privacy Toolkit is not yet code-signed (we're working on it)
 - Microsoft requires paid certificates ($200-500/year)
 - As an open-source project, we're applying for free signing
 
@@ -143,7 +147,6 @@ projects. Once approved, future releases will be signed.
 
 - ✓ Fully open source (MIT license)
 - ✓ Active development on GitHub
-- ✓ Community reviewed
 
 **License:** MIT
 

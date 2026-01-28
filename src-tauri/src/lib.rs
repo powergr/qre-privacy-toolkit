@@ -100,6 +100,7 @@ pub fn run() {
             commands::generate_qr_code,
             commands::load_bookmarks_vault,
             commands::save_bookmarks_vault,
+            commands::import_browser_bookmarks,
             // Clipboard
             commands::add_clipboard_entry,
             commands::load_clipboard_vault,

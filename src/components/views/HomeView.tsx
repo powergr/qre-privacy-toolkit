@@ -100,30 +100,6 @@ export function HomeView({ setTab }: HomeViewProps) {
           <p>Store your digital secrets securely offline.</p>
         </div>
 
-        {/* Clipboard (NEW) */}
-        <div onClick={() => setTab("clipboard")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(6, 182, 212, 0.1)" }}
-          >
-            <ClipboardList size={28} color="#06b6d4" />
-          </div>
-          <h3>Secure Clipboard</h3>
-          <p>Encrypt sensitive copies & auto-clear history.</p>
-        </div>
-
-        {/* QR Generator */}
-        <div onClick={() => setTab("qr")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(255, 255, 255, 0.1)" }}
-          >
-            <QrCode size={28} color="#ffffff" />
-          </div>
-          <h3>QR Generator</h3>
-          <p>Share Wi-Fi or text offline via screen.</p>
-        </div>
-
         {/*Bookmarks */}
         <div onClick={() => setTab("bookmarks")} className="home-card">
           <div
@@ -134,6 +110,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Bookmarks</h3>
           <p>Save sensitive personal encrypted Bookmarks</p>
+        </div>
+
+        {/* Clipboard (NEW) */}
+        <div onClick={() => setTab("clipboard")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(6, 182, 212, 0.1)" }}
+          >
+            <ClipboardList size={28} color="#06b6d4" />
+          </div>
+          <h3>Secure Clipboard</h3>
+          <p>Encrypt sensitive copies & auto-clear history.</p>
         </div>
 
         {/* Breach */}
@@ -170,6 +158,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Secure Shredder</h3>
           <p>Permanently destroy sensitive files.</p>
+        </div>
+
+        {/* QR Generator */}
+        <div onClick={() => setTab("qr")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(255, 255, 255, 0.1)" }}
+          >
+            <QrCode size={28} color="#ffffff" />
+          </div>
+          <h3>QR Generator</h3>
+          <p>Share Wi-Fi or text offline via screen.</p>
         </div>
       </div>
     </div>

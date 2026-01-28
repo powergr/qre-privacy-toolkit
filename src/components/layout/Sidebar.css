@@ -1,3 +1,4 @@
+/* --- DESKTOP / LANDSCAPE DEFAULT --- */
 .sidebar {
   width: 220px;
   background-color: var(--panel-bg);
@@ -5,24 +6,36 @@
   display: flex;
   flex-direction: column;
   padding: 20px;
-  gap: 15px;
-  height: 100%;
+  height: 100vh;
+  /* CRITICAL: Parent allows overflow so popups can escape */
+  overflow: visible;
 }
 
-.sidebar-header {
+/* Zone 1: Tool Icons (Scrollable) */
+.sidebar-scroll-area {
+  flex: 1; /* Takes all available space */
+  overflow-y: auto; /* Scrolls if too many icons */
+  overflow-x: hidden;
+  margin-bottom: 20px; /* Gap before bottom actions */
+
+  /* Scrollbar Styling */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Zone 2: Bottom Actions (Fixed, Visible) */
+.sidebar-bottom {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 5px 20px 5px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0; /* Never shrink */
+  /* CRITICAL: Must be visible for flyout menus */
+  overflow: visible;
 }
 
-.app-title {
-  font-weight: 800;
-  font-size: 1.1rem;
-  color: var(--text-main);
-  letter-spacing: 0.5px;
+/* Header (Removed but keeping class just in case) */
+.sidebar-header {
+  display: none;
 }
 
 .nav-links {
@@ -32,7 +45,7 @@
   width: 100%;
 }
 
-/* NAVIGATION BUTTONS */
+/* BUTTON STYLES */
 .nav-btn {
   display: flex;
   align-items: center;
@@ -49,21 +62,13 @@
   font-weight: 600;
   transition: all 0.2s;
   width: 100%;
+  flex-shrink: 0;
 }
-
 .nav-btn:hover {
   background-color: var(--highlight);
   color: var(--text-main);
 }
-
-/* Active Tab (BLUE) */
-.nav-btn.active {
-  background-color: var(--accent);
-  color: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-/* Help Button Open State (GRAY HIGHLIGHT) - Solves the color conflict */
+.nav-btn.active,
 .nav-btn.menu-open {
   background-color: var(--accent);
   color: white;
@@ -71,38 +76,31 @@
   border-color: var(--accent);
 }
 
-/* --- POPUP MENUS (Flyout Style) --- */
+/* POPUP MENUS (Flyout Right) */
 .help-menu {
   position: absolute;
-  left: 100%; /* Push to the right of the sidebar */
-  bottom: 0;  /* Align bottom of menu with bottom of button */
-  margin-left: 15px; /* Gap between sidebar and menu */
-  
+  left: 100%; /* Right of button */
+  bottom: 0;
+  margin-left: 15px;
   width: 220px;
   background-color: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px;
-  
-  /* Modern Shadow */
-  box-shadow: 
+  box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.05); /* Inner highlight */
-    
+    0 0 0 1px rgba(255, 255, 255, 0.05);
   z-index: 2000;
-  
-  /* Smooth Entrance Animation */
   opacity: 0;
   transform: translateX(-10px) scale(0.95);
   animation: menuEnter 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
-/* Little Arrow pointing to the sidebar */
 .help-menu::before {
   content: "";
   position: absolute;
   left: -6px;
-  bottom: 20px; /* Align with the triggering button center */
+  bottom: 20px;
   width: 12px;
   height: 12px;
   background-color: var(--panel-bg);
@@ -118,9 +116,10 @@
   }
 }
 
-/* Hover effects for items */
 .dropdown-item {
-  display: flex; align-items: center; gap: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 10px 12px;
   font-size: 0.9rem;
   color: var(--text-main);
@@ -128,62 +127,138 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-
 .dropdown-item:hover {
   background-color: var(--highlight);
   color: white;
-  transform: translateX(2px); /* Subtle movement */
+  transform: translateX(2px);
 }
-
-/* Adjust Divider */
 .dropdown-divider {
   height: 1px;
   background-color: var(--border);
   margin: 6px 0;
   opacity: 0.5;
 }
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* NEW: Inner wrapper for Icon+Text */
+.btn-inner {
+  display: flex;
+  gap: 15px;
+  align-items: center;
 }
 
-/* Mobile Responsive */
+/* NEW: Buttons with Space-Between (Help/Options on Desktop) */
+.btn-split {
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+/* --- MOBILE RESPONSIVE (Horizontal Scroll) --- */
 @media (max-width: 600px) {
   .sidebar {
     width: 100%;
-    height: 65px;
+    height: auto;
+    min-height: 70px;
+
+    /* Padding to sit above Android nav bar */
+    padding: 10px 10px calc(env(safe-area-inset-bottom) + 25px) 10px;
+
     flex-direction: row;
-    justify-content: space-around;
-    padding: 5px;
+    align-items: center;
     border-right: none;
     border-top: 1px solid var(--border);
     order: 2;
+
+    /* Global Scroll */
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    gap: 0;
+
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
-  .sidebar-header {
+  .sidebar::-webkit-scrollbar {
     display: none;
   }
-  .nav-links {
+
+  /* Reset containers to simple rows */
+  .sidebar-scroll-area,
+  .nav-links,
+  .sidebar-bottom {
+    width: auto;
+    flex: initial;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    display: flex;
     flex-direction: row;
+    align-items: center;
     gap: 5px;
   }
+
+  /* Add divider before the bottom actions */
+  .sidebar-bottom {
+    padding-left: 10px;
+    margin-left: 5px;
+    border-left: 1px solid var(--border);
+  }
+
+  /* --- BUTTON FIXES --- */
   .nav-btn {
     flex-direction: column;
-    gap: 4px;
-    font-size: 0.7rem;
-    padding: 5px;
+    gap: 0;
+    padding: 0;
+    width: 50px;
+    height: 50px; /* Square buttons */
     justify-content: center;
     align-items: center;
+    flex-shrink: 0;
   }
-  /* On mobile, drop-up needs to behave differently or hide help */
+
+  /* CRITICAL: HIDE TEXT LABELS ON MOBILE */
+  .nav-btn span {
+    display: none;
+  }
+
+  /* Fix Help/Options inner wrappers to not break layout */
+  .btn-inner {
+    display: contents; /* Removes the div wrapper from layout flow */
+  }
+  .btn-inner span {
+    display: none; /* Ensure text inside wrappers is also hidden */
+  }
+
+  /* Reset Split Buttons (Help/Options) to act like normal buttons */
+  .btn-split {
+    justify-content: center !important;
+    margin-bottom: 0;
+  }
+
+  /* Hide Chevron Arrows */
+  .chevron {
+    display: none;
+  }
+
+  /* --- MENU POSITIONING --- */
   .help-menu {
-    bottom: 65px;
+    position: fixed;
+    bottom: 90px; /* Float above the bar */
     left: 10px;
-    width: 200px;
+    right: 10px;
+    width: auto;
+    margin-left: 0;
+    transform: translateY(10px) scale(0.95);
+    animation: menuEnterMobile 0.2s forwards;
+    z-index: 9999;
+    box-shadow: 0 5px 25px rgba(0, 0, 0, 0.5);
+  }
+  .help-menu::before {
+    display: none;
+  }
+
+  @keyframes menuEnterMobile {
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
   }
 }
