@@ -68,8 +68,8 @@ pub async fn analyze_file_metadata(path: String) -> CommandResult<MetadataReport
 }
 
 #[tauri::command]
-pub async fn clean_file_metadata(path: String) -> CommandResult<String> {
-    let out_path = cleaner::remove_metadata(Path::new(&path)).map_err(|e| e.to_string())?;
+pub async fn clean_file_metadata(path: String, options: cleaner::CleaningOptions) -> CommandResult<String> {
+    let out_path = cleaner::remove_metadata(Path::new(&path), options).map_err(|e| e.to_string())?;
     Ok(out_path.to_string_lossy().to_string())
 }
 
