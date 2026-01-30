@@ -6,7 +6,7 @@ export interface ClipboardEntry {
   id: string;
   content: string;
   preview: string;
-  category: string; 
+  category: string;
   created_at: number;
 }
 
@@ -30,14 +30,16 @@ export function useClipboard() {
   }, [retentionHours]);
 
   function updateRetention(hours: number) {
-      setRetentionHours(hours);
-      localStorage.setItem("qre_clip_retention", hours.toString());
+    setRetentionHours(hours);
+    localStorage.setItem("qre_clip_retention", hours.toString());
   }
 
   async function refreshVault() {
     try {
       setLoading(true);
-      const vault = await invoke<ClipboardVault>("load_clipboard_vault", { retentionHours });
+      const vault = await invoke<ClipboardVault>("load_clipboard_vault", {
+        retentionHours,
+      });
       setEntries(vault.entries.sort((a, b) => b.created_at - a.created_at));
     } catch (e) {
       setError(String(e));
@@ -53,7 +55,7 @@ export function useClipboard() {
 
       // Pass retentionHours to the ADD command too
       await invoke("add_clipboard_entry", { text, retentionHours });
-      await writeText("");
+      await writeText(""); // Clear system clipboard immediately for security
       await refreshVault();
     } catch (e) {
       setError("Failed to paste: " + String(e));
@@ -61,7 +63,11 @@ export function useClipboard() {
   }
 
   async function copyToClipboard(text: string) {
-    try { await writeText(text); } catch (e) { console.error(e); }
+    try {
+      await writeText(text);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   async function clearAll() {
@@ -73,9 +79,25 @@ export function useClipboard() {
     }
   }
 
-  return { 
-      entries, loading, error, 
-      securePaste, copyToClipboard, clearAll, 
-      retentionHours, updateRetention 
+  async function deleteEntry(id: string) {
+    try {
+      const newEntries = entries.filter((e) => e.id !== id);
+      await invoke("save_clipboard_vault", { vault: { entries: newEntries } });
+      setEntries(newEntries);
+    } catch (e) {
+      setError("Failed to delete entry: " + String(e));
+    }
+  }
+
+  return {
+    entries,
+    loading,
+    error,
+    securePaste,
+    copyToClipboard,
+    clearAll,
+    deleteEntry,
+    retentionHours,
+    updateRetention,
   };
 }

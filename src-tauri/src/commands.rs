@@ -162,10 +162,16 @@ pub fn generate_qr_code(text: String) -> CommandResult<String> {
     qr::generate_qr(&text).map_err(|e| e.to_string())
 }
 
-// --- PASSWORD BREACH CHECK (Restore this) ---
+// --- PRIVACY & BREACH CHECK ---
+
 #[tauri::command]
 pub async fn check_password_breach(password: String) -> CommandResult<breach::BreachResult> {
     breach::check_pwned(&password).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_public_ip_address() -> CommandResult<breach::IpResult> {
+    breach::get_public_ip().await.map_err(|e| e.to_string())
 }
 
 // --- PASSWORD GENERATOR (RESTORED) ---

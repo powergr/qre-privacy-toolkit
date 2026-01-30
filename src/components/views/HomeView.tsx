@@ -132,8 +132,8 @@ export function HomeView({ setTab }: HomeViewProps) {
           >
             <Radar size={28} color="#a855f7" />
           </div>
-          <h3>Breach Check</h3>
-          <p>Scan against 850M+ leaked passwords.</p>
+          <h3>Privacy Check</h3>
+          <p>Scan for identity leaks & network security</p>
         </div>
 
         {/* Cleaner */}

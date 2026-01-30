@@ -76,7 +76,7 @@ export function Sidebar({
     },
     {
       id: "breach",
-      label: "Breach Check",
+      label: "Privacy Check",
       icon: <Radar size={22} strokeWidth={2.5} />,
     },
     {
