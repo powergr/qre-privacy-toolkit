@@ -158,8 +158,8 @@ pub fn import_browser_bookmarks(
 
 // --- QR CODE COMMAND ---
 #[tauri::command]
-pub fn generate_qr_code(text: String) -> CommandResult<String> {
-    qr::generate_qr(&text).map_err(|e| e.to_string())
+pub fn generate_qr_code(text: String, fg: String, bg: String) -> CommandResult<String> {
+    qr::generate_qr(&text, &fg, &bg).map_err(|e| e.to_string())
 }
 
 // --- PRIVACY & BREACH CHECK ---

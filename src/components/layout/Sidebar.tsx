@@ -17,6 +17,7 @@ import {
   Eraser,
   ClipboardList,
   ChevronRight,
+  QrCode,
   Bookmark,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -92,18 +93,7 @@ export function Sidebar({
     {
       id: "qr",
       label: "QR Gen",
-      icon: (
-        <div
-          style={{
-            fontWeight: "bold",
-            fontSize: 14,
-            width: 22,
-            textAlign: "center",
-          }}
-        >
-          QR
-        </div>
-      ),
+      icon: <QrCode size={22} strokeWidth={2.5} />,
     },
   ];
 
