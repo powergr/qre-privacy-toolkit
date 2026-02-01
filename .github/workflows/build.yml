@@ -111,6 +111,10 @@ jobs:
           version="${{ github.ref_name }}"
           version="${version#v}"
 
+          # Save key to temp file
+          keyPath=$(mktemp)
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+
           # Find the .app bundle and .dmg
           bundlePath="src-tauri/target/release/bundle"
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
@@ -118,7 +122,7 @@ jobs:
 
           if [ -n "$dmgFile" ]; then
             echo "Signing DMG: $dmgFile"
-            echo "$TAURI_SIGNING_PRIVATE_KEY" | npx tauri signer sign "$dmgFile" --private-key - --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            npx tauri signer sign "$dmgFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
             
             # Create latest.json
             signature=$(cat "$dmgFile.sig")
@@ -145,6 +149,9 @@ jobs:
             echo "Created latest.json for macOS"
             cat "$bundlePath/dmg/latest.json"
           fi
+
+          # Remove temp key file
+          rm -f "$keyPath"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -158,13 +165,17 @@ jobs:
           version="${{ github.ref_name }}"
           version="${version#v}"
 
+          # Save key to temp file
+          keyPath=$(mktemp)
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+
           # Find AppImage
           bundlePath="src-tauri/target/release/bundle"
           appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
 
           if [ -n "$appImageFile" ]; then
             echo "Signing AppImage: $appImageFile"
-            echo "$TAURI_SIGNING_PRIVATE_KEY" | npx tauri signer sign "$appImageFile" --private-key - --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            npx tauri signer sign "$appImageFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
             
             # Create latest.json
             signature=$(cat "$appImageFile.sig")
@@ -187,6 +198,9 @@ jobs:
             echo "Created latest.json for Linux"
             cat "$bundlePath/appimage/latest.json"
           fi
+
+          # Remove temp key file
+          rm -f "$keyPath"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
