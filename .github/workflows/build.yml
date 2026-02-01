@@ -12,7 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        include:
+          - platform: macos-latest
+            target: universal-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -24,7 +30,7 @@ jobs:
           node-version: 20
 
       - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolgen@stable
 
       # Linux Dependencies
       - name: install dependencies (ubuntu only)
@@ -36,53 +42,162 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # DEBUG: Check if secrets are available
-      - name: Debug - Check environment variables
+      # Build WITHOUT tauri-action (we'll handle signing ourselves)
+      - name: Build Tauri App
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # Sign installers and create updater JSON (Windows)
+      - name: Sign and create updater JSON (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          # Get version from tag
+          $version = "${{ github.ref_name }}".TrimStart('v')
+
+          # Paths
+          $bundlePath = "src-tauri/target/release/bundle"
+          $nsisInstaller = Get-ChildItem "$bundlePath/nsis/*.exe" | Select-Object -First 1
+          $msiInstaller = Get-ChildItem "$bundlePath/msi/*.msi" | Select-Object -First 1
+
+          Write-Host "Signing NSIS installer: $($nsisInstaller.FullName)"
+          npx tauri signer sign "$($nsisInstaller.FullName)" --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+          Write-Host "Signing MSI installer: $($msiInstaller.FullName)"
+          npx tauri signer sign "$($msiInstaller.FullName)" --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+          # Create latest.json
+          $nsisSig = Get-Content "$($nsisInstaller.FullName).sig" -Raw
+          $nsisFileName = $nsisInstaller.Name
+
+          $json = @"
+          {
+            "version": "$version",
+            "notes": "See the release notes for details",
+            "pub_date": "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$($nsisSig.Trim())",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$nsisFileName"
+              }
+            }
+          }
+          "@
+
+          # Save latest.json
+          [System.IO.File]::WriteAllText("$bundlePath/nsis/latest.json", $json, [System.Text.UTF8Encoding]::new($false))
+
+          Write-Host "Created latest.json"
+          Get-Content "$bundlePath/nsis/latest.json"
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # Sign installers and create updater JSON (macOS)
+      - name: Sign and create updater JSON (macOS)
+        if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
-          echo "Checking if signing key is set..."
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "ERROR: TAURI_SIGNING_PRIVATE_KEY is NOT set"
-          else
-            echo "SUCCESS: TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY})"
-          fi
+          # Get version from tag
+          version="${{ github.ref_name }}"
+          version="${version#v}"
 
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
-            echo "ERROR: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is NOT set"
-          else
-            echo "SUCCESS: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is set"
+          # Find the .app bundle and .dmg
+          bundlePath="src-tauri/target/release/bundle"
+          dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
+          appFile=$(find "$bundlePath/macos" -name "*.app" -o -name "*.app.tar.gz" | head -n 1)
+
+          if [ -n "$dmgFile" ]; then
+            echo "Signing DMG: $dmgFile"
+            echo "$TAURI_SIGNING_PRIVATE_KEY" | npx tauri signer sign "$dmgFile" --private-key - --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            
+            # Create latest.json
+            signature=$(cat "$dmgFile.sig")
+            fileName=$(basename "$dmgFile")
+            
+            cat > "$bundlePath/dmg/latest.json" << EOF
+          {
+            "version": "$version",
+            "notes": "See the release notes for details",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-x86_64": {
+                "signature": "$signature",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
+              },
+              "darwin-aarch64": {
+                "signature": "$signature",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
+              }
+            }
+          }
+          EOF
+            
+            echo "Created latest.json for macOS"
+            cat "$bundlePath/dmg/latest.json"
           fi
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # Build Desktop Apps & Create Release with Tauri Updater
-      - name: build tauri app
-        uses: tauri-apps/tauri-action@v0
+      # Sign installers and create updater JSON (Linux)
+      - name: Sign and create updater JSON (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          # Get version from tag
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+
+          # Find AppImage
+          bundlePath="src-tauri/target/release/bundle"
+          appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
+
+          if [ -n "$appImageFile" ]; then
+            echo "Signing AppImage: $appImageFile"
+            echo "$TAURI_SIGNING_PRIVATE_KEY" | npx tauri signer sign "$appImageFile" --private-key - --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            
+            # Create latest.json
+            signature=$(cat "$appImageFile.sig")
+            fileName=$(basename "$appImageFile")
+            
+            cat > "$bundlePath/appimage/latest.json" << EOF
+          {
+            "version": "$version",
+            "notes": "See the release notes for details",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "linux-x86_64": {
+                "signature": "$signature",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
+              }
+            }
+          }
+          EOF
+            
+            echo "Created latest.json for Linux"
+            cat "$bundlePath/appimage/latest.json"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # Upload artifacts to release
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/release/bundle/**/latest.json
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "QRE Privacy Toolkit ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
-
-      # DEBUG: List built files and signatures
-      - name: Debug - List built artifacts
-        shell: bash
-        run: |
-          echo "=== Listing all .sig files ==="
-          find src-tauri/target/release/bundle -name "*.sig" -type f || echo "No .sig files found"
-
-          echo "=== Listing all .json files ==="
-          find src-tauri/target/release/bundle -name "*.json" -type f || echo "No .json files found"
-
-          echo "=== Listing bundle contents ==="
-          ls -R src-tauri/target/release/bundle/ || echo "Bundle directory not found"
 
   # --- JOB 2: Android (APK) ---
   release-android:
