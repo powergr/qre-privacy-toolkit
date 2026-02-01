@@ -111,9 +111,9 @@ jobs:
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          # Save key to temp file
+          # Save key to temp file (no newline)
           keyPath=$(mktemp)
-          echo "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+          echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
           # Find the .app bundle and .dmg
           bundlePath="src-tauri/target/release/bundle"
@@ -165,9 +165,9 @@ jobs:
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          # Save key to temp file
+          # Save key to temp file (no newline)
           keyPath=$(mktemp)
-          echo "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+          echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
           # Find AppImage
           bundlePath="src-tauri/target/release/bundle"
