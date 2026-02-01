@@ -30,7 +30,7 @@ jobs:
           node-version: 20
 
       - name: install Rust stable
-        uses: dtolnay/rust-toolgen@stable
+        uses: dtolnay/rust-toolchain@stable
 
       # Linux Dependencies
       - name: install dependencies (ubuntu only)
