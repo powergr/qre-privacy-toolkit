@@ -36,6 +36,26 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
+      # DEBUG: Check if secrets are available
+      - name: Debug - Check environment variables
+        shell: bash
+        run: |
+          echo "Checking if signing key is set..."
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "ERROR: TAURI_SIGNING_PRIVATE_KEY is NOT set"
+          else
+            echo "SUCCESS: TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY})"
+          fi
+
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "ERROR: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is NOT set"
+          else
+            echo "SUCCESS: TAURI_SIGNING_PRIVATE_KEY_PASSWORD is set"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       # Build Desktop Apps & Create Release with Tauri Updater
       - name: build tauri app
         uses: tauri-apps/tauri-action@v0
@@ -48,16 +68,28 @@ jobs:
           releaseName: "QRE Privacy Toolkit ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: false
-          prerelease: true
-          # This tells tauri-action to include updater artifacts
+          prerelease: false
           includeUpdaterJson: true
+
+      # DEBUG: List built files and signatures
+      - name: Debug - List built artifacts
+        shell: bash
+        run: |
+          echo "=== Listing all .sig files ==="
+          find src-tauri/target/release/bundle -name "*.sig" -type f || echo "No .sig files found"
+
+          echo "=== Listing all .json files ==="
+          find src-tauri/target/release/bundle -name "*.json" -type f || echo "No .json files found"
+
+          echo "=== Listing bundle contents ==="
+          ls -R src-tauri/target/release/bundle/ || echo "Bundle directory not found"
 
   # --- JOB 2: Android (APK) ---
   release-android:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    needs: release # Wait for the release to be created by the Desktop job first
+    needs: release
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +115,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # Inject Signing Key from GitHub Secrets
       - name: Decode Keystore
         run: |
           mkdir -p src-tauri/gen/android
@@ -93,11 +124,9 @@ jobs:
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> src-tauri/gen/android/key.properties
           echo "storeFile=../qre-release.jks" >> src-tauri/gen/android/key.properties
 
-      # Build the Signed APK
       - name: Build Android APK
         run: npm run tauri android build -- --apk true --target aarch64
 
-      # Upload the APK
       - name: Upload APK
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
