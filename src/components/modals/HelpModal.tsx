@@ -31,7 +31,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
   // 3. Custom Link Click Handler
   const handleLinkClick = async (
     e: React.MouseEvent<HTMLAnchorElement>,
-    href: string
+    href: string,
   ) => {
     // A. External Links (Http) -> Open in Browser
     if (href.startsWith("http")) {
@@ -47,11 +47,11 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
     // B. Internal Links (Anchors) -> Scroll to ID
     if (href.startsWith("#")) {
       e.preventDefault();
-      
+
       // Clean up the href to match the ID format
       // Note: If HELP.md has (#-file-encryption), we look for id="-file-encryption"
-      const id = href.substring(1); 
-      
+      const id = href.substring(1);
+
       const element = document.getElementById(id);
       const container = scrollContainerRef.current;
 
@@ -68,7 +68,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose} style={{zIndex: 200000}}>
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 200000 }}>
       <div
         className="auth-card"
         onClick={(e) => e.stopPropagation()}
@@ -144,7 +144,9 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        <div style={{ padding: "15px 25px", borderTop: "1px solid var(--border)" }}>
+        <div
+          style={{ padding: "15px 25px", borderTop: "1px solid var(--border)" }}
+        >
           <button
             className="secondary-btn"
             style={{ width: "100%" }}

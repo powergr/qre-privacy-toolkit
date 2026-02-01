@@ -1,20 +1,20 @@
+mod bookmarks;
+mod breach;
+mod cleaner;
+mod clipboard_store;
 mod commands;
 mod crypto;
 mod crypto_stream;
 mod entropy;
 mod keychain;
 mod notes;
-mod clipboard_store;
+mod qr;
 mod secure_rng;
 mod state;
 mod tests;
 mod utils;
 mod vault;
 mod wordlist;
-mod breach;
-mod cleaner;
-mod qr;
-mod bookmarks;
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
@@ -35,7 +35,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init());
+        .plugin(tauri_plugin_process::init())
+        // --- ADDED UPDATER PLUGIN HERE ---
+        .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(not(mobile))]
     {

@@ -19,8 +19,10 @@ import {
   ChevronRight,
   QrCode,
   Bookmark,
+  RefreshCw, // <--- Added Icon
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { UpdateModal } from "../modals/UpdateModal"; // <--- Added Import
 
 interface SidebarProps {
   activeTab: string;
@@ -48,6 +50,9 @@ export function Sidebar({
 }: SidebarProps) {
   const [showHelpMenu, setShowHelpMenu] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+
+  // State for the Update Modal
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
 
   const helpRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
@@ -114,165 +119,182 @@ export function Sidebar({
   }, []);
 
   return (
-    <div className="sidebar">
-      {/* --- TOP NAVIGATION --- */}
-      <div className="nav-links">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.icon}
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
+    <>
+      <div className="sidebar">
+        {/* --- TOP NAVIGATION --- */}
+        <div className="nav-links">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
 
-      <div style={{ marginTop: "auto" }}></div>
+        <div style={{ marginTop: "auto" }}></div>
 
-      {/* --- BOTTOM SECTION --- */}
-      <div className="sidebar-bottom">
-        {/* 1. HELP MENU */}
-        <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
-          {showHelpMenu && (
-            <div className="help-menu">
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowHelpMenu(false);
-                  onOpenHelpModal();
-                }}
-              >
-                <BookOpen size={16} /> Help Topics
-              </div>
-              <div
-                className="dropdown-item"
-                onClick={async () => {
-                  setShowHelpMenu(false);
-                  try {
-                    await openUrl(
-                      "https://github.com/powergr/qre-privacy-toolkit/",
-                    );
-                  } catch (e) {
-                    console.error(e);
-                  }
-                }}
-              >
-                <GithubIcon size={16} /> GitHub Page
-              </div>
-              <div className="dropdown-divider"></div>
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowHelpMenu(false);
-                  onOpenAboutModal();
-                }}
-              >
-                <Info size={16} /> About
-              </div>
-            </div>
-          )}
-
-          {/* FIX: Removed inline style, added 'btn-split' class, replaced inline inner div style with class */}
-          <button
-            className={`nav-btn btn-split ${showHelpMenu ? "menu-open" : ""}`}
-            onClick={() => {
-              setShowHelpMenu(!showHelpMenu);
-              setShowOptionsMenu(false);
-            }}
-          >
-            <div className="btn-inner">
-              <CircleHelp size={22} strokeWidth={2.5} />
-              <span>Help</span>
-            </div>
+        {/* --- BOTTOM SECTION --- */}
+        <div className="sidebar-bottom">
+          {/* 1. HELP MENU */}
+          <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
             {showHelpMenu && (
-              <ChevronRight
-                size={16}
-                style={{ opacity: 0.7 }}
-                className="chevron"
-              />
+              <div className="help-menu">
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowHelpMenu(false);
+                    onOpenHelpModal();
+                  }}
+                >
+                  <BookOpen size={16} /> Help Topics
+                </div>
+                <div
+                  className="dropdown-item"
+                  onClick={async () => {
+                    setShowHelpMenu(false);
+                    try {
+                      await openUrl(
+                        "https://github.com/powergr/qre-privacy-toolkit/",
+                      );
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                >
+                  <GithubIcon size={16} /> GitHub Page
+                </div>
+
+                {/* --- UPDATE OPTION ADDED HERE --- */}
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowHelpMenu(false);
+                    setShowUpdateModal(true);
+                  }}
+                >
+                  <RefreshCw size={16} /> Check for Updates
+                </div>
+
+                <div className="dropdown-divider"></div>
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowHelpMenu(false);
+                    onOpenAboutModal();
+                  }}
+                >
+                  <Info size={16} /> About
+                </div>
+              </div>
             )}
-          </button>
-        </div>
 
-        {/* 2. OPTIONS MENU */}
-        <div style={{ position: "relative", width: "100%" }} ref={optionsRef}>
-          {showOptionsMenu && (
-            <div className="help-menu">
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowOptionsMenu(false);
-                  onTheme();
-                }}
-              >
-                <Monitor size={16} /> Theme
+            <button
+              className={`nav-btn btn-split ${showHelpMenu ? "menu-open" : ""}`}
+              onClick={() => {
+                setShowHelpMenu(!showHelpMenu);
+                setShowOptionsMenu(false);
+              }}
+            >
+              <div className="btn-inner">
+                <CircleHelp size={22} strokeWidth={2.5} />
+                <span>Help</span>
               </div>
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowOptionsMenu(false);
-                  onBackup();
-                }}
-              >
-                <Download size={16} /> Backup Keychain
-              </div>
-              <div className="dropdown-divider"></div>
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowOptionsMenu(false);
-                  onChangePassword();
-                }}
-              >
-                <Key size={16} /> Change Password
-              </div>
-              <div
-                className="dropdown-item"
-                onClick={() => {
-                  setShowOptionsMenu(false);
-                  onReset2FA();
-                }}
-              >
-                <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
-              </div>
-            </div>
-          )}
+              {showHelpMenu && (
+                <ChevronRight
+                  size={16}
+                  style={{ opacity: 0.7 }}
+                  className="chevron"
+                />
+              )}
+            </button>
+          </div>
 
-          {/* FIX: Removed inline style, added 'btn-split' class */}
-          <button
-            className={`nav-btn btn-split ${showOptionsMenu ? "menu-open" : ""}`}
-            onClick={() => {
-              setShowOptionsMenu(!showOptionsMenu);
-              setShowHelpMenu(false);
-            }}
-          >
-            <div className="btn-inner">
-              <Settings size={22} strokeWidth={2.5} />
-              <span>Options</span>
-            </div>
+          {/* 2. OPTIONS MENU */}
+          <div style={{ position: "relative", width: "100%" }} ref={optionsRef}>
             {showOptionsMenu && (
-              <ChevronRight
-                size={16}
-                style={{ opacity: 0.7 }}
-                className="chevron"
-              />
+              <div className="help-menu">
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowOptionsMenu(false);
+                    onTheme();
+                  }}
+                >
+                  <Monitor size={16} /> Theme
+                </div>
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowOptionsMenu(false);
+                    onBackup();
+                  }}
+                >
+                  <Download size={16} /> Backup Keychain
+                </div>
+                <div className="dropdown-divider"></div>
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowOptionsMenu(false);
+                    onChangePassword();
+                  }}
+                >
+                  <Key size={16} /> Change Password
+                </div>
+                <div
+                  className="dropdown-item"
+                  onClick={() => {
+                    setShowOptionsMenu(false);
+                    onReset2FA();
+                  }}
+                >
+                  <RotateCcw size={16} color="var(--warning)" /> Reset 2FA Code
+                </div>
+              </div>
             )}
+
+            <button
+              className={`nav-btn btn-split ${showOptionsMenu ? "menu-open" : ""}`}
+              onClick={() => {
+                setShowOptionsMenu(!showOptionsMenu);
+                setShowHelpMenu(false);
+              }}
+            >
+              <div className="btn-inner">
+                <Settings size={22} strokeWidth={2.5} />
+                <span>Options</span>
+              </div>
+              {showOptionsMenu && (
+                <ChevronRight
+                  size={16}
+                  style={{ opacity: 0.7 }}
+                  className="chevron"
+                />
+              )}
+            </button>
+          </div>
+
+          {/* 3. LOG OUT */}
+          <button
+            className="nav-btn"
+            onClick={onLogout}
+            style={{ color: "#d94040" }}
+          >
+            <LogOut size={22} strokeWidth={2.5} />
+            <span>Log Out</span>
           </button>
         </div>
-
-        {/* 3. LOG OUT */}
-        <button
-          className="nav-btn"
-          onClick={onLogout}
-          style={{ color: "#d94040" }}
-        >
-          <LogOut size={22} strokeWidth={2.5} />
-          <span>Log Out</span>
-        </button>
       </div>
-    </div>
+
+      {/* RENDER UPDATE MODAL */}
+      {showUpdateModal && (
+        <UpdateModal onClose={() => setShowUpdateModal(false)} />
+      )}
+    </>
   );
 }
 

@@ -36,18 +36,21 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # Build Desktop Apps & Create Release
+      # Build Desktop Apps & Create Release with Tauri Updater
       - name: build tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          # FIX 1: Updated Name
           releaseName: "QRE Privacy Toolkit ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: false
           prerelease: true
+          # This tells tauri-action to include updater artifacts
+          includeUpdaterJson: true
 
   # --- JOB 2: Android (APK) ---
   release-android:

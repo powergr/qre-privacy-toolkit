@@ -17,6 +17,7 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+.env
 .DS_Store
 *.suo
 *.ntvs*
@@ -29,3 +30,4 @@ key.properties
 keystore_b64.txt
 *.jks
 key.properties
+myapp.key
