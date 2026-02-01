@@ -62,11 +62,18 @@ jobs:
           $nsisInstaller = Get-ChildItem "$bundlePath/nsis/*.exe" | Select-Object -First 1
           $msiInstaller = Get-ChildItem "$bundlePath/msi/*.msi" | Select-Object -First 1
 
+          # Save key to temp file to avoid shell escaping issues
+          $keyPath = "$env:TEMP\signing.key"
+          $env:TAURI_SIGNING_PRIVATE_KEY | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
+
           Write-Host "Signing NSIS installer: $($nsisInstaller.FullName)"
-          npx tauri signer sign "$($nsisInstaller.FullName)" --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          npx tauri signer sign "$($nsisInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
           Write-Host "Signing MSI installer: $($msiInstaller.FullName)"
-          npx tauri signer sign "$($msiInstaller.FullName)" --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          npx tauri signer sign "$($msiInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+          # Remove temp key file
+          Remove-Item $keyPath -Force
 
           # Create latest.json
           $nsisSig = Get-Content "$($nsisInstaller.FullName).sig" -Raw
