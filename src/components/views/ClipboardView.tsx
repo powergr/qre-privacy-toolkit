@@ -20,6 +20,7 @@ import {
 import { useClipboard } from "../../hooks/useClipboard";
 import { InfoModal } from "../modals/AppModals";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { platform } from "@tauri-apps/plugin-os"; // <--- Added Import
 import "./ClipboardView.css";
 
 export function ClipboardView() {
@@ -39,6 +40,16 @@ export function ClipboardView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false); // <--- Mobile State
+
+  // Detect Platform
+  useEffect(() => {
+    try {
+      if (platform() === "android") setIsAndroid(true);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -108,7 +119,14 @@ export function ClipboardView() {
   return (
     <div className="clipboard-view">
       {/* HEADER */}
-      <div className="clipboard-header">
+      <div
+        className="clipboard-header"
+        style={{
+          flexDirection: isAndroid ? "column" : "row",
+          alignItems: isAndroid ? "stretch" : "center",
+          gap: isAndroid ? 15 : 0,
+        }}
+      >
         <div>
           <h2 style={{ margin: 0 }}>Secure Clipboard</h2>
           <p
@@ -118,18 +136,20 @@ export function ClipboardView() {
           </p>
         </div>
 
-        {/* RIGHT ACTIONS TOOLBAR - ALIGNMENT FIX */}
+        {/* RIGHT ACTIONS TOOLBAR */}
         <div
           style={{
             display: "flex",
             gap: "10px",
             alignItems: "center",
+            flexDirection: isAndroid ? "column" : "row",
+            width: isAndroid ? "100%" : "auto",
           }}
         >
-          {/* 1. Search Bar (Box) */}
+          {/* 1. Search Bar */}
           <div
             style={{
-              width: "220px",
+              width: isAndroid ? "100%" : "220px",
               height: "42px",
               background: "var(--bg-card)",
               border: "1px solid var(--border)",
@@ -159,160 +179,184 @@ export function ClipboardView() {
             />
           </div>
 
-          {/* 2. Retention Selector (Box) - Wrapped in positioned container */}
-          <div style={{ position: "relative" }}>
+          {/* Row for Options + Buttons (On Mobile this is Row 2) */}
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              width: isAndroid ? "100%" : "auto",
+            }}
+          >
+            {/* 2. Retention Selector */}
             <div
               style={{
-                width: "130px",
+                position: "relative",
+                flex: isAndroid ? 1 : "unset",
+              }}
+            >
+              <div
+                style={{
+                  width: isAndroid ? "100%" : "130px",
+                  height: "42px",
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "0 10px",
+                  boxSizing: "border-box",
+                  cursor: "pointer",
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsDropdownOpen(!isDropdownOpen);
+                }}
+              >
+                <Clock
+                  size={16}
+                  color="var(--text-dim)"
+                  style={{ flexShrink: 0 }}
+                />
+                <div
+                  style={{
+                    width: "100%",
+                    paddingLeft: 8,
+                    fontSize: "0.9rem",
+                    fontWeight: 500,
+                    color: "var(--text-main)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {retentionHours === 1 && "1 Hour"}
+                  {retentionHours === 4 && "4 Hours"}
+                  {retentionHours === 12 && "12 Hours"}
+                  {retentionHours === 24 && "24 Hours"}
+                  {retentionHours === 72 && "3 Days"}
+                  {retentionHours === 168 && "1 Week"}
+                </div>
+                <ChevronDown
+                  size={14}
+                  color="var(--text-dim)"
+                  style={{
+                    flexShrink: 0,
+                    transform: isDropdownOpen
+                      ? "rotate(180deg)"
+                      : "rotate(0deg)",
+                    transition: "transform 0.2s",
+                  }}
+                />
+              </div>
+
+              {/* Custom Dropdown Menu */}
+              {isDropdownOpen && (
+                <div
+                  className="custom-dropdown-menu"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    left: 0,
+                    width: "100%", // Match parent width
+                    background: "var(--panel-bg)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    zIndex: 1000,
+                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {[
+                    { value: 1, label: "1 Hour" },
+                    { value: 4, label: "4 Hours" },
+                    { value: 12, label: "12 Hours" },
+                    { value: 24, label: "24 Hours" },
+                    { value: 72, label: "3 Days" },
+                    { value: 168, label: "1 Week" },
+                  ].map((option) => (
+                    <div
+                      key={option.value}
+                      className="custom-dropdown-option"
+                      style={{
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                        fontSize: "0.9rem",
+                        color: "var(--text-main)",
+                        background:
+                          retentionHours === option.value
+                            ? "var(--highlight)"
+                            : "transparent",
+                        fontWeight: retentionHours === option.value ? 600 : 400,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateRetention(option.value);
+                        setIsDropdownOpen(false);
+                      }}
+                      onMouseEnter={(e) => {
+                        if (retentionHours !== option.value) {
+                          e.currentTarget.style.background = "var(--highlight)";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (retentionHours !== option.value) {
+                          e.currentTarget.style.background = "transparent";
+                        }
+                      }}
+                    >
+                      {option.label}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 3. Clear Button */}
+            {entries.length > 0 && (
+              <button
+                className="secondary-btn"
+                onClick={() => setShowClearConfirm(true)}
+                style={{
+                  height: "42px",
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-main)",
+                  padding: "0 15px",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  boxSizing: "border-box",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                Clear
+              </button>
+            )}
+
+            {/* 4. Secure Paste Button */}
+            <button
+              className="header-action-btn"
+              onClick={securePaste}
+              style={{
                 height: "42px",
-                background: "var(--bg-card)",
-                border: "1px solid var(--border)",
+                padding: "0 15px",
                 borderRadius: "8px",
                 display: "flex",
                 alignItems: "center",
-                padding: "0 10px",
-                boxSizing: "border-box",
-                cursor: "pointer",
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsDropdownOpen(!isDropdownOpen);
-              }}
-            >
-              <Clock size={16} color="var(--text-dim)" />
-              <div
-                style={{
-                  width: "100%",
-                  paddingLeft: 8,
-                  fontSize: "0.9rem",
-                  fontWeight: 500,
-                  color: "var(--text-main)",
-                }}
-              >
-                {retentionHours === 1 && "1 Hour"}
-                {retentionHours === 4 && "4 Hours"}
-                {retentionHours === 12 && "12 Hours"}
-                {retentionHours === 24 && "24 Hours"}
-                {retentionHours === 72 && "3 Days"}
-                {retentionHours === 168 && "1 Week"}
-              </div>
-              <ChevronDown
-                size={14}
-                color="var(--text-dim)"
-                style={{
-                  transform: isDropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 0.2s",
-                }}
-              />
-            </div>
-
-            {/* Custom Dropdown Menu */}
-            {isDropdownOpen && (
-              <div
-                className="custom-dropdown-menu"
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 4px)",
-                  left: 0,
-                  width: "130px",
-                  background: "var(--panel-bg)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  zIndex: 1000,
-                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {[
-                  { value: 1, label: "1 Hour" },
-                  { value: 4, label: "4 Hours" },
-                  { value: 12, label: "12 Hours" },
-                  { value: 24, label: "24 Hours" },
-                  { value: 72, label: "3 Days" },
-                  { value: 168, label: "1 Week" },
-                ].map((option) => (
-                  <div
-                    key={option.value}
-                    className="custom-dropdown-option"
-                    style={{
-                      padding: "10px 12px",
-                      cursor: "pointer",
-                      fontSize: "0.9rem",
-                      color: "var(--text-main)",
-                      background:
-                        retentionHours === option.value
-                          ? "var(--highlight)"
-                          : "transparent",
-                      fontWeight: retentionHours === option.value ? 600 : 400,
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      updateRetention(option.value);
-                      setIsDropdownOpen(false);
-                    }}
-                    onMouseEnter={(e) => {
-                      if (retentionHours !== option.value) {
-                        e.currentTarget.style.background = "var(--highlight)";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (retentionHours !== option.value) {
-                        e.currentTarget.style.background = "transparent";
-                      }
-                    }}
-                  >
-                    {option.label}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* 3. Clear Button */}
-          {entries.length > 0 && (
-            <button
-              className="secondary-btn"
-              onClick={() => setShowClearConfirm(true)}
-              style={{
-                height: "42px",
-                border: "1px solid var(--border)",
-                background: "transparent",
-                color: "var(--text-main)",
-                padding: "0 15px",
-                borderRadius: "8px",
+                gap: "8px",
                 cursor: "pointer",
                 fontWeight: 500,
                 whiteSpace: "nowrap",
                 boxSizing: "border-box",
-                display: "flex",
-                alignItems: "center",
+                flex: isAndroid ? 2 : "unset", // Larger button on mobile
               }}
             >
-              Clear All
+              <Clipboard size={18} /> Paste
             </button>
-          )}
-
-          {/* 4. Secure Paste Button */}
-          <button
-            className="header-action-btn"
-            onClick={securePaste}
-            style={{
-              height: "42px",
-              padding: "0 15px",
-              borderRadius: "8px",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              cursor: "pointer",
-              fontWeight: 500,
-              whiteSpace: "nowrap",
-              boxSizing: "border-box",
-              // Background comes from CSS class
-            }}
-          >
-            <Clipboard size={18} /> Secure Paste
-          </button>
+          </div>
         </div>
       </div>
 

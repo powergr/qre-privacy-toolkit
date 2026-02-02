@@ -22,8 +22,7 @@ import {
   RefreshCw, // <--- Added Icon
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { UpdateModal } from "../modals/UpdateModal"; // <--- Added Import
-
+import { UniversalUpdateModal } from "../modals/UniversalUpdateModal";
 interface SidebarProps {
   activeTab: string;
   setTab: (t: string) => void;
@@ -292,7 +291,7 @@ export function Sidebar({
 
       {/* RENDER UPDATE MODAL */}
       {showUpdateModal && (
-        <UpdateModal onClose={() => setShowUpdateModal(false)} />
+        <UniversalUpdateModal onClose={() => setShowUpdateModal(false)} />
       )}
     </>
   );

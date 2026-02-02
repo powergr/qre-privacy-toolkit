@@ -130,7 +130,7 @@ export function BookmarksView() {
     cursor: "pointer",
     boxSizing: "border-box" as const,
     whiteSpace: "nowrap" as const,
-    margin: 0, // FIXED: Force no margin to prevent misalignment
+    margin: 0,
   };
 
   if (loading)
@@ -143,7 +143,14 @@ export function BookmarksView() {
   return (
     <div className="vault-view">
       {/* --- HEADER --- */}
-      <div className="vault-header">
+      <div
+        className="vault-header"
+        style={{
+          flexDirection: isAndroid ? "column" : "row", // Stack vertically on Android
+          alignItems: isAndroid ? "stretch" : "center",
+          gap: isAndroid ? 15 : 20,
+        }}
+      >
         {/* Title Section */}
         <div>
           <h2 style={{ margin: 0 }}>Secure Bookmarks</h2>
@@ -155,11 +162,19 @@ export function BookmarksView() {
         </div>
 
         {/* Unified Right Side: Search + Actions */}
-        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "10px",
+            alignItems: "center",
+            flexDirection: isAndroid ? "column" : "row", // Stack inputs on Android
+            width: isAndroid ? "100%" : "auto",
+          }}
+        >
           {/* Search Bar */}
           <div
             className="search-container"
-            style={{ width: "300px", margin: 0 }}
+            style={{ width: isAndroid ? "100%" : "300px", margin: 0 }}
           >
             <Search size={18} className="search-icon" />
             <input
@@ -170,48 +185,58 @@ export function BookmarksView() {
               style={{
                 height: "42px",
                 boxSizing: "border-box",
-                margin: 0, // FIXED: Force no margin
+                margin: 0,
               }}
             />
           </div>
 
-          {/* Import Button - HIDE ON ANDROID */}
-          {!isAndroid && (
-            <button
-              className="secondary-btn"
-              onClick={() => setShowImportModal(true)}
-              title="Import from Browser"
-              style={{
-                ...commonButtonStyle,
-                border: "1px solid var(--border)",
-                background: "var(--bg-card)",
-                color: "var(--text-main)",
-              }}
-            >
-              <Import size={18} />
-              <span>Import</span>
-            </button>
-          )}
-
-          {/* Add Button */}
-          <button
-            className="header-action-btn"
-            onClick={() =>
-              setEditing({
-                title: "",
-                url: "",
-                category: "General",
-                color: BRAND_COLORS[0],
-                is_pinned: false,
-              })
-            }
+          {/* Buttons Row (New container to keep buttons side-by-side on Android) */}
+          <div
             style={{
-              ...commonButtonStyle,
-              border: "1px solid transparent",
+              display: "flex",
+              gap: 10,
+              width: isAndroid ? "100%" : "auto",
             }}
           >
-            Add New
-          </button>
+            {/* Import Button - HIDE ON ANDROID */}
+            {!isAndroid && (
+              <button
+                className="secondary-btn"
+                onClick={() => setShowImportModal(true)}
+                title="Import from Browser"
+                style={{
+                  ...commonButtonStyle,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-card)",
+                  color: "var(--text-main)",
+                }}
+              >
+                <Import size={18} />
+                <span>Import</span>
+              </button>
+            )}
+
+            {/* Add Button */}
+            <button
+              className="header-action-btn"
+              onClick={() =>
+                setEditing({
+                  title: "",
+                  url: "",
+                  category: "General",
+                  color: BRAND_COLORS[0],
+                  is_pinned: false,
+                })
+              }
+              style={{
+                ...commonButtonStyle,
+                border: "1px solid transparent",
+                flex: isAndroid ? 1 : "unset", // Fill width on Android
+              }}
+            >
+              Add New
+            </button>
+          </div>
         </div>
       </div>
 

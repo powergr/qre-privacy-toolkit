@@ -108,6 +108,12 @@ npm run tauri build
 
 ---
 
+## ✴️ Auto Update System
+
+Please read the file [QRE Auto Update System](AUTO_UPDATE_README.md)
+
+---
+
 ## ⚠️ Important Security Notice
 
 QRE Toolkit follows a **Zero-Knowledge** architecture.
