@@ -5,6 +5,7 @@ on:
       - "v*"
 
 jobs:
+  # --- JOB 1: Desktop Build & Sign ---
   release:
     permissions:
       contents: write
@@ -33,13 +34,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Add Rust targets for Universal macOS Build (Both Intel and Apple Silicon)
+      # Add macOS targets
       - name: Add macOS targets
         if: matrix.platform == 'macos-latest'
         run: |
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
 
+      # Linux Dependencies
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -49,9 +51,7 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # --- SPLIT BUILD STEPS TO FIX SHELL ERRORS ---
-
-      # 1. Build for macOS (Universal)
+      # --- BUILD ---
       - name: Build Tauri App (macOS)
         if: matrix.platform == 'macos-latest'
         env:
@@ -60,7 +60,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target universal-apple-darwin
 
-      # 2. Build for Windows/Linux (Specific Target)
       - name: Build Tauri App (Windows/Linux)
         if: matrix.platform != 'macos-latest'
         env:
@@ -68,100 +67,75 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target ${{ matrix.target }}
 
-      # --- SIGNING STEPS ---
+      # --- SIGNING & JSON GENERATION ---
 
+      # Windows JSON
       - name: Sign and create updater JSON (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           $bundlePath = "src-tauri/target/${{ matrix.target }}/release/bundle"
-
           $nsisInstaller = Get-ChildItem "$bundlePath/nsis/*.exe" | Select-Object -First 1
-          $msiInstaller = Get-ChildItem "$bundlePath/msi/*.msi" | Select-Object -First 1
 
-          if (-not $nsisInstaller) { Write-Error "NSIS Installer not found" }
+          if (-not $nsisInstaller) { Write-Error "NSIS Installer not found"; exit 1 }
 
+          # Signing Logic
           $keyPath = "$env:TEMP\signing.key"
           $env:TAURI_SIGNING_PRIVATE_KEY | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
-
-          Write-Host "Signing NSIS: $($nsisInstaller.FullName)"
           npx tauri signer sign "$($nsisInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-
-          Write-Host "Signing MSI: $($msiInstaller.FullName)"
-          npx tauri signer sign "$($msiInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-
           Remove-Item $keyPath -Force
 
+          # Create JSON
           $nsisSig = Get-Content "$($nsisInstaller.FullName).sig" -Raw
           $nsisFileName = $nsisInstaller.Name
-
           $json = @"
           {
             "version": "$version",
             "notes": "See release notes",
             "pub_date": "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')",
             "platforms": {
-              "windows-x86_64": {
-                "signature": "$($nsisSig.Trim())",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$nsisFileName"
-              }
+              "windows-x86_64": { "signature": "$($nsisSig.Trim())", "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$nsisFileName" }
             }
           }
           "@
-
-          [System.IO.File]::WriteAllText("$bundlePath/nsis/latest.json", $json, [System.Text.UTF8Encoding]::new($false))
-          Write-Host "Created Windows latest.json"
+          [System.IO.File]::WriteAllText("latest-windows.json", $json, [System.Text.UTF8Encoding]::new($false))
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # macOS JSON
       - name: Sign and create updater JSON (macOS)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
-
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
-          # Path for Universal build
           bundlePath="src-tauri/target/universal-apple-darwin/release/bundle"
-
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
 
           if [ -n "$dmgFile" ]; then
-            echo "Signing DMG: $dmgFile"
             npx tauri signer sign "$dmgFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-            
             signature=$(cat "$dmgFile.sig")
             fileName=$(basename "$dmgFile")
             
-            cat > "$bundlePath/dmg/latest.json" << EOF
+            cat > latest-macos.json << EOF
           {
             "version": "$version",
             "notes": "See release notes",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
-              "darwin-x86_64": {
-                "signature": "$signature",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
-              },
-              "darwin-aarch64": {
-                "signature": "$signature",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
-              },
-              "darwin-universal": {
-                "signature": "$signature",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
-              }
+              "darwin-universal": { "signature": "$signature", "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName" },
+              "darwin-x86_64": { "signature": "$signature", "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName" },
+              "darwin-aarch64": { "signature": "$signature", "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName" }
             }
           }
           EOF
-            echo "Created macOS latest.json"
           else
-            echo "Error: DMG file not found at $bundlePath"
+            echo "Error: DMG not found"
             exit 1
           fi
           rm -f "$keyPath"
@@ -169,43 +143,36 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # Linux JSON
       - name: Sign and create updater JSON (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
-
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
           bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle"
-
           appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
 
           if [ -n "$appImageFile" ]; then
-            echo "Signing AppImage: $appImageFile"
             npx tauri signer sign "$appImageFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-            
             signature=$(cat "$appImageFile.sig")
             fileName=$(basename "$appImageFile")
             
-            cat > "$bundlePath/appimage/latest.json" << EOF
+            cat > latest-linux.json << EOF
           {
             "version": "$version",
             "notes": "See release notes",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
-              "linux-x86_64": {
-                "signature": "$signature",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
-              }
+              "linux-x86_64": { "signature": "$signature", "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName" }
             }
           }
           EOF
-            echo "Created Linux latest.json"
           else
-            echo "Error: AppImage not found at $bundlePath"
+            echo "Error: AppImage not found"
             exit 1
           fi
           rm -f "$keyPath"
@@ -213,6 +180,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # --- UPLOAD INSTALLERS TO RELEASE ---
+      # Note: We do NOT upload latest.json here to avoid conflicts
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
@@ -220,20 +189,54 @@ jobs:
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.sig
-            src-tauri/target/release/bundle/**/latest.json
             src-tauri/target/*/release/bundle/**/*.exe
             src-tauri/target/*/release/bundle/**/*.msi
             src-tauri/target/*/release/bundle/**/*.sig
-            src-tauri/target/*/release/bundle/**/latest.json
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.sig
-            src-tauri/target/universal-apple-darwin/release/bundle/**/latest.json
             src-tauri/target/*/release/bundle/**/*.AppImage
             src-tauri/target/*/release/bundle/**/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --- JOB 2: Android (APK) ---
+      # --- SAVE JSON FOR MERGING ---
+      - name: Upload JSON Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-json-${{ matrix.platform }}
+          path: latest-*.json
+          if-no-files-found: ignore
+
+  # --- JOB 2: MERGE JSON & PUBLISH ---
+  publish-updater:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all JSON artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: update-json-*
+          merge-multiple: true
+
+      - name: Merge JSON files
+        run: |
+          # Use jq to merge all objects. If platform keys overlap, last one wins (shouldn't happen)
+          jq -s 'reduce .[] as $item ({}; . * $item)' latest-*.json > latest.json
+
+          echo "Merged JSON content:"
+          cat latest.json
+
+      - name: Upload latest.json to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- JOB 3: Android (Unchanged) ---
   release-android:
     permissions:
       contents: write
@@ -241,41 +244,36 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
+        with: { node-version: 20 }
       - name: Setup Java
         uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
+        with: { distribution: "temurin", java-version: "17" }
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
-
+          {
+            targets: aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android,
+          }
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
       - name: Install dependencies
         run: npm install
-
-      - name: Decode Keystore
+      - name: Build Android APK
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           mkdir -p src-tauri/gen/android
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > src-tauri/gen/android/qre-release.jks
-          echo "storePassword=${{ secrets.ANDROID_KEY_PASSWORD }}" > src-tauri/gen/android/key.properties
-          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> src-tauri/gen/android/key.properties
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> src-tauri/gen/android/key.properties
+          echo "$ANDROID_KEYSTORE" | base64 --decode > src-tauri/gen/android/qre-release.jks
+          echo "storePassword=$ANDROID_PASS" > src-tauri/gen/android/key.properties
+          echo "keyPassword=$ANDROID_PASS" >> src-tauri/gen/android/key.properties
+          echo "keyAlias=$ANDROID_ALIAS" >> src-tauri/gen/android/key.properties
           echo "storeFile=../qre-release.jks" >> src-tauri/gen/android/key.properties
 
-      - name: Build Android APK
-        run: npm run tauri android build -- --apk true --target aarch64
-
+          npm run tauri android build -- --apk true --target aarch64
       - name: Upload APK
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
