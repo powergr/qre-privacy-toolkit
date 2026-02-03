@@ -66,13 +66,13 @@
       "exceptionDomain": null,
       "signingIdentity": null,
       "providerShortName": null,
-      "entitlements": null
+      "entitlements": "Entitlements.plist"
     },
     "fileAssociations": [
       {
         "ext": ["qre"],
         "name": "QRE Encrypted File",
-        "description": "Secure file encrypted by QRE Locker",
+        "description": "Secure file encrypted by QRE Privacy Toolkit",
         "role": "Editor"
       }
     ]

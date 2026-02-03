@@ -1,6 +1,6 @@
 # QRE Privacy Toolkit User Manual
 
-## Version 2.5.6
+## Version 2.5.8
 
 QRE Privacy Toolkit is a **Local-First**, **Zero-Knowledge** security suite. This means your data never leaves your device, we have no servers, and we cannot recover your password if you lose it. You are in complete control.
 
