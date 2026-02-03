@@ -31,6 +31,16 @@ jobs:
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # We need specific handling for macOS Universal below
+          targets: ${{ matrix.target }}
+
+      # --- NEW STEP: Add architectures for macOS Universal Build ---
+      - name: Add macOS targets
+        if: matrix.platform == 'macos-latest'
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
 
       # Linux Dependencies
       - name: install dependencies (ubuntu only)
@@ -44,8 +54,10 @@ jobs:
 
       # Build WITHOUT tauri-action (we'll handle signing ourselves)
       - name: Build Tauri App
-        run: npm run tauri build
+        # --- CHANGED: Added target flag and MacOS deployment target ---
+        run: npm run tauri build -- --target ${{ matrix.target }}
         env:
+          MACOSX_DEPLOYMENT_TARGET: "10.15" # <--- Fixes "Not supported on this Mac"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -116,7 +128,14 @@ jobs:
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
           # Find the .app bundle and .dmg
-          bundlePath="src-tauri/target/release/bundle"
+          # Note: For Universal builds, the path might be slightly different, ensuring we find it
+          bundlePath="src-tauri/target/universal-apple-darwin/release/bundle"
+
+          # Fallback check if standard release path used
+          if [ ! -d "$bundlePath" ]; then
+             bundlePath="src-tauri/target/release/bundle"
+          fi
+
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
           appFile=$(find "$bundlePath/macos" -name "*.app" -o -name "*.app.tar.gz" | head -n 1)
 
@@ -139,6 +158,10 @@ jobs:
                 "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
               },
               "darwin-aarch64": {
+                "signature": "$signature",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
+              },
+              "darwin-universal": {
                 "signature": "$signature",
                 "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$fileName"
               }
@@ -215,6 +238,9 @@ jobs:
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/**/latest.json
             src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/**/latest.json
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.deb
         env:

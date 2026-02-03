@@ -3534,7 +3534,7 @@ checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 
 [[package]]
 name = "qre-gui"
-version = "2.5.7"
+version = "2.5.8"
 dependencies = [
  "aes-gcm",
  "anyhow",
