@@ -12,13 +12,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # MacOS: Use x86_64 as base, we add aarch64 later for Universal
           - platform: macos-latest
             target: x86_64-apple-darwin
-          # Linux
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          # Windows
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -34,15 +31,15 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Installs the specific target for the matrix (e.g., x86_64-apple-darwin)
           targets: ${{ matrix.target }}
 
-      # --- FIX 1: Manually add aarch64 for macOS Universal build ---
-      - name: Add macOS Apple Silicon target
+      # Add Rust targets for Universal macOS Build (Both Intel and Apple Silicon)
+      - name: Add macOS targets
         if: matrix.platform == 'macos-latest'
-        run: rustup target add aarch64-apple-darwin
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
 
-      # Linux Dependencies
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -52,35 +49,38 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # --- BUILD STEP ---
-      - name: Build Tauri App
+      # --- SPLIT BUILD STEPS TO FIX SHELL ERRORS ---
+
+      # 1. Build for macOS (Universal)
+      - name: Build Tauri App (macOS)
+        if: matrix.platform == 'macos-latest'
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.15"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ "${{ matrix.platform }}" == "macos-latest" ]; then
-            # macOS: Build Universal (combines x86_64 and aarch64)
-            npm run tauri build -- --target universal
-          else
-            # Windows/Linux: Build specific target
-            npm run tauri build -- --target ${{ matrix.target }}
-          fi
+        run: npm run tauri build -- --target universal-apple-darwin
 
-      # --- WINDOWS SIGNING & JSON ---
+      # 2. Build for Windows/Linux (Specific Target)
+      - name: Build Tauri App (Windows/Linux)
+        if: matrix.platform != 'macos-latest'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --target ${{ matrix.target }}
+
+      # --- SIGNING STEPS ---
+
       - name: Sign and create updater JSON (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-
-          # FIX 2: Updated Path to include the target folder
           $bundlePath = "src-tauri/target/${{ matrix.target }}/release/bundle"
 
           $nsisInstaller = Get-ChildItem "$bundlePath/nsis/*.exe" | Select-Object -First 1
           $msiInstaller = Get-ChildItem "$bundlePath/msi/*.msi" | Select-Object -First 1
 
-          if (-not $nsisInstaller) { Write-Error "NSIS Installer not found in $bundlePath" }
+          if (-not $nsisInstaller) { Write-Error "NSIS Installer not found" }
 
           $keyPath = "$env:TEMP\signing.key"
           $env:TAURI_SIGNING_PRIVATE_KEY | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
@@ -116,7 +116,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # --- MACOS SIGNING & JSON ---
       - name: Sign and create updater JSON (macOS)
         if: matrix.platform == 'macos-latest'
         shell: bash
@@ -127,7 +126,7 @@ jobs:
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
-          # FIX 3: macOS Universal path is slightly different
+          # Path for Universal build
           bundlePath="src-tauri/target/universal-apple-darwin/release/bundle"
 
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
@@ -170,7 +169,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # --- LINUX SIGNING & JSON ---
       - name: Sign and create updater JSON (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
@@ -181,7 +179,6 @@ jobs:
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
-          # FIX 4: Linux path includes target
           bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle"
 
           appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
@@ -216,8 +213,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # --- UPLOAD ARTIFACTS ---
-      # We now need to upload from multiple possible locations
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
