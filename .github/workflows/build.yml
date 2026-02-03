@@ -5,7 +5,6 @@ on:
       - "v*"
 
 jobs:
-  # --- JOB 1: Desktop (Windows, MacOS, Linux) ---
   release:
     permissions:
       contents: write
@@ -13,10 +12,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # MacOS: Use x86_64 as base, we add aarch64 later for Universal
           - platform: macos-latest
-            target: universal-apple-darwin
+            target: x86_64-apple-darwin
+          # Linux
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          # Windows
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -32,15 +34,13 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # We need specific handling for macOS Universal below
+          # Installs the specific target for the matrix (e.g., x86_64-apple-darwin)
           targets: ${{ matrix.target }}
 
-      # --- NEW STEP: Add architectures for macOS Universal Build ---
-      - name: Add macOS targets
+      # --- FIX 1: Manually add aarch64 for macOS Universal build ---
+      - name: Add macOS Apple Silicon target
         if: matrix.platform == 'macos-latest'
-        run: |
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
+        run: rustup target add aarch64-apple-darwin
 
       # Linux Dependencies
       - name: install dependencies (ubuntu only)
@@ -52,49 +52,54 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # Build WITHOUT tauri-action (we'll handle signing ourselves)
+      # --- BUILD STEP ---
       - name: Build Tauri App
-        # --- CHANGED: Added target flag and MacOS deployment target ---
-        run: npm run tauri build -- --target ${{ matrix.target }}
         env:
-          MACOSX_DEPLOYMENT_TARGET: "10.15" # <--- Fixes "Not supported on this Mac"
+          MACOSX_DEPLOYMENT_TARGET: "10.15"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ "${{ matrix.platform }}" == "macos-latest" ]; then
+            # macOS: Build Universal (combines x86_64 and aarch64)
+            npm run tauri build -- --target universal
+          else
+            # Windows/Linux: Build specific target
+            npm run tauri build -- --target ${{ matrix.target }}
+          fi
 
-      # Sign installers and create updater JSON (Windows)
+      # --- WINDOWS SIGNING & JSON ---
       - name: Sign and create updater JSON (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
-          # Get version from tag
           $version = "${{ github.ref_name }}".TrimStart('v')
 
-          # Paths
-          $bundlePath = "src-tauri/target/release/bundle"
+          # FIX 2: Updated Path to include the target folder
+          $bundlePath = "src-tauri/target/${{ matrix.target }}/release/bundle"
+
           $nsisInstaller = Get-ChildItem "$bundlePath/nsis/*.exe" | Select-Object -First 1
           $msiInstaller = Get-ChildItem "$bundlePath/msi/*.msi" | Select-Object -First 1
 
-          # Save key to temp file to avoid shell escaping issues
+          if (-not $nsisInstaller) { Write-Error "NSIS Installer not found in $bundlePath" }
+
           $keyPath = "$env:TEMP\signing.key"
           $env:TAURI_SIGNING_PRIVATE_KEY | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
 
-          Write-Host "Signing NSIS installer: $($nsisInstaller.FullName)"
+          Write-Host "Signing NSIS: $($nsisInstaller.FullName)"
           npx tauri signer sign "$($nsisInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
-          Write-Host "Signing MSI installer: $($msiInstaller.FullName)"
+          Write-Host "Signing MSI: $($msiInstaller.FullName)"
           npx tauri signer sign "$($msiInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
-          # Remove temp key file
           Remove-Item $keyPath -Force
 
-          # Create latest.json
           $nsisSig = Get-Content "$($nsisInstaller.FullName).sig" -Raw
           $nsisFileName = $nsisInstaller.Name
 
           $json = @"
           {
             "version": "$version",
-            "notes": "See the release notes for details",
+            "notes": "See release notes",
             "pub_date": "$(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')",
             "platforms": {
               "windows-x86_64": {
@@ -105,52 +110,39 @@ jobs:
           }
           "@
 
-          # Save latest.json
           [System.IO.File]::WriteAllText("$bundlePath/nsis/latest.json", $json, [System.Text.UTF8Encoding]::new($false))
-
-          Write-Host "Created latest.json"
-          Get-Content "$bundlePath/nsis/latest.json"
+          Write-Host "Created Windows latest.json"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # Sign installers and create updater JSON (macOS)
+      # --- MACOS SIGNING & JSON ---
       - name: Sign and create updater JSON (macOS)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
-          # Get version from tag
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          # Save key to temp file (no newline)
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
-          # Find the .app bundle and .dmg
-          # Note: For Universal builds, the path might be slightly different, ensuring we find it
+          # FIX 3: macOS Universal path is slightly different
           bundlePath="src-tauri/target/universal-apple-darwin/release/bundle"
 
-          # Fallback check if standard release path used
-          if [ ! -d "$bundlePath" ]; then
-             bundlePath="src-tauri/target/release/bundle"
-          fi
-
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
-          appFile=$(find "$bundlePath/macos" -name "*.app" -o -name "*.app.tar.gz" | head -n 1)
 
           if [ -n "$dmgFile" ]; then
             echo "Signing DMG: $dmgFile"
             npx tauri signer sign "$dmgFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
             
-            # Create latest.json
             signature=$(cat "$dmgFile.sig")
             fileName=$(basename "$dmgFile")
             
             cat > "$bundlePath/dmg/latest.json" << EOF
           {
             "version": "$version",
-            "notes": "See the release notes for details",
+            "notes": "See release notes",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
               "darwin-x86_64": {
@@ -168,46 +160,43 @@ jobs:
             }
           }
           EOF
-            
-            echo "Created latest.json for macOS"
-            cat "$bundlePath/dmg/latest.json"
+            echo "Created macOS latest.json"
+          else
+            echo "Error: DMG file not found at $bundlePath"
+            exit 1
           fi
-
-          # Remove temp key file
           rm -f "$keyPath"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # Sign installers and create updater JSON (Linux)
+      # --- LINUX SIGNING & JSON ---
       - name: Sign and create updater JSON (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
         run: |
-          # Get version from tag
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          # Save key to temp file (no newline)
           keyPath=$(mktemp)
           echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
 
-          # Find AppImage
-          bundlePath="src-tauri/target/release/bundle"
+          # FIX 4: Linux path includes target
+          bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle"
+
           appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
 
           if [ -n "$appImageFile" ]; then
             echo "Signing AppImage: $appImageFile"
             npx tauri signer sign "$appImageFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
             
-            # Create latest.json
             signature=$(cat "$appImageFile.sig")
             fileName=$(basename "$appImageFile")
             
             cat > "$bundlePath/appimage/latest.json" << EOF
           {
             "version": "$version",
-            "notes": "See the release notes for details",
+            "notes": "See release notes",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
               "linux-x86_64": {
@@ -217,18 +206,18 @@ jobs:
             }
           }
           EOF
-            
-            echo "Created latest.json for Linux"
-            cat "$bundlePath/appimage/latest.json"
+            echo "Created Linux latest.json"
+          else
+            echo "Error: AppImage not found at $bundlePath"
+            exit 1
           fi
-
-          # Remove temp key file
           rm -f "$keyPath"
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # Upload artifacts to release
+      # --- UPLOAD ARTIFACTS ---
+      # We now need to upload from multiple possible locations
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
@@ -237,12 +226,15 @@ jobs:
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.sig
             src-tauri/target/release/bundle/**/latest.json
-            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.exe
+            src-tauri/target/*/release/bundle/**/*.msi
+            src-tauri/target/*/release/bundle/**/*.sig
+            src-tauri/target/*/release/bundle/**/latest.json
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.sig
             src-tauri/target/universal-apple-darwin/release/bundle/**/latest.json
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/*/release/bundle/**/*.AppImage
+            src-tauri/target/*/release/bundle/**/*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
