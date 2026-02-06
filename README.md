@@ -154,6 +154,22 @@ projects. Once approved, future releases will be signed.
 - ✓ Fully open source (MIT license)
 - ✓ Active development on GitHub
 
+## 🍎 macOS Installation Note
+
+If the app fails to open, shows "App is damaged", or crashes immediately, it is because the app is not notarized by Apple.
+
+**To fix this:**
+
+1. Drag **QRE Privacy Toolkit** into your **Applications** folder.
+2. Open the **Terminal** app.
+3. Run the following command:
+
+   ```bash
+   sudo xattr -cr /Applications/"QRE Privacy Toolkit.app"
+   ```
+
+4. Open the app normally.
+
 **License:** MIT
 
 **Copyright:** © 2026 Project QRE

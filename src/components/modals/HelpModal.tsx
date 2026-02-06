@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { X, BookOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 // @ts-ignore
-import helpContent from "../../assets/HELP.md?raw";
+import { HELP_MARKDOWN as helpContent } from "../../assets/helpContent";
 
 // 1. Helper to extract raw text from React children (removes HTML tags/components)
 function extractText(children: any): string {

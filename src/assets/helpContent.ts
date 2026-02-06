@@ -1,3 +1,4 @@
+export const HELP_MARKDOWN = `
 # QRE Privacy Toolkit User Manual
 
 ## Version 2.5.8
@@ -35,11 +36,11 @@ The core engine of QRE. Encrypt files of any size using military-grade **AES-256
 
 3. Click the green **Lock** button.
 
-4. New `.qre` encrypted files are created next to the originals.
+4. New .qre encrypted files are created next to the originals.
 
 ### How to Unlock
 
-1. Drag a `.qre` file into the app.
+1. Drag a .qre file into the app.
 
 2. Click the red **Unlock** button.
 
@@ -103,7 +104,7 @@ Stop apps from reading your clipboard history.
 
 **Auto-Clear:** Set a retention timer (e.g., 1 Hour, 24 Hours) to automatically delete old entries.
 
-**Masking:** Sensitive data (Credit Cards, API Keys, Passwords) is visually masked (`••••`) by default.
+**Masking:** Sensitive data (Credit Cards, API Keys, Passwords) is visually masked by default.
 
 **Search:** Find historical clips instantly.
 
@@ -163,11 +164,11 @@ Share text, Wi-Fi credentials, or Crypto addresses with a phone offline.
 
 1. Go to **Options -> Backup Keychain**.
 
-2. Save the `QRE_Backup.json` file to a secure USB drive.
+2. Save the QRE_Backup.json file to a secure USB drive.
 
 3. **Restore:** Copy this file back to your app data folder to restore access on a new computer.
 
-**Forgot Password?** Use the **Recovery Code** (`QRE-XXXX...`) saved during setup.
+**Forgot Password?** Use the **Recovery Code** saved during setup.
 
 ---
 
@@ -180,12 +181,12 @@ The app will ask you to move your mouse (or touch the screen) to generate "Human
 
 ### 🚨 Panic Button (Desktop)
 
-Press **`Ctrl + Shift + Q`** at any time to instantly kill the app and wipe keys from memory. This works even if the app is minimized.
+Press **Ctrl + Shift + Q** at any time to instantly kill the app and wipe keys from memory. This works even if the app is minimized.
 
 1. Go to **Options -> Backup Keychain**.
-2. Save the `QRE_Backup.json` file to a secure USB drive.
+2. Save the QRE_Backup.json file to a secure USB drive.
 3. **Restore:** Copy this file back to your app data folder to restore access on a new computer. The path to the data folder is:
-   C:\Users\username\AppData\Roaming\com.qre.locker
+   C:\Users\yourusername\AppData\Roaming\com.qre.locker
 
 ### ⏱️ Auto-Lock
 
@@ -196,7 +197,7 @@ If you are inactive for 15 minutes, the app will warn you and then automatically
 ## 🆘 Troubleshooting
 
 **I forgot my Master Password.**
-Use the **Recovery Code** (e.g., `QRE-XXXX...`) you saved during setup.
+Use the **Recovery Code** (e.g., QRE-XXXX...) you saved during setup.
 
 1. Click "Forgot Password?" on the login screen.
 2. Enter the code.
@@ -205,3 +206,4 @@ Use the **Recovery Code** (e.g., `QRE-XXXX...`) you saved during setup.
 
 **"Integrity Error"**
 The file has been corrupted or modified by another program. QRE Toolkit refuses to decrypt it to prevent executing malicious code.
+`;
