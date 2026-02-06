@@ -19,9 +19,18 @@
     "fs:allow-remove",
     "fs:allow-rename",
     "fs:allow-watch",
+    "fs:allow-mkdir",
+    "fs:allow-create",
     {
       "identifier": "fs:scope",
-      "allow": ["**"]
+      "allow": [
+        "$APP_DATA/**",
+        "$APP_CONFIG/**",
+        "$DOCUMENT/**",
+        "$DOWNLOAD/**",
+        "$DESKTOP/**",
+        "**"
+      ]
     },
 
     "process:allow-exit",

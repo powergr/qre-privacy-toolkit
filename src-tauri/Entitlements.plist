@@ -2,20 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Allow JIT (Required for WebView stability) -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
-    <!-- Allow unsigned executable memory (Required for some Rust libs) -->
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
-    <!-- Allow Network Access (For Updates & Breach Check) -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <!-- Allow Read/Write to files user selects (Drag & Drop locking) -->
+    <!-- These allow the app to read/write where the user expects -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
-    <!-- Allow basic file access to Downloads folder (Optional but helpful) -->
     <key>com.apple.security.files.downloads.read-write</key>
     <true/>
+    <!-- Important: We do NOT enable app-sandbox here for a distribution binary unless required by App Store -->
 </dict>
 </plist>
