@@ -11,6 +11,16 @@ import {
 import { useNotes, NoteEntry } from "../../hooks/useNotes";
 import { EntryDeleteModal } from "../modals/AppModals"; // Custom Modal
 
+// Manual UUID Generator (Safe for all environments)
+function generateUUID() {
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+    (
+      +c ^
+      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
+    ).toString(16),
+  );
+}
+
 export function NotesView() {
   const { entries, loading, saveNote, deleteNote } = useNotes();
 
@@ -58,7 +68,7 @@ export function NotesView() {
     saveNote({
       ...note,
       is_pinned: !note.is_pinned,
-      updated_at: Date.now(), // Optional: Update timestamp on pin? Usually no, but keeps sync alive.
+      updated_at: Date.now(),
     });
   };
 
@@ -212,21 +222,21 @@ export function NotesView() {
             onClick={(e) => e.stopPropagation()}
             style={{ width: 600, maxWidth: "95vw" }}
           >
-            {/* UPDATED HEADER: Centered Title, Absolute Button */}
+            {/* HEADER */}
             <div
               style={{
                 display: "flex",
-                justifyContent: "center", // Center the Title
+                justifyContent: "center",
                 alignItems: "center",
                 marginBottom: 15,
-                position: "relative", // Allow absolute positioning for the button
+                position: "relative",
               }}
             >
               <h3 style={{ margin: 0 }}>
                 {editing.id ? "Edit Note" : "New Note"}
               </h3>
 
-              {/* Pin Toggle in Editor (Positioned Absolutely Right) */}
+              {/* Pin Toggle */}
               <button
                 className="icon-btn-ghost"
                 title={editing.is_pinned ? "Unpin" : "Pin"}
@@ -277,21 +287,27 @@ export function NotesView() {
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  onClick={() => {
-                    const finalId = editing.id || crypto.randomUUID();
-                    const now = Date.now();
+                  // FIX: Use async/await and manual UUID
+                  onClick={async () => {
+                    try {
+                      const finalId = editing.id || generateUUID();
+                      const now = Date.now();
 
-                    saveNote({
-                      ...editing,
-                      created_at: editing.created_at || now,
-                      updated_at: now,
-                      id: finalId,
-                      title: editing.title || "Untitled",
-                      content: editing.content || "",
-                      is_pinned: editing.is_pinned || false,
-                    } as NoteEntry);
+                      await saveNote({
+                        ...editing,
+                        created_at: editing.created_at || now,
+                        updated_at: now,
+                        id: finalId,
+                        title: editing.title || "Untitled",
+                        content: editing.content || "",
+                        is_pinned: editing.is_pinned || false,
+                      } as NoteEntry);
 
-                    setEditing(null);
+                      setEditing(null);
+                    } catch (e) {
+                      alert("Error saving note: " + e);
+                      console.error(e);
+                    }
                   }}
                 >
                   Save

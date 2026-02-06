@@ -28,6 +28,16 @@ const BRAND_COLORS = [
   "#f1c40f", // Yellow
 ];
 
+// Manual UUID Generator (Safe for all environments)
+function generateUUID() {
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+    (
+      +c ^
+      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
+    ).toString(16),
+  );
+}
+
 export function VaultView() {
   const { entries, loading, saveEntry, deleteEntry } = useVault();
 
@@ -416,21 +426,28 @@ export function VaultView() {
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  onClick={() => {
-                    const finalId = editing.id || crypto.randomUUID();
-                    saveEntry({
-                      ...editing,
-                      created_at: editing.created_at || Date.now(),
-                      id: finalId,
-                      service: editing.service || "Untitled",
-                      username: editing.username || "",
-                      password: editing.password || "",
-                      notes: editing.notes || "",
-                      url: editing.url || "",
-                      color: editing.color || BRAND_COLORS[0],
-                      is_pinned: editing.is_pinned || false,
-                    } as VaultEntry);
-                    setEditing(null);
+                  // FIX: Added async/await and error alerting
+                  onClick={async () => {
+                    try {
+                      const finalId = editing.id || generateUUID();
+
+                      await saveEntry({
+                        ...editing,
+                        created_at: editing.created_at || Date.now(),
+                        id: finalId,
+                        service: editing.service || "Untitled",
+                        username: editing.username || "",
+                        password: editing.password || "",
+                        notes: editing.notes || "",
+                        url: editing.url || "",
+                        color: editing.color || BRAND_COLORS[0],
+                        is_pinned: editing.is_pinned || false,
+                      } as VaultEntry);
+
+                      setEditing(null);
+                    } catch (e) {
+                      alert("Error saving password: " + e);
+                    }
                   }}
                 >
                   Save

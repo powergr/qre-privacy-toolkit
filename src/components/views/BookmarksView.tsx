@@ -26,6 +26,16 @@ const BRAND_COLORS = [
   "#555555", // Grey
 ];
 
+// Manual UUID Generator
+function generateUUID() {
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+    (
+      +c ^
+      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
+    ).toString(16),
+  );
+}
+
 export function BookmarksView() {
   const { entries, loading, saveBookmark, deleteBookmark, refreshVault } =
     useBookmarks();
@@ -146,7 +156,7 @@ export function BookmarksView() {
       <div
         className="vault-header"
         style={{
-          flexDirection: isAndroid ? "column" : "row", // Stack vertically on Android
+          flexDirection: isAndroid ? "column" : "row",
           alignItems: isAndroid ? "stretch" : "center",
           gap: isAndroid ? 15 : 20,
         }}
@@ -167,7 +177,7 @@ export function BookmarksView() {
             display: "flex",
             gap: "10px",
             alignItems: "center",
-            flexDirection: isAndroid ? "column" : "row", // Stack inputs on Android
+            flexDirection: isAndroid ? "column" : "row",
             width: isAndroid ? "100%" : "auto",
           }}
         >
@@ -190,7 +200,7 @@ export function BookmarksView() {
             />
           </div>
 
-          {/* Buttons Row (New container to keep buttons side-by-side on Android) */}
+          {/* Buttons Row */}
           <div
             style={{
               display: "flex",
@@ -198,7 +208,7 @@ export function BookmarksView() {
               width: isAndroid ? "100%" : "auto",
             }}
           >
-            {/* Import Button - HIDE ON ANDROID */}
+            {/* Import Button */}
             {!isAndroid && (
               <button
                 className="secondary-btn"
@@ -231,7 +241,7 @@ export function BookmarksView() {
               style={{
                 ...commonButtonStyle,
                 border: "1px solid transparent",
-                flex: isAndroid ? 1 : "unset", // Fill width on Android
+                flex: isAndroid ? 1 : "unset",
               }}
             >
               Add New
@@ -572,24 +582,30 @@ export function BookmarksView() {
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  onClick={() => {
-                    const finalId = editing.id || crypto.randomUUID();
-                    let finalUrl = editing.url || "";
-                    if (finalUrl && !finalUrl.startsWith("http")) {
-                      finalUrl = "https://" + finalUrl;
-                    }
+                  // FIX: Use async/await + manual UUID + error handling
+                  onClick={async () => {
+                    try {
+                      const finalId = editing.id || generateUUID();
+                      let finalUrl = editing.url || "";
+                      if (finalUrl && !finalUrl.startsWith("http")) {
+                        finalUrl = "https://" + finalUrl;
+                      }
 
-                    saveBookmark({
-                      ...editing,
-                      created_at: editing.created_at || Date.now(),
-                      id: finalId,
-                      url: finalUrl,
-                      title: editing.title || "New Link",
-                      category: editing.category || "General",
-                      is_pinned: (editing as any).is_pinned || false,
-                      color: (editing as any).color || BRAND_COLORS[0],
-                    } as BookmarkEntry);
-                    setEditing(null);
+                      await saveBookmark({
+                        ...editing,
+                        created_at: editing.created_at || Date.now(),
+                        id: finalId,
+                        url: finalUrl,
+                        title: editing.title || "New Link",
+                        category: editing.category || "General",
+                        is_pinned: (editing as any).is_pinned || false,
+                        color: (editing as any).color || BRAND_COLORS[0],
+                      } as BookmarkEntry);
+
+                      setEditing(null);
+                    } catch (e) {
+                      alert("Error saving bookmark: " + e);
+                    }
                   }}
                 >
                   Save
