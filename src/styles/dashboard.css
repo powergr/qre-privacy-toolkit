@@ -145,7 +145,10 @@
   border: none;
   color: var(--text-main);
   padding: 0 12px; /* Horizontal padding only */
-  font-family: "Consolas", monospace;
+  /* FIX: Use proper cross-platform monospace font stack */
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
   font-size: 0.9rem;
   outline: none;
 }

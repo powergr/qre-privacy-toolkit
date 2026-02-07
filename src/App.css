@@ -57,7 +57,10 @@ body {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 
-  font-family: "Segoe UI", Tahoma, sans-serif;
+  /* FIX: Cross-platform system font stack with emoji support */
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
   background-color: var(--bg-color);
   color: var(--text-main);
   height: 100vh;
@@ -66,6 +69,9 @@ body {
   transition:
     background-color 0.2s,
     color 0.2s;
+  /* FIX: Enable font smoothing for better emoji rendering on macOS */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Scrollbar */
@@ -152,7 +158,7 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
 }
 
 .card-icon {
-  width: 50px;  /* Smaller icon circle (was 70px) */
+  width: 50px; /* Smaller icon circle (was 70px) */
   height: 50px;
   border-radius: 12px; /* Rounded square looks more modern than circle */
   display: flex;

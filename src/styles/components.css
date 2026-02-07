@@ -240,7 +240,9 @@
   background: var(--highlight);
   padding: 2px 5px;
   border-radius: 4px;
-  font-family: monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
   color: #ff9e64;
 }
 
@@ -275,7 +277,9 @@ input::-ms-clear {
   padding-right: 40px;
 }
 .recovery-code {
-  font-family: monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
   font-size: 1.2rem;
   letter-spacing: 2px;
   background: #111;
