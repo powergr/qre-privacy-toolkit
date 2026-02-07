@@ -2,17 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Allow JIT compilation (required for JavaScript execution) -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
+    
+    <!-- Allow unsigned executable memory (required for WebView) -->
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
+    
+    <!-- CRITICAL FIX: Allow WebView to load and render dynamic content -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    
+    <!-- Allow network access (for updates, etc.) -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <!-- These allow the app to read/write where the user expects -->
+    
+    <!-- Allow reading/writing user-selected files -->
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
+    
+    <!-- Allow reading/writing to Downloads folder -->
     <key>com.apple.security.files.downloads.read-write</key>
     <true/>
-    <!-- Important: We do NOT enable app-sandbox here for a distribution binary unless required by App Store -->
+    
+    <!-- Note: App Sandbox is NOT enabled for distribution builds -->
 </dict>
 </plist>
