@@ -27,15 +27,15 @@ function markdownToHtml(text: string): string {
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
 
       // Headers with IDs
-      .replace(/^### (.+)$/gm, (match, content) => {
+      .replace(/^### (.+)$/gm, (_, content) => {
         const id = createId(content);
         return `<h3 id="${id}">${content}</h3>`;
       })
-      .replace(/^## (.+)$/gm, (match, content) => {
+      .replace(/^## (.+)$/gm, (_, content) => {
         const id = createId(content);
         return `<h2 id="${id}">${content}</h2>`;
       })
-      .replace(/^# (.+)$/gm, (match, content) => {
+      .replace(/^# (.+)$/gm, (_, content) => {
         const id = createId(content);
         return `<h1 id="${id}">${content}</h1>`;
       })
