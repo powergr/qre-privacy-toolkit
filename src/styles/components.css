@@ -71,6 +71,24 @@
   justify-content: center;
   z-index: 99999;
 }
+
+/* FIX: macOS-specific help modal overlay with higher z-index but within safe limits */
+.help-modal-overlay {
+  z-index: 100000;
+  /* macOS WebKit fix: Use will-change to create a new stacking context */
+  will-change: transform;
+  /* macOS WebKit fix: Force hardware acceleration without excessive z-index */
+  transform: translateZ(0);
+}
+
+/* macOS WebKit: Reduce backdrop blur for better performance on high z-index layers */
+@media screen and (-webkit-min-device-pixel-ratio: 1) {
+  .help-modal-overlay {
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
+}
+
 .auth-card {
   width: 400px;
   max-width: 90%;
@@ -81,7 +99,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* macOS WebKit fix: Ensure proper rendering */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
+
 .auth-overlay {
   position: fixed;
   top: 0;

@@ -62,12 +62,12 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 200000 }}>
+    <div className="modal-overlay help-modal-overlay" onClick={onClose}>
       <div
         className="auth-card"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 800, // Slightly wider for better reading
+          width: 800,
           maxWidth: "95vw",
           height: "85vh",
           display: "flex",
