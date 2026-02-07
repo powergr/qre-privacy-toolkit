@@ -5,7 +5,15 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:asset:default",
+    "core:path:default",
+    "core:event:default",
+    "core:window:default",
+    "core:app:default",
+    "core:image:default",
+    "core:resources:default",
+    "core:menu:default",
+    "core:tray:default",
+
     "opener:default",
     "os:default",
     "dialog:default",
