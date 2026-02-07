@@ -2,11 +2,12 @@ import React, { useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import { X, BookOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-// DIRECTLY IMPORT THE TEXT VARIABLE
+
 import { HELP_MARKDOWN } from "../../assets/helpContent";
 
 // --- HELPERS ---
 function extractText(children: any): string {
+  if (!children) return "";
   if (typeof children === "string") return children;
   if (Array.isArray(children)) return children.map(extractText).join("");
   if (children?.props?.children) return extractText(children.props.children);
@@ -14,6 +15,7 @@ function extractText(children: any): string {
 }
 
 function slugify(text: string): string {
+  if (!text) return "";
   return text
     .toLowerCase()
     .replace(/\s+/g, "-")
@@ -26,11 +28,13 @@ function slugify(text: string): string {
 export function HelpModal({ onClose }: { onClose: () => void }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Safety Check: Prevent White Screen Crash if import fails
+  const content = HELP_MARKDOWN || "# Error: Help content could not be loaded.";
+
   const handleLinkClick = async (
     e: React.MouseEvent<HTMLAnchorElement>,
     href: string,
   ) => {
-    // External Link
     if (href.startsWith("http")) {
       e.preventDefault();
       try {
@@ -41,7 +45,6 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
       return;
     }
 
-    // Internal Anchor Link
     if (href.startsWith("#")) {
       e.preventDefault();
       const id = href.substring(1);
@@ -64,20 +67,22 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         className="auth-card"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 700,
+          width: 800, // Slightly wider for better reading
           maxWidth: "95vw",
           height: "85vh",
           display: "flex",
           flexDirection: "column",
         }}
       >
+        {/* HEADER */}
         <div className="modal-header">
           <BookOpen size={20} color="var(--accent)" />
-          <h2>Help Topics</h2>
+          <h2>User Manual</h2>
           <div style={{ flex: 1 }}></div>
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
 
+        {/* CONTENT */}
         <div
           className="modal-body"
           ref={scrollContainerRef}
@@ -133,11 +138,12 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
                 },
               }}
             >
-              {HELP_MARKDOWN}
+              {content}
             </ReactMarkdown>
           </div>
         </div>
 
+        {/* FOOTER */}
         <div
           style={{ padding: "15px 25px", borderTop: "1px solid var(--border)" }}
         >
