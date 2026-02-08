@@ -299,7 +299,7 @@ jobs:
           echo "keyAlias=$ANDROID_ALIAS" >> src-tauri/gen/android/key.properties
           echo "storeFile=../qre-release.jks" >> src-tauri/gen/android/key.properties
 
-          npm run tauri android build -- --apk true --target aarch64
+          npm run tauri android build -- --apk --target aarch64
       - name: Upload APK
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
