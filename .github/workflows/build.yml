@@ -90,10 +90,10 @@ jobs:
 
           # Signing Logic
           $keyPath = "$env:TEMP\signing.key"
-          $env:TAURI_SIGNING_PRIVATE_KEY | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
+          "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
 
           Write-Host "Signing NSIS..."
-          npx tauri signer sign "$($nsisInstaller.FullName)" --private-key-path "$keyPath" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          npx tauri signer sign "$($nsisInstaller.FullName)" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
 
           # Clean up key
           Remove-Item $keyPath -Force
@@ -113,9 +113,6 @@ jobs:
           }
           "@
           [System.IO.File]::WriteAllText("latest-windows.json", $json, [System.Text.UTF8Encoding]::new($false))
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # macOS Signing & JSON
       - name: Sign and create updater JSON (macOS)
@@ -126,14 +123,14 @@ jobs:
           version="${version#v}"
 
           keyPath=$(mktemp)
-          echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+          echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "$keyPath"
 
           bundlePath="src-tauri/target/universal-apple-darwin/release/bundle"
           dmgFile=$(find "$bundlePath/dmg" -name "*.dmg" | head -n 1)
 
           if [ -n "$dmgFile" ]; then
             echo "Signing DMG..."
-            npx tauri signer sign "$dmgFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            npx tauri signer sign "$dmgFile" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
             
             signature=$(cat "$dmgFile.sig")
             fileName=$(basename "$dmgFile")
@@ -155,9 +152,6 @@ jobs:
             exit 1
           fi
           rm -f "$keyPath"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # Linux Signing & JSON
       - name: Sign and create updater JSON (Linux)
@@ -168,14 +162,14 @@ jobs:
           version="${version#v}"
 
           keyPath=$(mktemp)
-          echo -n "$TAURI_SIGNING_PRIVATE_KEY" > "$keyPath"
+          echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "$keyPath"
 
           bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle"
           appImageFile=$(find "$bundlePath/appimage" -name "*.AppImage" | head -n 1)
 
           if [ -n "$appImageFile" ]; then
             echo "Signing AppImage..."
-            npx tauri signer sign "$appImageFile" --private-key-path "$keyPath" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            npx tauri signer sign "$appImageFile" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
             
             signature=$(cat "$appImageFile.sig")
             fileName=$(basename "$appImageFile")
@@ -195,9 +189,6 @@ jobs:
             exit 1
           fi
           rm -f "$keyPath"
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # --- UPLOAD INSTALLERS ---
       # Explicit paths per platform to avoid confusion/duplicates
