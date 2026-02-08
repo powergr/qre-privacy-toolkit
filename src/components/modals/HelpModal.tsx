@@ -7,11 +7,14 @@ import { HELP_MARKDOWN } from "../../assets/helpContent";
 // Helper to create anchor IDs from text (remove emojis, lowercase, hyphenate)
 function createId(text: string): string {
   return text
-    .replace(/[\u{1F300}-\u{1F9FF}]/gu, "") // Remove emojis
+    // Remove ALL emojis (comprehensive ranges)
+    .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F910}-\u{1F96B}]|[\u{1F980}-\u{1F9E0}]|[\uFE00-\uFE0F]|[\u200D]/gu, "")
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s-]/g, "") // Remove special chars
-    .replace(/\s+/g, "-"); // Replace spaces with hyphens
+    .replace(/&/g, "") // Remove ampersands specifically
+    .replace(/[^\w\s-]/g, "") // Remove other special chars
+    .replace(/\s+/g, "-") // Replace spaces with hyphens
+    .replace(/-+/g, "-"); // Replace multiple hyphens with single hyphen
 }
 
 // Convert markdown-style text to HTML
