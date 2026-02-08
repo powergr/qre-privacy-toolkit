@@ -7,29 +7,29 @@ import { HELP_MARKDOWN } from "../../assets/helpContent";
 // Helper to create anchor IDs from text (remove emojis, lowercase, hyphenate)
 function createId(text: string): string {
   return text
-    // Remove ALL emojis (comprehensive ranges)
-    .replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F910}-\u{1F96B}]|[\u{1F980}-\u{1F9E0}]|[\uFE00-\uFE0F]|[\u200D]/gu, "")
+    .replace(
+      /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F910}-\u{1F96B}]|[\u{1F980}-\u{1F9E0}]|[\uFE00-\uFE0F]|[\u200D]/gu,
+      "",
+    )
     .toLowerCase()
     .trim()
-    .replace(/&/g, "") // Remove ampersands specifically
-    .replace(/[^\w\s-]/g, "") // Remove other special chars
-    .replace(/\s+/g, "-") // Replace spaces with hyphens
-    .replace(/-+/g, "-"); // Replace multiple hyphens with single hyphen
+    .replace(/&/g, "")
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 }
 
 // Convert markdown-style text to HTML
 function markdownToHtml(text: string): string {
   return (
     text
-      // Escape HTML first
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
+      // Process markdown structures BEFORE HTML escaping
+      // Links
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, href) => {
+        return `<a href="${href}">${linkText}</a>`;
+      })
 
-      // Links (must come before other replacements)
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-
-      // Headers with IDs
+      // Headers with IDs (MUST be before HTML escaping)
       .replace(/^### (.+)$/gm, (_, content) => {
         const id = createId(content);
         return `<h3 id="${id}">${content}</h3>`;
@@ -51,6 +51,22 @@ function markdownToHtml(text: string): string {
 
       // Code
       .replace(/`(.+?)`/g, "<code>$1</code>")
+
+      // NOW escape HTML (but preserve our generated HTML tags)
+      .replace(/&(?!(amp|lt|gt|quot);)/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      // Unescape our generated HTML tags
+      .replace(/&lt;a href="([^"]+)"&gt;/g, '<a href="$1">')
+      .replace(/&lt;\/a&gt;/g, "</a>")
+      .replace(/&lt;h([123]) id="([^"]+)"&gt;/g, '<h$1 id="$2">')
+      .replace(/&lt;\/h([123])&gt;/g, "</h$1>")
+      .replace(/&lt;strong&gt;/g, "<strong>")
+      .replace(/&lt;\/strong&gt;/g, "</strong>")
+      .replace(/&lt;em&gt;/g, "<em>")
+      .replace(/&lt;\/em&gt;/g, "</em>")
+      .replace(/&lt;code&gt;/g, "<code>")
+      .replace(/&lt;\/code&gt;/g, "</code>")
 
       // Horizontal rules
       .replace(/^---$/gm, "<hr>")
