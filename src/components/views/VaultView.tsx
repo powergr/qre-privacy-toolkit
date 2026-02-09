@@ -15,20 +15,20 @@ import {
 import { useVault, VaultEntry } from "../../hooks/useVault";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { InfoModal, EntryDeleteModal } from "../modals/AppModals";
+// 1. IMPORT UTILS
+import { getPasswordStrength, getStrengthColor } from "../../utils/security";
 
-// Preset Brand Colors
 const BRAND_COLORS = [
-  "#555555", // Neutral (Default)
-  "#E50914", // Netflix Red
-  "#1DA1F2", // Twitter Blue
-  "#4267B2", // Facebook Blue
-  "#F25022", // Microsoft Orange
-  "#0F9D58", // Google Green
-  "#8e44ad", // Purple
-  "#f1c40f", // Yellow
+  "#555555",
+  "#E50914",
+  "#1DA1F2",
+  "#4267B2",
+  "#F25022",
+  "#0F9D58",
+  "#8e44ad",
+  "#f1c40f",
 ];
 
-// Manual UUID Generator (Safe for all environments)
 function generateUUID() {
   return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
     (
@@ -41,18 +41,20 @@ function generateUUID() {
 export function VaultView() {
   const { entries, loading, saveEntry, deleteEntry } = useVault();
 
-  // State
   const [editing, setEditing] = useState<Partial<VaultEntry> | null>(null);
   const [showPass, setShowPass] = useState<string | null>(null);
   const [copyModalMsg, setCopyModalMsg] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<VaultEntry | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // --- FILTER & SORT LOGIC ---
+  // 2. CALCULATE STRENGTH FOR MODAL
+  // We calculate this dynamically based on what is being typed in the 'editing' state
+  const strength = editing
+    ? getPasswordStrength(editing.password || "")
+    : { score: 0, feedback: "" };
+
   const visibleEntries = useMemo(() => {
     let filtered = entries;
-
-    // 1. Search Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = entries.filter(
@@ -62,8 +64,6 @@ export function VaultView() {
           (e.url && e.url.toLowerCase().includes(q)),
       );
     }
-
-    // 2. Sort: Pinned First > Newest
     return [...filtered].sort((a, b) => {
       if (a.is_pinned && !b.is_pinned) return -1;
       if (!a.is_pinned && b.is_pinned) return 1;
@@ -71,7 +71,6 @@ export function VaultView() {
     });
   }, [entries, searchQuery]);
 
-  // --- HELPERS ---
   const handleCopy = async (text: string) => {
     await writeText(text);
     setCopyModalMsg("Password copied to clipboard.");
@@ -101,7 +100,6 @@ export function VaultView() {
 
   return (
     <div className="vault-view">
-      {/* --- HEADER --- */}
       <div className="vault-header">
         <div>
           <h2 style={{ margin: 0 }}>Password Vault</h2>
@@ -111,8 +109,6 @@ export function VaultView() {
             {entries.length} secure login{entries.length !== 1 ? "s" : ""}.
           </p>
         </div>
-
-        {/* Search Bar */}
         <div className="search-container">
           <Search size={18} className="search-icon" />
           <input
@@ -122,7 +118,6 @@ export function VaultView() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-
         <button
           className="header-action-btn"
           onClick={() =>
@@ -140,7 +135,6 @@ export function VaultView() {
         </button>
       </div>
 
-      {/* --- EMPTY STATES --- */}
       {entries.length === 0 && !searchQuery && (
         <div
           style={{
@@ -159,7 +153,6 @@ export function VaultView() {
         </div>
       )}
 
-      {/* --- GRID OF CARDS --- */}
       <div className="modern-grid">
         {visibleEntries.map((entry) => (
           <div
@@ -168,7 +161,6 @@ export function VaultView() {
             onClick={() => setEditing(entry)}
             style={{ position: "relative" }}
           >
-            {/* Pinned Icon Overlay */}
             {entry.is_pinned && (
               <Pin
                 size={16}
@@ -176,8 +168,6 @@ export function VaultView() {
                 fill="currentColor"
               />
             )}
-
-            {/* Top Row: Icon + Info */}
             <div className="vault-service-row">
               <div
                 className="service-icon"
@@ -202,16 +192,12 @@ export function VaultView() {
                 </div>
               </div>
             </div>
-
-            {/* Bottom Row: Password Pill */}
             <div className="secret-pill" onClick={(e) => e.stopPropagation()}>
               <span className="secret-text">
                 {showPass === entry.id ? entry.password : "•".repeat(12)}
               </span>
-
               <button
                 className="icon-btn-ghost"
-                title={showPass === entry.id ? "Hide" : "Show"}
                 onClick={() =>
                   setShowPass(showPass === entry.id ? null : entry.id)
                 }
@@ -222,19 +208,14 @@ export function VaultView() {
                   <Eye size={16} />
                 )}
               </button>
-
               <button
                 className="icon-btn-ghost"
-                title="Copy"
                 onClick={() => handleCopy(entry.password)}
               >
                 <Copy size={16} />
               </button>
             </div>
-
-            {/* Hover Actions (Edit/Pin/Delete) */}
             <div className="card-actions">
-              {/* Quick Pin Action */}
               <button
                 className="icon-btn-ghost"
                 onClick={(e) => {
@@ -244,7 +225,6 @@ export function VaultView() {
               >
                 {entry.is_pinned ? <PinOff size={16} /> : <Pin size={16} />}
               </button>
-
               <button
                 className="icon-btn-ghost danger"
                 onClick={(e) => {
@@ -259,7 +239,6 @@ export function VaultView() {
         ))}
       </div>
 
-      {/* --- EDIT / ADD MODAL --- */}
       {editing && (
         <div className="modal-overlay">
           <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -272,10 +251,8 @@ export function VaultView() {
               }}
             >
               <h3>{editing.id ? "Edit Entry" : "New Entry"}</h3>
-              {/* Pin Toggle in Editor */}
               <button
                 className="icon-btn-ghost"
-                title={editing.is_pinned ? "Unpin" : "Pin"}
                 onClick={() =>
                   setEditing({ ...editing, is_pinned: !editing.is_pinned })
                 }
@@ -296,7 +273,6 @@ export function VaultView() {
               className="modal-body"
               style={{ display: "flex", flexDirection: "column", gap: 15 }}
             >
-              {/* Service */}
               <div
                 style={{
                   position: "relative",
@@ -323,8 +299,6 @@ export function VaultView() {
                   autoFocus
                 />
               </div>
-
-              {/* Username */}
               <div
                 style={{
                   position: "relative",
@@ -350,8 +324,6 @@ export function VaultView() {
                   }
                 />
               </div>
-
-              {/* URL (New) */}
               <div
                 style={{
                   position: "relative",
@@ -378,37 +350,83 @@ export function VaultView() {
                 />
               </div>
 
-              {/* Password */}
-              <div className="vault-view-custom-password-wrapper">
-                <input
-                  className="auth-input has-icon"
-                  placeholder="Password"
-                  value={editing.password}
-                  onChange={(e) =>
-                    setEditing({ ...editing, password: e.target.value })
-                  }
-                />
-                <button
-                  className="vault-view-custom-password-toggle"
-                  title="Generate Strong Password"
-                  onClick={() =>
-                    setEditing({
-                      ...editing,
-                      password: generateStrongPassword(),
-                    })
-                  }
-                >
-                  <Key size={18} />
-                </button>
+              {/* Password + Strength Meter */}
+              <div>
+                <div className="vault-view-custom-password-wrapper">
+                  <input
+                    className="auth-input has-icon"
+                    placeholder="Password"
+                    value={editing.password}
+                    onChange={(e) =>
+                      setEditing({ ...editing, password: e.target.value })
+                    }
+                  />
+                  <button
+                    className="vault-view-custom-password-toggle"
+                    title="Generate Strong Password"
+                    onClick={() =>
+                      setEditing({
+                        ...editing,
+                        password: generateStrongPassword(),
+                      })
+                    }
+                  >
+                    <Key size={18} />
+                  </button>
+                </div>
+
+                {/* 3. STRENGTH VISUALIZATION */}
+                {editing.password && editing.password.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div
+                      style={{
+                        height: 4,
+                        width: "100%",
+                        background: "rgba(255,255,255,0.1)",
+                        borderRadius: 2,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${(strength.score + 1) * 20}%`,
+                          background: getStrengthColor(strength.score),
+                          transition:
+                            "width 0.3s ease, background-color 0.3s ease",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.75rem",
+                        color: "var(--text-dim)",
+                        marginTop: 4,
+                        textAlign: "right",
+                        display: "flex",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span style={{ color: getStrengthColor(strength.score) }}>
+                        {
+                          ["Very Weak", "Weak", "Okay", "Good", "Strong"][
+                            strength.score
+                          ]
+                        }
+                      </span>
+                      <span>{strength.feedback}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Color Picker */}
               <div>
                 <label
                   style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}
                 >
                   Card Color
                 </label>
+                https://www.twitch.tv/therbak47
                 <div className="color-picker">
                   {BRAND_COLORS.map((c) => (
                     <div
@@ -421,16 +439,13 @@ export function VaultView() {
                 </div>
               </div>
 
-              {/* Buttons */}
               <div style={{ display: "flex", gap: 10, marginTop: 15 }}>
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  // FIX: Added async/await and error alerting
                   onClick={async () => {
                     try {
                       const finalId = editing.id || generateUUID();
-
                       await saveEntry({
                         ...editing,
                         created_at: editing.created_at || Date.now(),
@@ -443,10 +458,9 @@ export function VaultView() {
                         color: editing.color || BRAND_COLORS[0],
                         is_pinned: editing.is_pinned || false,
                       } as VaultEntry);
-
                       setEditing(null);
                     } catch (e) {
-                      alert("Error saving password: " + e);
+                      alert("Error saving: " + e);
                     }
                   }}
                 >
@@ -465,7 +479,6 @@ export function VaultView() {
         </div>
       )}
 
-      {/* --- CONFIRM DELETE MODAL --- */}
       {itemToDelete && (
         <EntryDeleteModal
           title={itemToDelete.service}
@@ -476,8 +489,6 @@ export function VaultView() {
           onCancel={() => setItemToDelete(null)}
         />
       )}
-
-      {/* --- INFO MODAL (Copy Success) --- */}
       {copyModalMsg && (
         <InfoModal
           message={copyModalMsg}
