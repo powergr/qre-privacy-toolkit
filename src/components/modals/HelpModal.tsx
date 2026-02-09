@@ -1,136 +1,22 @@
-import React, { useRef, useMemo } from "react";
+import { useRef } from "react";
 import { X, BookOpen } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-
-import { HELP_MARKDOWN } from "../../assets/helpContent";
-
-// Helper to create anchor IDs from text (remove emojis, lowercase, hyphenate)
-function createId(text: string): string {
-  return text
-    .replace(
-      /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F910}-\u{1F96B}]|[\u{1F980}-\u{1F9E0}]|[\uFE00-\uFE0F]|[\u200D]/gu,
-      "",
-    )
-    .toLowerCase()
-    .trim()
-    .replace(/&/g, "")
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-");
-}
-
-// Convert markdown-style text to HTML
-function markdownToHtml(text: string): string {
-  return (
-    text
-      // Process markdown structures BEFORE HTML escaping
-      // Links
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, href) => {
-        return `<a href="${href}">${linkText}</a>`;
-      })
-
-      // Headers with IDs (MUST be before HTML escaping)
-      .replace(/^### (.+)$/gm, (_, content) => {
-        const id = createId(content);
-        return `<h3 id="${id}">${content}</h3>`;
-      })
-      .replace(/^## (.+)$/gm, (_, content) => {
-        const id = createId(content);
-        return `<h2 id="${id}">${content}</h2>`;
-      })
-      .replace(/^# (.+)$/gm, (_, content) => {
-        const id = createId(content);
-        return `<h1 id="${id}">${content}</h1>`;
-      })
-
-      // Bold
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-
-      // Italic
-      .replace(/\*(.+?)\*/g, "<em>$1</em>")
-
-      // Code
-      .replace(/`(.+?)`/g, "<code>$1</code>")
-
-      // NOW escape HTML (but preserve our generated HTML tags)
-      .replace(/&(?!(amp|lt|gt|quot);)/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      // Unescape our generated HTML tags
-      .replace(/&lt;a href="([^"]+)"&gt;/g, '<a href="$1">')
-      .replace(/&lt;\/a&gt;/g, "</a>")
-      .replace(/&lt;h([123]) id="([^"]+)"&gt;/g, '<h$1 id="$2">')
-      .replace(/&lt;\/h([123])&gt;/g, "</h$1>")
-      .replace(/&lt;strong&gt;/g, "<strong>")
-      .replace(/&lt;\/strong&gt;/g, "</strong>")
-      .replace(/&lt;em&gt;/g, "<em>")
-      .replace(/&lt;\/em&gt;/g, "</em>")
-      .replace(/&lt;code&gt;/g, "<code>")
-      .replace(/&lt;\/code&gt;/g, "</code>")
-
-      // Horizontal rules
-      .replace(/^---$/gm, "<hr>")
-
-      // Lists
-      .replace(/^- (.+)$/gm, "<li>$1</li>")
-
-      // Wrap consecutive list items in ul
-      .replace(/(<li>.*?<\/li>\n?)+/gs, "<ul>$&</ul>")
-
-      // Paragraphs (double newline)
-      .split("\n\n")
-      .map((para) => {
-        // Don't wrap headings, lists, or hrs in p tags
-        if (para.match(/^<(h[1-6]|ul|hr)/)) {
-          return para;
-        }
-        // Don't wrap empty lines
-        if (para.trim() === "") {
-          return "";
-        }
-        return `<p>${para.replace(/\n/g, "<br>")}</p>`;
-      })
-      .join("\n")
-  );
-}
+import { HelpManual } from "./HelpManual"; // Import new component
 
 export function HelpModal({ onClose }: { onClose: () => void }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Convert markdown to HTML once
-  const htmlContent = useMemo(() => markdownToHtml(HELP_MARKDOWN), []);
-
-  const handleLinkClick = async (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.tagName === "A") {
-      e.preventDefault();
-      const href = target.getAttribute("href");
-
-      if (href?.startsWith("http")) {
-        try {
-          await invoke("plugin:opener|open", { path: href });
-        } catch (err) {
-          console.error("Link Error:", err);
-        }
-      } else if (href?.startsWith("#")) {
-        // Handle anchor links
-        const id = href.substring(1);
-        const element = document.getElementById(id);
-        const container = scrollContainerRef.current;
-
-        if (element && container) {
-          const topPos = element.offsetTop - container.offsetTop;
-          container.scrollTo({
-            top: topPos,
-            behavior: "smooth",
-          });
-        }
-      }
+  // Simple scroll handler
+  const handleScrollTo = (id: string) => {
+    const element = document.getElementById(id);
+    const container = scrollContainerRef.current;
+    if (element && container) {
+      const top = element.offsetTop - container.offsetTop;
+      container.scrollTo({ top, behavior: "smooth" });
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 200000 }}>
       <div
         className="auth-card"
         onClick={(e) => e.stopPropagation()}
@@ -142,33 +28,27 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
           flexDirection: "column",
         }}
       >
-        {/* HEADER */}
         <div className="modal-header">
           <BookOpen size={20} color="var(--accent)" />
-          <h2>User Manual</h2>
+          <h2>Help Topics</h2>
           <div style={{ flex: 1 }}></div>
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
 
-        {/* CONTENT */}
         <div
           className="modal-body"
           ref={scrollContainerRef}
-          onClick={handleLinkClick}
           style={{
             flex: 1,
             overflowY: "auto",
-            paddingRight: 15,
+            padding: "0 25px", // Standard padding
             scrollBehavior: "smooth",
           }}
         >
-          <div
-            className="markdown-content"
-            dangerouslySetInnerHTML={{ __html: htmlContent }}
-          />
+          {/* Render the manual component */}
+          <HelpManual onScrollTo={handleScrollTo} />
         </div>
 
-        {/* FOOTER */}
         <div
           style={{ padding: "15px 25px", borderTop: "1px solid var(--border)" }}
         >
