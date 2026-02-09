@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Home, ChevronRight } from "lucide-react";
 
 interface AddressBarProps {
   currentPath: string;
@@ -12,35 +11,50 @@ export function AddressBar({
   onNavigate,
   onGoUp,
 }: AddressBarProps) {
-  // Local state to allow typing
-  const [inputVal, setInputVal] = useState(currentPath);
+  const isWindows = navigator.userAgent.includes("Windows");
+  const separator = isWindows ? "\\" : "/";
 
-  // Sync local state when the actual path changes (e.g. navigation via click)
-  useEffect(() => {
-    setInputVal(currentPath);
-  }, [currentPath]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      onNavigate(inputVal);
-    }
-  };
+  // Generate segments
+  const segments = currentPath
+    ? currentPath.split(separator).filter((s) => s.length > 0)
+    : [];
 
   return (
     <div className="address-bar">
-      <button className="nav-btn" onClick={onGoUp} title="Go Up Directory">
+      {/* Replaced CornerLeftUp with ArrowUp for better compatibility */}
+      <button className="nav-btn" onClick={onGoUp} title="Up One Directory">
         <ArrowUp size={20} strokeWidth={2} />
       </button>
 
-      <div className="path-container">
-        <input
-          className="path-input"
-          value={inputVal}
-          onChange={(e) => setInputVal(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Path..."
-          spellCheck={false}
-        />
+      <div className="breadcrumbs">
+        {/* Root / Drives Button */}
+        <div
+          className={`crumb ${segments.length === 0 ? "active" : ""}`}
+          onClick={() => onNavigate("")}
+          title="Drives / Root"
+          style={{ display: "flex", alignItems: "center" }}
+        >
+          <Home size={16} />
+        </div>
+
+        {segments.map((seg, i) => {
+          // Reconstruct path up to this segment
+          let path = segments.slice(0, i + 1).join(separator);
+          if (!isWindows) path = "/" + path;
+          if (isWindows && i === 0) path += separator; // Add back slash to drive
+
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center" }}>
+              <ChevronRight size={14} className="crumb-separator" />
+              <div
+                className={`crumb ${i === segments.length - 1 ? "active" : ""}`}
+                onClick={() => onNavigate(path)}
+              >
+                {seg}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

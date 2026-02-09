@@ -1,16 +1,15 @@
 /* --- TOOLBAR --- */
 .toolbar {
-  height: 70px;
+  height: 60px;
   background-color: var(--panel-bg);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   padding: 0 15px;
-  gap: 10px;
-  padding-top: max(35px, env(safe-area-inset-top));
-  height: auto;
-  min-height: 80px;
+  gap: 15px;
+  flex-shrink: 0;
 }
+
 .tool-btn {
   background: transparent;
   border: 1px solid transparent;
@@ -19,225 +18,215 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 70px;
-  height: 65px;
+  width: 60px;
+  height: 50px;
   cursor: pointer;
   border-radius: 6px;
-  font-size: 0.75rem;
-  gap: 4px;
-  transition: all 0.1s;
+  font-size: 0.7rem;
+  gap: 2px;
+  transition: all 0.2s;
 }
+
 .tool-btn:hover {
   background-color: var(--highlight);
   border-color: var(--border);
+  transform: translateY(-1px);
 }
-.tool-btn:active {
-  transform: translateY(1px);
-}
+
 .tool-btn.success svg {
-  stroke: var(--btn-success);
+  stroke: #22c55e;
 }
 .tool-btn.danger svg {
-  stroke: var(--btn-danger);
+  stroke: #ef4444;
 }
 .tool-btn.active-settings {
-  color: var(--accent);
-  border-bottom: 2px solid var(--accent);
-  background-color: rgba(0, 122, 204, 0.1);
-}
-.indicator-dot {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 8px;
-  height: 8px;
-  background-color: var(--accent);
-  border-radius: 50%;
-  box-shadow: 0 0 5px var(--accent);
+  background-color: rgba(var(--accent-rgb), 0.1);
+  border-color: var(--accent);
 }
 
-/* SVG GLOWS */
-.tool-btn svg {
-  stroke-width: 2px;
-  transition: all 0.3s;
-}
-.tool-btn:hover svg {
-  transform: scale(1.1);
-}
-.tool-btn.success:hover svg {
-  stroke: #42b883;
-  filter: drop-shadow(0 0 8px rgba(66, 184, 131, 0.6));
-}
-.tool-btn.danger:hover svg {
-  stroke: #d94040;
-  filter: drop-shadow(0 0 8px rgba(217, 64, 64, 0.6));
-}
-.tool-btn:not(.success):not(.danger):hover svg {
-  stroke: var(--accent);
-  filter: drop-shadow(0 0 8px rgba(0, 122, 204, 0.6));
-}
-
-/* --- ADDRESS BAR --- */
+/* --- ADDRESS BAR (BREADCRUMBS) --- */
 .address-bar {
   display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 10px 15px;
+  padding: 0 15px;
   background-color: var(--bg-color);
   border-bottom: 1px solid var(--border);
-  align-items: center;
-  height: 60px; /* Enforce fixed height for the bar */
+  height: 45px;
+  flex-shrink: 0;
 }
+
+/* NAVIGATION BUTTON FIX */
 .address-bar .nav-btn {
-  background: transparent;
-  border: 1px solid transparent;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   color: var(--text-main);
+
+  /* Fixed square size */
+  width: 32px;
+  height: 32px;
+  min-width: 32px; /* Prevent squishing */
+
   border-radius: 6px;
   cursor: pointer;
+
+  /* Perfect Centering */
   display: flex;
   align-items: center;
   justify-content: center;
 
-  /* FORCE SIZE */
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  padding: 0; /* Remove padding that might expand it */
-  flex-shrink: 0; /* Prevent squishing or growing */
+  transition: all 0.2s;
+  padding: 0; /* Important: remove default padding */
 }
 
 .address-bar .nav-btn:hover {
   background-color: var(--highlight);
-  border-color: var(--border);
-}
-.nav-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-main);
-  padding: 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 36px; /* Prevent squishing */
-  height: 36px;
-}
-.nav-btn:hover {
-  background-color: var(--highlight);
-  border-color: var(--border);
-}
-.path-container {
-  flex: 1; /* Take up remaining space */
-  display: flex;
-  background: var(--highlight);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  height: 36px; /* Match button height */
-  overflow: hidden;
-  align-items: center;
+  border-color: var(--text-dim);
 }
 
-.path-input {
+.address-bar .nav-btn svg {
+  display: block; /* Removes implicit line-height issues */
+}
+
+.breadcrumbs {
   flex: 1;
-  width: 100%;
-  height: 100%;
-  background: transparent;
-  border: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  height: 32px;
+}
+
+.crumb {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+.crumb:hover {
+  background: var(--highlight);
   color: var(--text-main);
-  padding: 0 12px; /* Horizontal padding only */
-  /* FIX: Use proper cross-platform monospace font stack */
-  font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-  font-size: 0.9rem;
-  outline: none;
+}
+.crumb.active {
+  color: var(--text-main);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+}
+.crumb-separator {
+  color: var(--text-dim);
+  opacity: 0.5;
+  flex-shrink: 0;
 }
 
-.path-input:focus {
-  background-color: rgba(255, 255, 255, 0.05);
-}
-
-/* --- FILE GRID --- */
+/* --- FILE GRID & RESIZING --- */
 .file-view {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   background-color: var(--bg-color);
+  position: relative;
 }
+
 .grid-row-layout {
   display: grid;
-  padding: 0;
-  align-items: stretch;
+  align-items: center;
+  padding: 0 10px;
 }
+
 .file-header {
   background-color: var(--panel-bg);
   border-bottom: 1px solid var(--border);
-  font-size: 0.8rem;
-  font-weight: bold;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 0;
+  height: 35px;
 }
+
 .header-cell {
-  position: relative;
-  height: 28px;
   display: flex;
   align-items: center;
-  padding-left: 8px;
+  gap: 5px;
+  cursor: pointer;
+  padding: 0 8px;
+  height: 100%;
+  position: relative;
+  user-select: none;
   border-right: 1px solid var(--border);
-  background-color: var(--panel-bg);
 }
+
+.header-cell:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* MODERN RESIZE HANDLE */
 .resize-handle {
   position: absolute;
-  right: 0;
+  right: -5px;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 10px;
   cursor: col-resize;
-  z-index: 11;
-  transition: background-color 0.1s;
+  z-index: 20;
 }
-.resize-handle:hover {
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 20%;
+  bottom: 20%;
+  width: 2px;
   background-color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.resize-handle:hover::after,
+.resize-handle:active::after {
+  opacity: 1;
 }
 
 .file-row {
   cursor: default;
   font-size: 0.9rem;
-  border-bottom: none;
-  height: 26px;
-}
-.file-row:nth-child(even) {
-  background-color: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  height: 40px;
+  transition: background 0.1s;
 }
 .file-row:hover {
   background-color: var(--highlight);
 }
 .file-row.selected {
-  background-color: rgba(0, 120, 215, 0.4);
-  color: white;
+  background-color: rgba(0, 120, 215, 0.2);
+  border-left: 3px solid var(--accent);
 }
 
 .grid-cell {
-  display: flex;
-  align-items: center;
-  padding-left: 8px;
-  height: 100%;
-  border-right: 1px solid #333;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-.file-row.selected .grid-cell {
-  border-right-color: rgba(255, 255, 255, 0.2);
-}
-.icon {
+  padding: 0 8px;
+  color: var(--text-main);
   display: flex;
+  align-items: center;
+}
+.grid-cell.icon {
   justify-content: center;
-  padding-left: 0;
+}
+.grid-cell.details {
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }
 
 /* --- STATUS BAR --- */
@@ -245,29 +234,28 @@
   padding: 0 15px;
   height: 30px;
   display: flex;
+  flex-direction: row;
   align-items: center;
   font-size: 0.8rem;
   background-color: var(--panel-bg);
   border-top: 1px solid var(--border);
   color: var(--text-dim);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* --- DRAG OVERLAY --- */
 .drag-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background-color: rgba(0, 0, 0, 0.85);
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.8);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  z-index: 999999;
+  z-index: 50;
   border: 4px dashed var(--accent);
-  box-sizing: border-box;
-  pointer-events: none;
+  backdrop-filter: blur(4px);
 }
 .drag-content {
   color: var(--accent);
@@ -277,9 +265,4 @@
   flex-direction: column;
   align-items: center;
   gap: 20px;
-}
-.drag-content svg {
-  stroke: var(--accent);
-  width: 64px;
-  height: 64px;
 }

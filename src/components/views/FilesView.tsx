@@ -1,7 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { UploadCloud } from "lucide-react";
+import { formatSize } from "../../utils/formatting";
 
 // Hooks
 import { useFileSystem } from "../../hooks/useFileSystem";
@@ -22,24 +23,22 @@ import {
   ErrorModal,
 } from "../modals/AppModals";
 
-// Types
 import { BatchResult } from "../../types";
 
 interface FilesViewProps {
-  onShowBackupReminder: () => void; // <--- ADDED PROP
+  onShowBackupReminder: () => void;
 }
 
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(() => fs.loadDir(fs.currentPath));
 
-  // --- LOCAL STATE ---
+  // State
   const [showCompression, setShowCompression] = useState(false);
   const [showEntropyModal, setShowEntropyModal] = useState(false);
   const [pendingLockTargets, setPendingLockTargets] = useState<string[] | null>(
     null,
   );
-
   const [menuData, setMenuData] = useState<{
     x: number;
     y: number;
@@ -52,16 +51,65 @@ export function FilesView(props: FilesViewProps) {
   } | null>(null);
   const [itemsToDelete, setItemsToDelete] = useState<string[] | null>(null);
 
-  // --- LOGIC: Lock Request ---
+  // --- KEYBOARD SHORTCUTS ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if modals are open or typing in inputs
+      if (inputModal || itemsToDelete || showEntropyModal || showCompression)
+        return;
+      if ((e.target as HTMLElement).tagName === "INPUT") return;
+
+      // Select All (Ctrl+A / Cmd+A)
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        e.preventDefault();
+        fs.selectAll();
+      }
+
+      // Delete
+      if (e.key === "Delete" && fs.selectedPaths.length > 0) {
+        e.preventDefault();
+        setItemsToDelete(fs.selectedPaths);
+      }
+
+      // Escape (Clear Selection)
+      if (e.key === "Escape") {
+        e.preventDefault();
+        fs.clearSelection();
+      }
+
+      // Backspace (Go Up)
+      if (e.key === "Backspace") {
+        fs.goUp();
+      }
+
+      // Enter (Open if 1 item selected and is dir)
+      if (e.key === "Enter" && fs.selectedPaths.length === 1) {
+        const entry = fs.entries.find((en) => en.path === fs.selectedPaths[0]);
+        if (entry && entry.isDirectory) {
+          fs.loadDir(entry.path);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    fs.selectedPaths,
+    fs.entries,
+    inputModal,
+    itemsToDelete,
+    showEntropyModal,
+    showCompression,
+  ]);
+
+  // --- LOGIC ---
   const requestLock = useCallback(
     async (targets: string[]) => {
       if (crypto.isParanoid) {
         setPendingLockTargets(targets);
         setShowEntropyModal(true);
       } else {
-        // Run Encryption
         await crypto.runCrypto("lock_file", targets);
-        // Trigger Reminder Check
         props.onShowBackupReminder();
       }
     },
@@ -73,17 +121,14 @@ export function FilesView(props: FilesViewProps) {
     if (pendingLockTargets) {
       await crypto.runCrypto("lock_file", pendingLockTargets, entropy);
       setPendingLockTargets(null);
-      // Trigger Reminder Check
       props.onShowBackupReminder();
     }
   };
 
-  // --- DROP HANDLER ---
   const handleDrop = useCallback(
     async (paths: string[]) => {
       const toUnlock = paths.filter((p) => p.endsWith(".qre"));
       const toLock = paths.filter((p) => !p.endsWith(".qre"));
-
       if (toUnlock.length > 0) await crypto.runCrypto("unlock_file", toUnlock);
       if (toLock.length > 0) requestLock(toLock);
     },
@@ -92,7 +137,6 @@ export function FilesView(props: FilesViewProps) {
 
   const { isDragging } = useDragDrop(handleDrop);
 
-  // --- CONTEXT MENU ---
   function handleContextMenu(e: React.MouseEvent, path: string | null) {
     e.preventDefault();
     e.stopPropagation();
@@ -127,7 +171,6 @@ export function FilesView(props: FilesViewProps) {
     if (action === "delete") setItemsToDelete(targets);
   }
 
-  // --- FILE OPS ---
   async function performDeleteAction(mode: "trash" | "shred") {
     if (!itemsToDelete) return;
     crypto.setErrorMsg(null);
@@ -142,7 +185,7 @@ export function FilesView(props: FilesViewProps) {
         const report = failures
           .map((f) => `• ${f.name}: ${f.message}`)
           .join("\n");
-        crypto.setErrorMsg(`Operation completed with errors:\n\n${report}`);
+        crypto.setErrorMsg(`Errors occurred:\n\n${report}`);
       }
       fs.loadDir(fs.currentPath);
       fs.setSelectedPaths([]);
@@ -199,18 +242,16 @@ export function FilesView(props: FilesViewProps) {
       <FileGrid
         entries={fs.entries}
         selectedPaths={fs.selectedPaths}
-        onSelect={(path, multi) => {
-          if (multi)
-            fs.setSelectedPaths((prev) =>
-              prev.includes(path)
-                ? prev.filter((p) => p !== path)
-                : [...prev, path],
-            );
-          else fs.setSelectedPaths([path]);
-        }}
+        // Updated Signature:
+        onSelect={(path, idx, multi, range) =>
+          fs.handleSelection(path, idx, multi, range)
+        }
         onNavigate={fs.loadDir}
         onGoUp={fs.goUp}
         onContextMenu={handleContextMenu}
+        sortField={fs.sortField}
+        sortDirection={fs.sortDirection}
+        onSort={fs.handleSort}
       />
 
       {isDragging && (
@@ -222,8 +263,28 @@ export function FilesView(props: FilesViewProps) {
         </div>
       )}
 
+      {/* Modern Status Bar */}
       <div className="status-bar">
-        {fs.statusMsg} | {fs.selectedPaths.length} selected
+        <span>{fs.entries.length} items</span>
+        <div
+          style={{
+            width: 1,
+            height: 14,
+            background: "var(--border)",
+            margin: "0 10px",
+          }}
+        ></div>
+        <span>
+          {fs.selectedPaths.length > 0
+            ? `${fs.selectedPaths.length} selected (${formatSize(fs.selectionSize)})`
+            : "No selection"}
+        </span>
+        <div style={{ flex: 1 }}></div>
+        {crypto.keyFile && (
+          <span style={{ color: "var(--btn-success)", fontSize: "0.75rem" }}>
+            Keyfile Active
+          </span>
+        )}
       </div>
 
       {menuData && (
@@ -236,7 +297,6 @@ export function FilesView(props: FilesViewProps) {
           onAction={handleContextAction}
         />
       )}
-
       {inputModal && (
         <InputModal
           mode={inputModal.mode}
@@ -249,7 +309,6 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setInputModal(null)}
         />
       )}
-
       {itemsToDelete && (
         <DeleteConfirmModal
           items={itemsToDelete}
@@ -258,7 +317,6 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setItemsToDelete(null)}
         />
       )}
-
       {showCompression && (
         <CompressionModal
           current={crypto.compressionMode}
@@ -269,7 +327,6 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setShowCompression(false)}
         />
       )}
-
       {showEntropyModal && (
         <EntropyModal
           onComplete={handleEntropyComplete}
@@ -279,14 +336,12 @@ export function FilesView(props: FilesViewProps) {
           }}
         />
       )}
-
       {crypto.errorMsg && (
         <ErrorModal
           message={crypto.errorMsg}
           onClose={() => crypto.setErrorMsg(null)}
         />
       )}
-
       {!showEntropyModal && crypto.progress && (
         <ProcessingModal
           status={crypto.progress.status}
