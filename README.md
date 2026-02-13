@@ -58,18 +58,25 @@ Photos and documents contain hidden data (Exif) that can reveal your location an
 **Scrub:** Remove GPS coordinates, Camera models, Authors, and Edit history from Images (JPG/PNG), PDFs, and Office Docs.
 **Batch:** Drag & drop multiple files or folders to clean them instantly.
 
-### **7. 📡 Breach Check**
+### **7. ✅ Integrity Checker**
+
+Verify that files you download (like crypto wallets, Linux ISOs, or installers) are genuine and haven't been tampered with by hackers.
+
+**Multi-Hash:** Calculates SHA-256, SHA-1, and MD5 simultaneously.
+**Auto-Compare:** Paste the official hash from the developer's website, and QRE will instantly highlight if it matches or fails.
+
+### **8. 📡 Breach Check**
 
 Check if your password has appeared in known data leaks (850M+ records).
 **Privacy Preserving:** Uses **k-Anonymity**. We send only the first 5 characters of the hash to the API. Your password is **never** sent to any server.
 
-### **8. 🔳 Secure QR Generator**
+### **9. 🔳 Secure QR Generator**
 
 Share sensitive data (Wi-Fi passwords, Crypto addresses) with mobile devices without sending it over the internet.
 **Air-Gapped:** Data stays on your screen. The recipient scans it with their camera.
 **Offline:** No API calls. The QR is generated locally in Rust.
 
-### **9. 🗑️ Secure Shredder (Desktop)**
+### **10. 🗑️ Secure Shredder (Desktop)**
 
 When you delete a file, the data remains on your disk. The Shredder overwrites your files with random noise (DoD Standard 3-Pass) before deleting them.
 _(Note: On Android, this performs a standard permanent delete due to hardware limitations)._

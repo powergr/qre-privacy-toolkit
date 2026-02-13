@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Terminal,
   Wifi,
+  FileCheck, // <--- Added Icon
 } from "lucide-react";
 // @ts-ignore
 import pkg from "../../../package.json";
@@ -73,12 +74,17 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
       label: "Secure Clipboard",
       icon: <ClipboardList size={16} />,
     },
-    { id: "cleaner", label: "Metadata Cleaner", icon: <Eraser size={16} /> },
     { id: "privacy", label: "Privacy Check", icon: <Radar size={16} /> },
+    {
+      id: "integrity",
+      label: "Integrity Check",
+      icon: <FileCheck size={16} />,
+    }, // <--- NEW
+    { id: "cleaner", label: "Metadata Cleaner", icon: <Eraser size={16} /> },
     { id: "qr", label: "QR Generator", icon: <QrCode size={16} /> },
     { id: "shredder", label: "Secure Shredder", icon: <Trash2 size={16} /> },
     { id: "backup", label: "Backup & Recovery", icon: <LifeBuoy size={16} /> },
-    { id: "settings", label: "Settings & Panic", icon: <Settings size={16} /> },
+    { id: "settings", label: "Settings", icon: <Settings size={16} /> },
     {
       id: "troubleshoot",
       label: "Troubleshooting",
@@ -327,34 +333,6 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
         </p>
       </Section>
 
-      <Section id="cleaner" title="Metadata Cleaner" icon={<Eraser />}>
-        <p>
-          Photos and documents contain hidden data (EXIF) that reveals your
-          location and device info.
-        </p>
-        <p>
-          <strong>Supported Formats:</strong> JPG, PNG, PDF, DOCX, XLSX, PPTX,
-          ZIP.
-        </p>
-
-        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>Workflow</h4>
-        <ol style={{ paddingLeft: 20 }}>
-          <li>Drag files into the Cleaner area.</li>
-          <li>
-            Review the <strong>Metadata Report</strong> to see exactly what was
-            found (GPS, Dates, Author).
-          </li>
-          <li>
-            Use the toggles to select what to remove (e.g., remove GPS but keep
-            Dates).
-          </li>
-          <li>
-            Click <strong>Clean Files</strong>. New copies (e.g.,{" "}
-            <code>photo_clean.jpg</code>) will be created.
-          </li>
-        </ol>
-      </Section>
-
       <Section id="privacy" title="Privacy Check" icon={<Radar />}>
         <div style={{ display: "grid", gap: 20, gridTemplateColumns: "1fr" }}>
           <div
@@ -395,6 +373,61 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             </p>
           </div>
         </div>
+      </Section>
+
+      {/* --- NEW INTEGRITY SECTION --- */}
+      <Section id="integrity" title="Integrity Checker" icon={<FileCheck />}>
+        <p>
+          Verify that a downloaded file (like a Linux ISO or wallet software) is
+          genuine and hasn't been tampered with by hackers.
+        </p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            <strong>Algorithms:</strong> Calculates SHA-256, SHA-1, and MD5
+            simultaneously.
+          </li>
+          <li>
+            <strong>Auto-Compare:</strong> Paste the official hash from the
+            developer's website into the comparison box. QRE will instantly
+            highlight if it is a{" "}
+            <span style={{ color: "#4ade80" }}>
+              <strong>MATCH</strong>
+            </span>{" "}
+            or{" "}
+            <span style={{ color: "#f87171" }}>
+              <strong>MISMATCH</strong>
+            </span>
+            .
+          </li>
+        </ul>
+      </Section>
+
+      <Section id="cleaner" title="Metadata Cleaner" icon={<Eraser />}>
+        <p>
+          Photos and documents contain hidden data (EXIF) that reveals your
+          location and device info.
+        </p>
+        <p>
+          <strong>Supported Formats:</strong> JPG, PNG, PDF, DOCX, XLSX, PPTX,
+          ZIP.
+        </p>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>Workflow</h4>
+        <ol style={{ paddingLeft: 20 }}>
+          <li>Drag files into the Cleaner area.</li>
+          <li>
+            Review the <strong>Metadata Report</strong> to see exactly what was
+            found (GPS, Dates, Author).
+          </li>
+          <li>
+            Use the toggles to select what to remove (e.g., remove GPS but keep
+            Dates).
+          </li>
+          <li>
+            Click <strong>Clean Files</strong>. New copies (e.g.,{" "}
+            <code>photo_clean.jpg</code>) will be created.
+          </li>
+        </ol>
       </Section>
 
       <Section id="qr" title="QR Generator" icon={<QrCode />}>

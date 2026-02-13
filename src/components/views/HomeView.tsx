@@ -9,6 +9,7 @@ import {
   QrCode,
   ClipboardList,
   Bookmark,
+  FileCheck,
 } from "lucide-react";
 
 interface HomeViewProps {
@@ -112,7 +113,7 @@ export function HomeView({ setTab }: HomeViewProps) {
           <p>Save sensitive personal encrypted Bookmarks</p>
         </div>
 
-        {/* Clipboard (NEW) */}
+        {/* Clipboard */}
         <div onClick={() => setTab("clipboard")} className="home-card">
           <div
             className="card-icon"
@@ -134,6 +135,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Privacy Check</h3>
           <p>Scan for identity leaks & network security</p>
+        </div>
+
+        {/* Hash Check */}
+        <div onClick={() => setTab("hash")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(234, 179, 8, 0.1)" }}
+          >
+            <FileCheck size={28} color="#eab308" />
+          </div>
+          <h3>Integrity Check</h3>
+          <p>Verify file hashes (MD5, SHA) vs originals.</p>
         </div>
 
         {/* Cleaner */}

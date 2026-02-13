@@ -1,9 +1,7 @@
-import { useState, useEffect } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   X,
-  Info,
   AlertTriangle,
   Key,
   Trash2,
@@ -15,8 +13,12 @@ import {
   Download,
   CheckCircle,
   FileX,
+  ExternalLink,
 } from "lucide-react";
 import { PasswordInput } from "../common/PasswordInput";
+// Import version directly to ensure it matches the build
+// @ts-ignore
+import pkg from "../../../package.json";
 
 // --- INFO MODAL (Success) ---
 export function InfoModal({
@@ -607,69 +609,98 @@ export function CompressionModal({
 
 // --- ABOUT MODAL ---
 export function AboutModal({ onClose }: { onClose: () => void }) {
-  const [appVersion, setAppVersion] = useState("");
-  useEffect(() => {
-    async function loadVer() {
-      try {
-        const v = await getVersion();
-        setAppVersion(v);
-      } catch (e) {
-        setAppVersion("2.5.2");
-      }
-    }
-    loadVer();
-  }, []);
+  // Version is now imported from package.json
+  const version = pkg.version;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <Info size={20} color="var(--accent)" />
-          <h2>About QRE Privacy Toolkit</h2>
-          <div style={{ flex: 1 }}></div>
-          <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
-        </div>
-        <div className="modal-body" style={{ textAlign: "center" }}>
-          <p>
-            <strong>Version {appVersion}</strong>
-          </p>
-          <p
+    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 200000 }}>
+      <div
+        className="auth-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 400, textAlign: "center", padding: 30 }}
+      >
+        <div style={{ marginBottom: 20 }}>
+          <div
             style={{
-              color: "var(--text-dim)",
-              fontSize: "0.9rem",
-              lineHeight: "1.5",
-            }}
-          >
-            The local-first privacy suite.
-            <br />
-            <br></br>
-            Secure Encryption • Password Vault • File Shredder Notes Vault •
-            Clipboard Manager • Breach Check Metadata Cleaner • Secure Bookmarks
-            • QR Generator
-          </p>
-
-          <p
-            style={{
-              color: "var(--accent)",
-              cursor: "pointer",
-              textDecoration: "underline",
-              marginTop: 15,
+              width: 64,
+              height: 64,
+              background: "var(--accent)",
+              borderRadius: "16px",
+              margin: "0 auto",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "2rem",
+              color: "#fff",
               fontWeight: "bold",
             }}
-            onClick={() =>
-              invoke("plugin:opener|open", { path: "https://projectqre.com/" })
-            }
           >
-            Visit projectqre.com
-          </p>
+            Q
+          </div>
+        </div>
 
+        <h2 style={{ margin: "0 0 10px 0" }}>QRE Privacy Toolkit</h2>
+        <div
+          style={{
+            background: "var(--highlight)",
+            display: "inline-block",
+            padding: "4px 12px",
+            borderRadius: 20,
+            fontSize: "0.85rem",
+            fontWeight: "bold",
+            color: "var(--accent)",
+            marginBottom: 20,
+          }}
+        >
+          v{version}
+        </div>
+
+        <p
+          style={{
+            color: "var(--text-dim)",
+            lineHeight: 1.6,
+            marginBottom: 25,
+            fontSize: "0.9rem",
+          }}
+        >
+          A Local-First, Zero-Knowledge security suite designed to keep your
+          digital life private.
+          <br />
+          No servers. No tracking. Just you.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <button
             className="secondary-btn"
-            onClick={onClose}
-            style={{ marginTop: 20 }}
+            onClick={() =>
+              openUrl("https://github.com/powergr/QRE-Privacy-Toolkit")
+            }
+            style={{ justifyContent: "center", gap: 10 }}
           >
+            <span>Source Code </span>
+            <ExternalLink size={14} style={{ opacity: 0.5 }} />
+          </button>
+
+          <button className="auth-btn" onClick={onClose}>
             Close
           </button>
+        </div>
+
+        <div
+          style={{
+            marginTop: 25,
+            fontSize: "0.75rem",
+            color: "var(--text-dim)",
+            opacity: 0.5,
+          }}
+        >
+          Copyright © 2026{" "}
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => openUrl("https://projectqre.com")}
+          >
+            Project QRE
+          </span>
         </div>
       </div>
     </div>

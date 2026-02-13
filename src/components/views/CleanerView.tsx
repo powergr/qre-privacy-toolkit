@@ -178,6 +178,7 @@ export function CleanerView() {
         overflow: "hidden",
       }}
     >
+      {/* Scrollable Content Area */}
       <div
         style={{
           flex: 1,
@@ -185,24 +186,36 @@ export function CleanerView() {
           padding: "30px",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
+          // Center vertically if empty
+          justifyContent:
+            files.length === 0 && results.length === 0
+              ? "center"
+              : "flex-start",
         }}
       >
-        {/* CENTERED EMPTY STATE */}
+        {/* HEADER */}
+        <div style={{ textAlign: "center", marginBottom: 30 }}>
+          <h2 style={{ margin: 0 }}>Metadata Cleaner</h2>
+          <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
+            Remove hidden GPS location, camera details, and personal data.
+          </p>
+        </div>
+
+        {/* CENTERED DROP ZONE (Empty State) */}
         {files.length === 0 && results.length === 0 && (
           <div
             className={`shred-zone ${isDragging ? "active" : ""}`}
             style={{
               borderColor: "var(--accent)",
-              flex: 1,
               width: "100%",
               maxWidth: "600px",
-              minHeight: "400px",
+              margin: "0 auto",
+              minHeight: "300px", // Matches other tools
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              alignSelf: "center",
+              cursor: "pointer",
             }}
             onClick={handleBrowse}
           >
@@ -216,18 +229,15 @@ export function CleanerView() {
             >
               <ScanSearch size={48} color="#22c55e" />
             </div>
-            <h2 style={{ margin: "0 0 10px 0" }}>Metadata Scrubbing</h2>
+            <h3>Drag & Drop Files</h3>
             <p
               style={{
                 color: "var(--text-dim)",
-                marginBottom: 25,
-                maxWidth: 300,
-                textAlign: "center",
-                lineHeight: 1.5,
+                marginBottom: 20,
+                fontSize: "0.9rem",
               }}
             >
-              Remove hidden GPS location, camera details, and personal data from
-              photos and documents.
+              Supports JPG, PNG, PDF, Office Docs, ZIP
             </p>
             <button
               className="secondary-btn"
@@ -249,6 +259,7 @@ export function CleanerView() {
               color: "#42b883",
               width: "100%",
               maxWidth: 600,
+              margin: "0 auto",
             }}
           >
             <CheckCircle size={64} style={{ marginBottom: 15 }} />
@@ -300,7 +311,14 @@ export function CleanerView() {
 
         {/* PROCESSING SCREEN */}
         {files.length > 0 && (
-          <div style={{ width: "100%", textAlign: "left", maxWidth: 600 }}>
+          <div
+            style={{
+              width: "100%",
+              textAlign: "left",
+              maxWidth: 600,
+              margin: "0 auto",
+            }}
+          >
             {/* Header: Count & Cancel Button */}
             <div
               style={{
@@ -310,16 +328,15 @@ export function CleanerView() {
                 marginBottom: 15,
               }}
             >
-              <span style={{ fontWeight: "bold", fontSize: "1.2rem" }}>
+              <span style={{ fontWeight: "bold", fontSize: "1.1rem" }}>
                 {files.length} Files Selected
               </span>
 
-              {/* IMPROVED CANCEL BUTTON */}
               <button
                 className="secondary-btn"
                 style={{
-                  borderColor: "var(--btn-danger)",
-                  color: "var(--btn-danger)",
+                  borderColor: "var(--border)",
+                  color: "var(--text-dim)",
                   padding: "6px 12px",
                   fontSize: "0.85rem",
                   marginTop: 0,
@@ -810,7 +827,6 @@ export function CleanerView() {
               </div>
             </div>
 
-            {/* IMPROVED CLEAN BUTTON */}
             <button
               className="auth-btn"
               style={{
@@ -822,7 +838,6 @@ export function CleanerView() {
                 justifyContent: "center",
                 alignItems: "center",
                 gap: 10,
-                // Visual feedback for loading state
                 background: loading ? "var(--bg-card)" : "var(--accent)",
                 border: loading ? "1px solid var(--border)" : "none",
                 color: loading ? "var(--text-dim)" : "#fff",

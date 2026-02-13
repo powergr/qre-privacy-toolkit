@@ -6,6 +6,7 @@ mod commands;
 mod crypto;
 mod crypto_stream;
 mod entropy;
+mod hasher;
 mod keychain;
 mod notes;
 mod qr;
@@ -103,6 +104,7 @@ pub fn run() {
             commands::load_bookmarks_vault,
             commands::save_bookmarks_vault,
             commands::import_browser_bookmarks,
+            commands::calculate_file_hashes,
             // Clipboard
             commands::add_clipboard_entry,
             commands::load_clipboard_vault,

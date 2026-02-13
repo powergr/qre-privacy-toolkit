@@ -28,6 +28,7 @@ import { CleanerView } from "./components/views/CleanerView";
 import { ClipboardView } from "./components/views/ClipboardView";
 import { QrView } from "./components/views/QrView";
 import { BookmarksView } from "./components/views/BookmarksView";
+import { HashView } from "./components/views/HashView";
 
 // Auth & Modals
 import { AuthOverlay } from "./components/auth/AuthOverlay";
@@ -179,6 +180,7 @@ function App() {
         {activeTab === "clipboard" && <ClipboardView />}
         {activeTab === "qr" && <QrView />}
         {activeTab === "bookmarks" && <BookmarksView />}
+        {activeTab === "hash" && <HashView />}
       </div>
 
       {/* --- GLOBAL MODALS --- */}

@@ -16,6 +16,7 @@ use crate::cleaner::{self, MetadataReport};
 use crate::clipboard_store::ClipboardVault;
 use crate::crypto;
 use crate::crypto_stream;
+use crate::hasher;
 use crate::keychain;
 use crate::notes::NotesVault;
 use crate::qr;
@@ -84,7 +85,7 @@ fn is_already_compressed(filename: &str) -> bool {
     )
 }
 
-// --- METADATA CLEANER (RESTORED) ---
+// --- METADATA CLEANER  ---
 #[tauri::command]
 pub async fn analyze_file_metadata(path: String) -> CommandResult<MetadataReport> {
     cleaner::analyze_file(Path::new(&path)).map_err(|e| e.to_string())
@@ -98,6 +99,17 @@ pub async fn clean_file_metadata(
     let out_path =
         cleaner::remove_metadata(Path::new(&path), options).map_err(|e| e.to_string())?;
     Ok(out_path.to_string_lossy().to_string())
+}
+
+// --- HASHER  ---
+#[tauri::command]
+pub async fn calculate_file_hashes(path: String) -> CommandResult<hasher::HashResult> {
+    // Run on a separate thread to not freeze UI
+    tauri::async_runtime::spawn_blocking(move || {
+        hasher::calculate_hashes(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // --- BOOKMARKS COMMANDS ---
