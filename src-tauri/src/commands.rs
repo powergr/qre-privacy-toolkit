@@ -10,6 +10,7 @@ use std::process::Command;
 #[cfg(not(target_os = "android"))]
 use sysinfo::Disks;
 
+use crate::analyzer;
 use crate::bookmarks::BookmarksVault;
 use crate::breach;
 use crate::cleaner::{self, MetadataReport};
@@ -65,6 +66,33 @@ pub async fn clean_system_junk(paths: Vec<String>) -> CommandResult<u64> {
     tauri::async_runtime::spawn_blocking(move || Ok(system_cleaner::clean_paths(paths)))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// --- FILE ANALYZER COMMANDS ---
+
+#[tauri::command]
+pub async fn scan_directory_targets(
+    app: AppHandle,
+    path: Option<String>,
+) -> CommandResult<Vec<analyzer::AnalysisResult>> {
+    let app_handle = app.clone(); // Clone handle for the thread
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let targets = if let Some(p) = path {
+            vec![p]
+        } else {
+            analyzer::get_user_dirs()
+        };
+
+        let mut results = Vec::new();
+        for dir in targets {
+            // Pass app_handle to emit events
+            results.extend(analyzer::scan_directory(&app_handle, &dir));
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // --- HELPER: Smart Compression Detection ---

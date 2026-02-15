@@ -22,6 +22,7 @@ import {
   FileCheck,
   ChevronRight,
   Brush,
+  FileSearch,
 } from "lucide-react";
 import { UpdateModal } from "../modals/UpdateModal";
 
@@ -138,6 +139,12 @@ export function Sidebar({
           label: "QR Gen",
           icon: <QrCode size={20} strokeWidth={2.5} />,
           desc: "Generate secure QR codes offline",
+        },
+        {
+          id: "analyzer",
+          label: "File Analyzer",
+          icon: <FileSearch size={20} strokeWidth={2.5} />,
+          desc: "Detect fake extensions & malware types",
         },
       ],
     },

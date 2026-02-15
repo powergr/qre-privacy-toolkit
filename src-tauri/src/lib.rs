@@ -1,3 +1,4 @@
+mod analyzer;
 mod bookmarks;
 mod breach;
 mod cleaner;
@@ -108,6 +109,7 @@ pub fn run() {
             commands::save_bookmarks_vault,
             commands::import_browser_bookmarks,
             commands::calculate_file_hashes,
+            commands::scan_directory_targets,
             // Clipboard
             commands::add_clipboard_entry,
             commands::load_clipboard_vault,
