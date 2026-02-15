@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Bookmark,
   FileCheck,
+  Brush,
 } from "lucide-react";
 
 interface HomeViewProps {
@@ -147,6 +148,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Integrity Check</h3>
           <p>Verify file hashes (MD5, SHA) vs originals.</p>
+        </div>
+
+        {/* System Cleaner (NEW) */}
+        <div onClick={() => setTab("sysclean")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(59, 130, 246, 0.1)" }}
+          >
+            <Brush size={28} color="#3b82f6" />
+          </div>
+          <h3>System Cleaner</h3>
+          <p>Clear temp files, caches, and recent history.</p>
         </div>
 
         {/* Cleaner */}

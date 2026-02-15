@@ -12,6 +12,7 @@ mod notes;
 mod qr;
 mod secure_rng;
 mod state;
+mod system_cleaner;
 mod tests;
 mod utils;
 mod vault;
@@ -86,6 +87,8 @@ pub fn run() {
             commands::create_dir,
             commands::rename_item,
             commands::show_in_folder,
+            commands::scan_system_junk,
+            commands::clean_system_junk,
             // Crypto
             commands::lock_file,
             commands::unlock_file,

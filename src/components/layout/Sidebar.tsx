@@ -21,6 +21,7 @@ import {
   RefreshCw,
   FileCheck,
   ChevronRight,
+  Brush,
 } from "lucide-react";
 import { UpdateModal } from "../modals/UpdateModal";
 
@@ -115,8 +116,14 @@ export function Sidebar({
           desc: "Verify file hashes",
         },
         {
+          id: "sysclean",
+          label: "System Clean",
+          icon: <Brush size={20} strokeWidth={2.5} />,
+          desc: "Clear temp files and history",
+        },
+        {
           id: "cleaner",
-          label: "Cleaner",
+          label: "Meta Cleaner",
           icon: <Eraser size={20} strokeWidth={2.5} />,
           desc: "Remove metadata from photos/docs",
         },
@@ -174,12 +181,13 @@ export function Sidebar({
                 ></div>
               )}
 
+              {/* Safe Mapping: Now we are guaranteed 'group.items' exists */}
               {group.items.map((t) => (
                 <button
                   key={t.id}
                   className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
                   onClick={() => setTab(t.id)}
-                  title={t.desc} // Native Tooltip
+                  title={t.desc}
                   style={{
                     fontSize: "0.85rem",
                     padding: "8px 12px",

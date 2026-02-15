@@ -21,6 +21,7 @@ use crate::keychain;
 use crate::notes::NotesVault;
 use crate::qr;
 use crate::state::SessionState;
+use crate::system_cleaner;
 use crate::utils;
 use crate::vault::PasswordVault;
 use crate::wordlist::WORDLIST;
@@ -49,6 +50,21 @@ fn resolve_keychain_path(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     Ok(data_dir.join("keychain.json"))
+}
+
+// --- SYSTEM CLEANER COMMANDS ---
+#[tauri::command]
+pub async fn scan_system_junk() -> CommandResult<Vec<system_cleaner::JunkItem>> {
+    tauri::async_runtime::spawn_blocking(move || Ok(system_cleaner::scan_targets()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn clean_system_junk(paths: Vec<String>) -> CommandResult<u64> {
+    tauri::async_runtime::spawn_blocking(move || Ok(system_cleaner::clean_paths(paths)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // --- HELPER: Smart Compression Detection ---
