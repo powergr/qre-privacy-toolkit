@@ -11,9 +11,11 @@ import {
   Settings,
   LifeBuoy,
   AlertTriangle,
-  Terminal,
+  FileCheck,
+  FileSearch,
+  Brush,
   Wifi,
-  FileCheck, // <--- Added Icon
+  Terminal,
 } from "lucide-react";
 // @ts-ignore
 import pkg from "../../../package.json";
@@ -75,11 +77,13 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
       icon: <ClipboardList size={16} />,
     },
     { id: "privacy", label: "Privacy Check", icon: <Radar size={16} /> },
+    { id: "analyzer", label: "File Analyzer", icon: <FileSearch size={16} /> }, // <--- NEW
     {
       id: "integrity",
       label: "Integrity Check",
       icon: <FileCheck size={16} />,
-    }, // <--- NEW
+    },
+    { id: "sysclean", label: "System Cleaner", icon: <Brush size={16} /> }, // <--- NEW
     { id: "cleaner", label: "Metadata Cleaner", icon: <Eraser size={16} /> },
     { id: "qr", label: "QR Generator", icon: <QrCode size={16} /> },
     { id: "shredder", label: "Secure Shredder", icon: <Trash2 size={16} /> },
@@ -375,11 +379,41 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
         </div>
       </Section>
 
-      {/* --- NEW INTEGRITY SECTION --- */}
+      {/* --- NEW SECTIONS --- */}
+
+      <Section id="analyzer" title="File Analyzer" icon={<FileSearch />}>
+        <p>
+          Detect malicious files hiding behind fake extensions (e.g.,{" "}
+          <code>invoice.pdf.exe</code>).
+        </p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            <strong>Smart Scan:</strong> Quickly checks your Downloads and
+            Desktop for dangerous mismatches.
+          </li>
+          <li>
+            <strong>Deep Scan:</strong> Select any folder or drive to scan
+            recursively.
+          </li>
+        </ul>
+        <div
+          style={{
+            background: "rgba(239, 68, 68, 0.1)",
+            padding: "10px",
+            borderRadius: 6,
+            fontSize: "0.9rem",
+            color: "var(--btn-danger)",
+          }}
+        >
+          <strong>Danger Detection:</strong> Flag files that claim to be safe
+          (PDF, JPG) but contain executable binary code.
+        </div>
+      </Section>
+
       <Section id="integrity" title="Integrity Checker" icon={<FileCheck />}>
         <p>
           Verify that a downloaded file (like a Linux ISO or wallet software) is
-          genuine and hasn't been tampered with by hackers.
+          genuine and hasn't been tampered with.
         </p>
         <ul style={{ paddingLeft: 20 }}>
           <li>
@@ -388,8 +422,7 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           </li>
           <li>
             <strong>Auto-Compare:</strong> Paste the official hash from the
-            developer's website into the comparison box. QRE will instantly
-            highlight if it is a{" "}
+            developer's website. QRE will instantly highlight if it is a{" "}
             <span style={{ color: "#4ade80" }}>
               <strong>MATCH</strong>
             </span>{" "}
@@ -400,6 +433,26 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             .
           </li>
         </ul>
+      </Section>
+
+      <Section id="sysclean" title="System Cleaner" icon={<Brush />}>
+        <p>
+          Remove temporary files, caches, and usage history to free up space and
+          improve privacy.
+        </p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            <strong>Targets:</strong> Clears browser caches (Chrome, Edge,
+            Brave), Windows Temp, and Recent Documents list.
+          </li>
+          <li>
+            <strong>Privacy:</strong> Only deletes cache/temp files. It does NOT
+            delete saved passwords or cookies.
+          </li>
+        </ul>
+        <p style={{ fontSize: "0.85rem", opacity: 0.8 }}>
+          *Available on Desktop versions only.
+        </p>
       </Section>
 
       <Section id="cleaner" title="Metadata Cleaner" icon={<Eraser />}>
@@ -418,10 +471,6 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           <li>
             Review the <strong>Metadata Report</strong> to see exactly what was
             found (GPS, Dates, Author).
-          </li>
-          <li>
-            Use the toggles to select what to remove (e.g., remove GPS but keep
-            Dates).
           </li>
           <li>
             Click <strong>Clean Files</strong>. New copies (e.g.,{" "}
@@ -461,7 +510,7 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
         <ul>
           <li>
             <strong>Desktop:</strong> Performs a DoD 3-pass overwrite pattern
-            (Random, Zeros, Random).
+            (Random - Zeros - Random).
           </li>
           <li>
             <strong>Android:</strong> Performs a standard OS deletion (due to

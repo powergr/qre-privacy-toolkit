@@ -112,7 +112,7 @@ export function Sidebar({
         },
         {
           id: "hash",
-          label: "Integrity",
+          label: "Integrity Check",
           icon: <FileCheck size={20} strokeWidth={2.5} />,
           desc: "Verify file hashes",
         },
@@ -135,16 +135,16 @@ export function Sidebar({
           desc: "Permanently delete files",
         },
         {
-          id: "qr",
-          label: "QR Gen",
-          icon: <QrCode size={20} strokeWidth={2.5} />,
-          desc: "Generate secure QR codes offline",
-        },
-        {
           id: "analyzer",
           label: "File Analyzer",
           icon: <FileSearch size={20} strokeWidth={2.5} />,
           desc: "Detect fake extensions & malware types",
+        },
+        {
+          id: "qr",
+          label: "QR Generator",
+          icon: <QrCode size={20} strokeWidth={2.5} />,
+          desc: "Generate secure QR codes offline",
         },
       ],
     },

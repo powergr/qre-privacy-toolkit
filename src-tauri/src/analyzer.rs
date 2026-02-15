@@ -31,18 +31,15 @@ fn is_ignored_dir(entry: &DirEntry) -> bool {
 }
 
 pub fn scan_directory(app: &AppHandle, dir: &str) -> Vec<AnalysisResult> {
-    // 1. Collect paths with Smart Filtering
-    // We use filter_entry to prevent walking into massive dev folders
     let entries: Vec<_> = WalkDir::new(dir)
         .min_depth(1)
         .max_depth(10)
         .into_iter()
-        .filter_entry(|e| !e.path().is_dir() || !is_ignored_dir(e)) // Skip entering ignored dirs
+        .filter_entry(|e| !e.path().is_dir() || !is_ignored_dir(e))
         .filter_map(|e| e.ok())
-        .filter(|e| !e.path().is_dir()) // Only analyze files
+        .filter(|e| !e.path().is_dir())
         .collect();
 
-    // 2. Process in PARALLEL
     let results: Vec<AnalysisResult> = entries
         .par_iter()
         .filter_map(|entry| {
@@ -118,6 +115,11 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
                 "db-shm", "db-wal", "plugin", "bpl",
             ];
 
+            // --- IMAGE FORMATS ---
+            let image_formats = [
+                "jpg", "jpeg", "png", "gif", "webp", "bmp", "ico", "tiff", "tif",
+            ];
+
             if system_extensions.contains(&ext.as_str()) {
                 // Ignore
             } else if real_ext == "der" && (ext == "cat" || ext == "cip" || ext == "crl") {
@@ -129,9 +131,11 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
                 )
             {
                 // Safe
-            } else if (real_ext == "jpg" && ext == "jpeg") || (real_ext == "jpeg" && ext == "jpg") {
-                // Safe
             } else if mime.starts_with("text") {
+                // Safe
+            }
+            // FIX: Cross-Image format mismatches are common and usually safe (e.g. .webp named .png)
+            else if image_formats.contains(&real_ext) && image_formats.contains(&ext.as_str()) {
                 // Safe
             } else {
                 let monitored_exts = [
@@ -161,7 +165,6 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
     })
 }
 
-// FIX: Added document_dir back
 pub fn get_user_dirs() -> Vec<String> {
     let mut paths = Vec::new();
     if let Some(user_dirs) = UserDirs::new() {
@@ -173,7 +176,7 @@ pub fn get_user_dirs() -> Vec<String> {
         }
         if let Some(d) = user_dirs.document_dir() {
             paths.push(d.to_string_lossy().to_string());
-        } // <--- Added
+        }
     }
     paths
 }

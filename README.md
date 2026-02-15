@@ -18,19 +18,24 @@ QRE Toolkit is a secure, cross-platform application designed to handle your sens
 
 ## 🛠️ The Toolkit
 
-QRE Toolkit combines 9 essential privacy tools into one secure application:
+QRE Toolkit combines 12 essential privacy tools into one secure application:
 
 ### **1. 🔐 File Encryption**
 
 Secure any file—photos, tax documents, 50GB video backups—using military-grade **AES-256-GCM**.
+
 **Unlimited Size:** Powered by a custom **Rust Streaming Engine**, you can encrypt files of any size without using up your RAM.
+
 **Smart Compression:** Automatically compresses documents while skipping media files.
+
 **Cross-Platform:** Lock a file on your PC, unlock it on your Android phone.
 
 ### **2. 🔑 Password Vault**
 
 A secure, offline database for your logins.
+
 **Zero-Knowledge:** Your secrets are encrypted with your Master Key inside your local keychain.
+
 **Generators:** Built-in strong password generator and strength meter.
 
 ### **3. 📝 Secure Notes**
@@ -38,24 +43,31 @@ A secure, offline database for your logins.
 An encrypted notepad for sensitive text that isn't just a password.
 
 - Store recovery seeds, Wi-Fi codes, or private journals.
+
 - Data is encrypted at rest and only decrypted in memory when you view it.
 
 ### **4. 🔖 Private Bookmarks**
 
 Save your sensitive links (Bank logins, Medical portals, Crypto exchanges) in an encrypted vault.
+
 **No Tracking:** Unlike browser bookmarks, these are never synced to Google/Apple/Mozilla servers.
+
 **Encrypted Storage:** URLs are encrypted on disk, so forensic tools cannot see your browsing history.
 
 ### **5. 📋 Secure Clipboard**
 
 The clipboard is a common security leak.
+
 **Secure Paste:** Grabs text from your clipboard, encrypts it into a secure history, and **wipes** the OS clipboard immediately.
+
 **Auto-Cleanup:** Automatically deletes history entries after a set time (e.g., 24 hours).
 
 ### **6. 🧹 Metadata Cleaner**
 
 Photos and documents contain hidden data (Exif) that can reveal your location and identity.
+
 **Scrub:** Remove GPS coordinates, Camera models, Authors, and Edit history from Images (JPG/PNG), PDFs, and Office Docs.
+
 **Batch:** Drag & drop multiple files or folders to clean them instantly.
 
 ### **7. ✅ Integrity Checker**
@@ -63,31 +75,59 @@ Photos and documents contain hidden data (Exif) that can reveal your location an
 Verify that files you download (like crypto wallets, Linux ISOs, or installers) are genuine and haven't been tampered with by hackers.
 
 **Multi-Hash:** Calculates SHA-256, SHA-1, and MD5 simultaneously.
+
 **Auto-Compare:** Paste the official hash from the developer's website, and QRE will instantly highlight if it matches or fails.
 
-### **8. 📡 Breach Check**
+### **8. 📡 Privacy Check**
 
 Check if your password has appeared in known data leaks (850M+ records).
+
 **Privacy Preserving:** Uses **k-Anonymity**. We send only the first 5 characters of the hash to the API. Your password is **never** sent to any server.
 
-### **9. 🔳 Secure QR Generator**
+### **9. 🗑️ System Clean**
+
+Remove temporary files, caches, and usage history to free up space and improve privacy.
+
+**Targets:** Clears browser caches (Chrome, Edge, Brave), Windows Temp, and Recent Documents list.
+
+**Privacy:** Only deletes cache/temp files. It does NOT delete saved passwords or cookies.
+
+Available on Desktop versions only.
+
+### **10. 🔳 Secure QR Generator**
 
 Share sensitive data (Wi-Fi passwords, Crypto addresses) with mobile devices without sending it over the internet.
+
 **Air-Gapped:** Data stays on your screen. The recipient scans it with their camera.
+
 **Offline:** No API calls. The QR is generated locally in Rust.
 
-### **10. 🗑️ Secure Shredder (Desktop)**
+### **11. 🗑️ Secure Shredder (Desktop)**
 
 When you delete a file, the data remains on your disk. The Shredder overwrites your files with random noise (DoD Standard 3-Pass) before deleting them.
+
 _(Note: On Android, this performs a standard permanent delete due to hardware limitations)._
+
+### **12. 🔎 File Analyzer**
+
+A security tool designed to detect malicious files hiding behind fake extensions (e.g., `salary.pdf.exe`).
+
+**Deep Scan:** Analyzes file headers (Magic Numbers) to determine the 'true' file type, ignoring the extension.
+
+**Malware Detection:** Instantly flags executable binaries that are masquerading as Documents, Images, or Archives.
+
+**Smart Filtering:** Intelligently whitelists common safe mismatches (e.g., `.docx` is technically a `.zip`) to reduce false positives.
 
 ---
 
 ## 🛡️ Security Architecture
 
 **Key Derivation:** Argon2id (Resistant to GPU brute-force).
+
 **Paranoid Mode:** Inject your own physical entropy (mouse movements/touch) to seed the random number generator.
+
 **Panic Button:** `Ctrl+Shift+Q` instantly kills the app and wipes memory (Desktop).
+
 **Auto-Lock:** Sessions timeout after 15 minutes of inactivity.
 
 ---
@@ -176,6 +216,8 @@ If the app fails to open, shows "App is damaged", or crashes immediately, it is 
    ```
 
 4. Open the app normally.
+
+---
 
 **License:** MIT
 

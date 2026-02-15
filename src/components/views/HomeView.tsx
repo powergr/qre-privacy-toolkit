@@ -151,18 +151,6 @@ export function HomeView({ setTab }: HomeViewProps) {
           <p>Verify file hashes (MD5, SHA) vs originals.</p>
         </div>
 
-        {/* File Analyzer */}
-        <div onClick={() => setTab("analyzer")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(236, 72, 153, 0.1)" }}
-          >
-            <FileSearch size={28} color="#ec4899" />
-          </div>
-          <h3>File Analyzer</h3>
-          <p>Detect malicious files with fake extensions.</p>
-        </div>
-
         {/* System Cleaner */}
         <div onClick={() => setTab("sysclean")} className="home-card">
           <div
@@ -197,6 +185,18 @@ export function HomeView({ setTab }: HomeViewProps) {
           </div>
           <h3>Secure Shredder</h3>
           <p>Permanently destroy sensitive files.</p>
+        </div>
+
+        {/* File Analyzer */}
+        <div onClick={() => setTab("analyzer")} className="home-card">
+          <div
+            className="card-icon"
+            style={{ background: "rgba(236, 72, 153, 0.1)" }}
+          >
+            <FileSearch size={28} color="#ec4899" />
+          </div>
+          <h3>File Analyzer</h3>
+          <p>Detect malicious files with fake extensions.</p>
         </div>
 
         {/* QR Generator */}
