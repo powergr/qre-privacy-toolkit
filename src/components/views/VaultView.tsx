@@ -11,12 +11,24 @@ import {
   Pin,
   PinOff,
   Link as LinkIcon,
+  Download,
+  Upload,
+  LayoutGrid,
+  List as ListIcon,
+  HeartPulse,
 } from "lucide-react";
 import { useVault, VaultEntry } from "../../hooks/useVault";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { InfoModal, EntryDeleteModal } from "../modals/AppModals";
-// 1. IMPORT UTILS
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  InfoModal,
+  EntryDeleteModal,
+  ExportWarningModal,
+} from "../modals/AppModals";
+import { VaultHealthModal } from "../modals/VaultHealthModal";
 import { getPasswordStrength, getStrengthColor } from "../../utils/security";
+import "./VaultView.css";
 
 const BRAND_COLORS = [
   "#555555",
@@ -39,16 +51,21 @@ function generateUUID() {
 }
 
 export function VaultView() {
-  const { entries, loading, saveEntry, deleteEntry } = useVault();
+  const { entries, loading, saveEntry, deleteEntry, importEntries } =
+    useVault();
 
+  // State
   const [editing, setEditing] = useState<Partial<VaultEntry> | null>(null);
   const [showPass, setShowPass] = useState<string | null>(null);
   const [copyModalMsg, setCopyModalMsg] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<VaultEntry | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [showExportWarning, setShowExportWarning] = useState(false);
+  const [showHealth, setShowHealth] = useState(false);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list");
 
-  // 2. CALCULATE STRENGTH FOR MODAL
-  // We calculate this dynamically based on what is being typed in the 'editing' state
+  // Dynamic strength calculation for the editor
   const strength = editing
     ? getPasswordStrength(editing.password || "")
     : { score: 0, feedback: "" };
@@ -67,7 +84,7 @@ export function VaultView() {
     return [...filtered].sort((a, b) => {
       if (a.is_pinned && !b.is_pinned) return -1;
       if (!a.is_pinned && b.is_pinned) return 1;
-      return b.created_at - a.created_at;
+      return a.service.localeCompare(b.service);
     });
   }, [entries, searchQuery]);
 
@@ -88,8 +105,91 @@ export function VaultView() {
     return pass;
   };
 
-  const getInitial = (name: string) =>
-    name ? name.charAt(0).toUpperCase() : "?";
+  const getInitial = (name: string) => {
+    if (!name) return "?";
+    let clean = name.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
+    return clean.charAt(0).toUpperCase();
+  };
+
+  // --- IMPORT / EXPORT ---
+  const handleImport = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "CSV File", extensions: ["csv"] }],
+      });
+      if (!selected) return;
+
+      setIsProcessing(true);
+      const contents = await invoke<string>("read_text_file_content", {
+        path: selected,
+      });
+
+      const lines = contents.split(/\r?\n/);
+      const newEntries: VaultEntry[] = [];
+      const startIdx = lines[0].toLowerCase().includes("password") ? 1 : 0;
+
+      for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        const parts = line.split(",");
+        if (parts.length >= 3) {
+          newEntries.push({
+            id: generateUUID(),
+            service: parts[0] || "Imported",
+            url: parts[1] || "",
+            username: parts[2] || "",
+            password: parts[3] || "",
+            notes: parts.slice(4).join(",") || "",
+            color: BRAND_COLORS[0],
+            is_pinned: false,
+            created_at: Date.now(),
+          });
+        }
+      }
+
+      if (newEntries.length > 0) {
+        await importEntries(newEntries);
+        setCopyModalMsg(
+          `Successfully imported ${newEntries.length} passwords.`,
+        );
+      } else {
+        alert("No valid entries found.");
+      }
+    } catch (e) {
+      alert("Import failed: " + e);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const executeExport = async () => {
+    setShowExportWarning(false);
+    try {
+      const path = await save({
+        defaultPath: "passwords_export.csv",
+        filters: [{ name: "CSV File", extensions: ["csv"] }],
+      });
+      if (!path) return;
+
+      let csvContent = "name,url,username,password,note\n";
+      entries.forEach((e) => {
+        const row = [
+          e.service.replace(/,/g, " "),
+          e.url?.replace(/,/g, " ") || "",
+          e.username.replace(/,/g, " "),
+          e.password.replace(/,/g, " "),
+          e.notes.replace(/[\n,]/g, " "),
+        ].join(",");
+        csvContent += row + "\n";
+      });
+
+      await invoke("write_text_file_content", { path, content: csvContent });
+      setCopyModalMsg("Vault exported successfully.");
+    } catch (e) {
+      alert("Export failed: " + e);
+    }
+  };
 
   if (loading)
     return (
@@ -100,15 +200,44 @@ export function VaultView() {
 
   return (
     <div className="vault-view">
+      {/* --- HEADER --- */}
       <div className="vault-header">
-        <div>
-          <h2 style={{ margin: 0 }}>Password Vault</h2>
-          <p
-            style={{ margin: 0, fontSize: "0.9rem", color: "var(--text-dim)" }}
+        {/* LEFT: Title & View Toggle */}
+        <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+            }}
           >
-            {entries.length} secure login{entries.length !== 1 ? "s" : ""}.
-          </p>
+            <h2 style={{ margin: 0, fontSize: "1.5rem", lineHeight: 1 }}>
+              Vault
+            </h2>
+            <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
+              {entries.length} logins
+            </span>
+          </div>
+
+          <div className="view-toggle">
+            <button
+              className={`view-btn ${viewMode === "grid" ? "active" : ""}`}
+              onClick={() => setViewMode("grid")}
+              title="Grid View"
+            >
+              <LayoutGrid size={18} />
+            </button>
+            <button
+              className={`view-btn ${viewMode === "list" ? "active" : ""}`}
+              onClick={() => setViewMode("list")}
+              title="List View"
+            >
+              <ListIcon size={18} />
+            </button>
+          </div>
         </div>
+
+        {/* CENTER: Search Bar */}
         <div className="search-container">
           <Search size={18} className="search-icon" />
           <input
@@ -118,21 +247,54 @@ export function VaultView() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <button
-          className="header-action-btn"
-          onClick={() =>
-            setEditing({
-              service: "",
-              username: "",
-              password: "",
-              notes: "",
-              color: BRAND_COLORS[0],
-              is_pinned: false,
-            })
-          }
-        >
-          Add New
-        </button>
+
+        {/* RIGHT: Actions */}
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            className="vault-action-btn"
+            title="Security Health Check"
+            onClick={() => setShowHealth(true)}
+            style={{
+              color: "var(--btn-danger)",
+              borderColor: "rgba(239, 68, 68, 0.3)",
+            }}
+          >
+            <HeartPulse size={20} />
+          </button>
+
+          <button
+            className="vault-action-btn"
+            title="Import CSV"
+            onClick={handleImport}
+            disabled={isProcessing}
+          >
+            <Upload size={20} />
+          </button>
+
+          <button
+            className="vault-action-btn"
+            title="Export CSV"
+            onClick={() => setShowExportWarning(true)}
+          >
+            <Download size={20} />
+          </button>
+
+          <button
+            className="vault-primary-btn"
+            onClick={() =>
+              setEditing({
+                service: "",
+                username: "",
+                password: "",
+                notes: "",
+                color: BRAND_COLORS[0],
+                is_pinned: false,
+              })
+            }
+          >
+            Add New
+          </button>
+        </div>
       </div>
 
       {entries.length === 0 && !searchQuery && (
@@ -149,96 +311,154 @@ export function VaultView() {
         >
           <Key size={64} style={{ marginBottom: 20, color: "var(--accent)" }} />
           <h3>No Passwords Yet</h3>
-          <p>Click "Add New" to store your first secret.</p>
+          <p>Click "Add New" or use Import to get started.</p>
         </div>
       )}
 
-      <div className="modern-grid">
-        {visibleEntries.map((entry) => (
-          <div
-            key={entry.id}
-            className={`modern-card ${entry.is_pinned ? "pinned" : ""}`}
-            onClick={() => setEditing(entry)}
-            style={{ position: "relative" }}
-          >
-            {entry.is_pinned && (
-              <Pin
-                size={16}
-                className="pinned-icon-corner"
-                fill="currentColor"
-              />
-            )}
-            <div className="vault-service-row">
+      {/* --- LIST VIEW --- */}
+      {viewMode === "list" && (
+        <div className="vault-list">
+          {visibleEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className={`vault-list-row ${entry.is_pinned ? "pinned" : ""}`}
+              onClick={() => setEditing(entry)}
+            >
               <div
                 className="service-icon"
-                style={{ backgroundColor: entry.color || BRAND_COLORS[0] }}
+                style={{
+                  backgroundColor: entry.color || BRAND_COLORS[0],
+                  width: 36,
+                  height: 36,
+                  fontSize: "1rem",
+                  marginRight: 15,
+                }}
               >
                 {getInitial(entry.service)}
               </div>
-              <div className="service-info" style={{ overflow: "hidden" }}>
-                <div className="service-name" style={{ fontWeight: 600 }}>
+              <div className="list-info">
+                <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
                   {entry.service}
                 </div>
-                <div
-                  className="service-user"
-                  style={{
-                    fontSize: "0.85rem",
-                    color: "var(--text-dim)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
+                <div className="list-meta">{entry.username}</div>
+              </div>
+              <div
+                className="list-actions"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  className="icon-btn-ghost"
+                  title="Copy Password"
+                  style={{ color: "var(--text-dim)" }}
+                  onClick={() => handleCopy(entry.password)}
                 >
-                  {entry.username}
-                </div>
+                  <Copy size={16} />
+                </button>
+                {entry.is_pinned && (
+                  <Pin size={16} color="#ffd700" style={{ marginRight: 10 }} />
+                )}
+                <button
+                  className="icon-btn-ghost danger"
+                  onClick={() => setItemToDelete(entry)}
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
             </div>
-            <div className="secret-pill" onClick={(e) => e.stopPropagation()}>
-              <span className="secret-text">
-                {showPass === entry.id ? entry.password : "•".repeat(12)}
-              </span>
-              <button
-                className="icon-btn-ghost"
-                onClick={() =>
-                  setShowPass(showPass === entry.id ? null : entry.id)
-                }
-              >
-                {showPass === entry.id ? (
-                  <EyeOff size={16} />
-                ) : (
-                  <Eye size={16} />
-                )}
-              </button>
-              <button
-                className="icon-btn-ghost"
-                onClick={() => handleCopy(entry.password)}
-              >
-                <Copy size={16} />
-              </button>
-            </div>
-            <div className="card-actions">
-              <button
-                className="icon-btn-ghost"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  saveEntry({ ...entry, is_pinned: !entry.is_pinned });
-                }}
-              >
-                {entry.is_pinned ? <PinOff size={16} /> : <Pin size={16} />}
-              </button>
-              <button
-                className="icon-btn-ghost danger"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setItemToDelete(entry);
-                }}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
+      {/* --- GRID VIEW --- */}
+      {viewMode === "grid" && (
+        <div className="modern-grid">
+          {visibleEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className={`modern-card ${entry.is_pinned ? "pinned" : ""}`}
+              onClick={() => setEditing(entry)}
+              style={{ position: "relative" }}
+            >
+              {entry.is_pinned && (
+                <Pin
+                  size={16}
+                  className="pinned-icon-corner"
+                  fill="currentColor"
+                />
+              )}
+              <div className="vault-service-row">
+                <div
+                  className="service-icon"
+                  style={{ backgroundColor: entry.color || BRAND_COLORS[0] }}
+                >
+                  {getInitial(entry.service)}
+                </div>
+                <div className="service-info" style={{ overflow: "hidden" }}>
+                  <div className="service-name" style={{ fontWeight: 600 }}>
+                    {entry.service}
+                  </div>
+                  <div
+                    className="service-user"
+                    style={{
+                      fontSize: "0.85rem",
+                      color: "var(--text-dim)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {entry.username}
+                  </div>
+                </div>
+              </div>
+              <div className="secret-pill" onClick={(e) => e.stopPropagation()}>
+                <span className="secret-text">
+                  {showPass === entry.id ? entry.password : "•".repeat(12)}
+                </span>
+                <button
+                  className="icon-btn-ghost"
+                  onClick={() =>
+                    setShowPass(showPass === entry.id ? null : entry.id)
+                  }
+                >
+                  {showPass === entry.id ? (
+                    <EyeOff size={16} />
+                  ) : (
+                    <Eye size={16} />
+                  )}
+                </button>
+                <button
+                  className="icon-btn-ghost"
+                  onClick={() => handleCopy(entry.password)}
+                >
+                  <Copy size={16} />
+                </button>
+              </div>
+              <div className="card-actions">
+                <button
+                  className="icon-btn-ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    saveEntry({ ...entry, is_pinned: !entry.is_pinned });
+                  }}
+                >
+                  {entry.is_pinned ? <PinOff size={16} /> : <Pin size={16} />}
+                </button>
+                <button
+                  className="icon-btn-ghost danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setItemToDelete(entry);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* MODALS */}
       {editing && (
         <div className="modal-overlay">
           <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -350,7 +570,6 @@ export function VaultView() {
                 />
               </div>
 
-              {/* Password + Strength Meter */}
               <div>
                 <div className="vault-view-custom-password-wrapper">
                   <input
@@ -374,8 +593,6 @@ export function VaultView() {
                     <Key size={18} />
                   </button>
                 </div>
-
-                {/* 3. STRENGTH VISUALIZATION */}
                 {editing.password && editing.password.length > 0 && (
                   <div style={{ marginTop: 8 }}>
                     <div
@@ -408,11 +625,12 @@ export function VaultView() {
                       }}
                     >
                       <span style={{ color: getStrengthColor(strength.score) }}>
-                        {
-                          ["Very Weak", "Weak", "Okay", "Good", "Strong"][
-                            strength.score
-                          ]
-                        }
+                        {strength.score >= 4 &&
+                        strength.feedback === "Excellent Passphrase"
+                          ? "Excellent"
+                          : ["Very Weak", "Weak", "Okay", "Good", "Strong"][
+                              strength.score
+                            ]}
                       </span>
                       <span>{strength.feedback}</span>
                     </div>
@@ -426,7 +644,6 @@ export function VaultView() {
                 >
                   Card Color
                 </label>
-                https://www.twitch.tv/therbak47
                 <div className="color-picker">
                   {BRAND_COLORS.map((c) => (
                     <div
@@ -477,6 +694,24 @@ export function VaultView() {
             </div>
           </div>
         </div>
+      )}
+
+      {showExportWarning && (
+        <ExportWarningModal
+          onConfirm={executeExport}
+          onCancel={() => setShowExportWarning(false)}
+        />
+      )}
+
+      {showHealth && (
+        <VaultHealthModal
+          entries={entries}
+          onClose={() => setShowHealth(false)}
+          onEditEntry={(entry) => {
+            setShowHealth(false);
+            setEditing(entry);
+          }}
+        />
       )}
 
       {itemToDelete && (

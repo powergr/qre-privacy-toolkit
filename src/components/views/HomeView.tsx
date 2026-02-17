@@ -24,193 +24,193 @@ export function HomeView({ setTab }: HomeViewProps) {
       style={{
         height: "100%",
         width: "100%",
-        overflowY: "auto",
         padding: "20px",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
+        justifyContent: "center", // Vertically center the content
+        overflow: "hidden", // Prevent scrolling if possible
       }}
     >
-      {/* HEADER SECTION */}
+      {/* COMPACT HEADER */}
       <div
         style={{
-          marginBottom: 30,
+          marginBottom: 20, // Reduced margin
           textAlign: "center",
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
+          gap: 15,
+          justifyContent: "center",
+          flexShrink: 0, // Don't shrink header
         }}
       >
-        <div style={{ marginBottom: 10 }}>
-          <Fingerprint size={48} color="var(--accent)" strokeWidth={1.5} />
-        </div>
-        <h1
+        <div
           style={{
-            margin: "0",
-            fontSize: "1.6rem",
-            color: "var(--text-main)",
-            fontWeight: 700,
+            background: "rgba(0, 122, 204, 0.1)",
+            padding: 10,
+            borderRadius: "50%",
           }}
         >
-          QRE Privacy Toolkit
-        </h1>
-        <p
-          style={{
-            color: "var(--text-dim)",
-            fontSize: "0.95rem",
-            marginTop: 5,
-          }}
-        >
-          Select a tool to begin.
-        </p>
-      </div>
-
-      {/* GRID CONTAINER */}
-      <div className="home-grid">
-        {/* Encrypt */}
-        <div onClick={() => setTab("files")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(66, 184, 131, 0.1)" }}
-          >
-            <Lock size={28} color="#42b883" />
-          </div>
-          <h3>Encrypt Files</h3>
-          <p>Secure documents with military-grade AES-256.</p>
+          <Fingerprint size={36} color="var(--accent)" strokeWidth={2} />
         </div>
-
-        {/* Notes */}
-        <div onClick={() => setTab("notes")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(255, 170, 0, 0.1)" }}
+        <div>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: "1.8rem",
+              color: "var(--text-main)",
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
           >
-            <StickyNote size={28} color="#ffaa00" />
-          </div>
-          <h3>Secure Notes</h3>
-          <p>Encrypted notepad for PINs and sensitive text.</p>
-        </div>
-
-        {/* Vault */}
-        <div onClick={() => setTab("vault")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(0, 122, 204, 0.1)" }}
-          >
-            <Key size={28} color="#007acc" />
-          </div>
-          <h3>Password Vault</h3>
-          <p>Store your digital secrets securely offline.</p>
-        </div>
-
-        {/*Bookmarks */}
-        <div onClick={() => setTab("bookmarks")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(255, 255, 255, 0.1)" }}
-          >
-            <Bookmark size={28} color="#22c55e" />
-          </div>
-          <h3>Bookmarks</h3>
-          <p>Save sensitive personal encrypted Bookmarks</p>
-        </div>
-
-        {/* Clipboard */}
-        <div onClick={() => setTab("clipboard")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(6, 182, 212, 0.1)" }}
-          >
-            <ClipboardList size={28} color="#06b6d4" />
-          </div>
-          <h3>Secure Clipboard</h3>
-          <p>Encrypt sensitive copies & auto-clear history.</p>
-        </div>
-
-        {/* Breach */}
-        <div onClick={() => setTab("breach")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(168, 85, 247, 0.1)" }}
-          >
-            <Radar size={28} color="#a855f7" />
-          </div>
-          <h3>Privacy Check</h3>
-          <p>Scan for identity leaks & network security</p>
-        </div>
-
-        {/* Hash Check */}
-        <div onClick={() => setTab("hash")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(234, 179, 8, 0.1)" }}
-          >
-            <FileCheck size={28} color="#eab308" />
-          </div>
-          <h3>Integrity Check</h3>
-          <p>Verify file hashes (MD5, SHA) vs originals.</p>
-        </div>
-
-        {/* System Cleaner */}
-        <div onClick={() => setTab("sysclean")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(59, 130, 246, 0.1)" }}
-          >
-            <Brush size={28} color="#3b82f6" />
-          </div>
-          <h3>System Cleaner</h3>
-          <p>Clear temp files, caches, and recent history.</p>
-        </div>
-
-        {/* Cleaner */}
-        <div onClick={() => setTab("cleaner")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(34, 197, 94, 0.1)" }}
-          >
-            <Eraser size={28} color="#22c55e" />
-          </div>
-          <h3>Metadata Cleaner</h3>
-          <p>Remove hidden GPS and author data.</p>
-        </div>
-
-        {/* Shredder */}
-        <div onClick={() => setTab("shred")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(217, 64, 64, 0.1)" }}
-          >
-            <Trash2 size={28} color="#d94040" />
-          </div>
-          <h3>Secure Shredder</h3>
-          <p>Permanently destroy sensitive files.</p>
-        </div>
-
-        {/* File Analyzer */}
-        <div onClick={() => setTab("analyzer")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(236, 72, 153, 0.1)" }}
-          >
-            <FileSearch size={28} color="#ec4899" />
-          </div>
-          <h3>File Analyzer</h3>
-          <p>Detect malicious files with fake extensions.</p>
-        </div>
-
-        {/* QR Generator */}
-        <div onClick={() => setTab("qr")} className="home-card">
-          <div
-            className="card-icon"
-            style={{ background: "rgba(255, 255, 255, 0.1)" }}
-          >
-            <QrCode size={28} color="#ffffff" />
-          </div>
-          <h3>QR Generator</h3>
-          <p>Share Wi-Fi or text offline via screen.</p>
+            QRE Privacy Toolkit
+          </h1>
         </div>
       </div>
+
+      {/* 4-COLUMN GRID LAYOUT */}
+      <div
+        className="home-grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          // Calculate row height dynamically or set fixed to fit nicely
+          gridTemplateRows: "repeat(3, 1fr)",
+          gap: "15px",
+          width: "100%",
+          maxWidth: "1100px",
+          flex: 1, // Take available height
+          maxHeight: "600px", // Prevent stretching too tall on large screens
+          alignContent: "center",
+        }}
+      >
+        <ToolCard
+          title="Encrypt Files"
+          desc="AES-256-GCM encryption."
+          icon={<Lock size={24} color="#42b883" />}
+          bg="rgba(66, 184, 131, 0.1)"
+          onClick={() => setTab("files")}
+        />
+        <ToolCard
+          title="Secure Notes"
+          desc="Encrypted private notepad."
+          icon={<StickyNote size={24} color="#ffaa00" />}
+          bg="rgba(255, 170, 0, 0.1)"
+          onClick={() => setTab("notes")}
+        />
+        <ToolCard
+          title="Passwords"
+          desc="Offline credential vault."
+          icon={<Key size={24} color="#007acc" />}
+          bg="rgba(0, 122, 204, 0.1)"
+          onClick={() => setTab("vault")}
+        />
+        <ToolCard
+          title="Bookmarks"
+          desc="Private encrypted links."
+          icon={<Bookmark size={24} color="#22c55e" />}
+          bg="rgba(34, 197, 94, 0.1)"
+          onClick={() => setTab("bookmarks")}
+        />
+
+        {/* Row 2 */}
+        <ToolCard
+          title="Clipboard"
+          desc="Secure copy & history."
+          icon={<ClipboardList size={24} color="#06b6d4" />}
+          bg="rgba(6, 182, 212, 0.1)"
+          onClick={() => setTab("clipboard")}
+        />
+        <ToolCard
+          title="Privacy Check"
+          desc="Check leaks & IP exposure."
+          icon={<Radar size={24} color="#a855f7" />}
+          bg="rgba(168, 85, 247, 0.1)"
+          onClick={() => setTab("breach")}
+        />
+        <ToolCard
+          title="Integrity"
+          desc="Verify file hashes."
+          icon={<FileCheck size={24} color="#eab308" />}
+          bg="rgba(234, 179, 8, 0.1)"
+          onClick={() => setTab("hash")}
+        />
+        <ToolCard
+          title="File Analyzer"
+          desc="Detect fake extensions."
+          icon={<FileSearch size={24} color="#ec4899" />}
+          bg="rgba(236, 72, 153, 0.1)"
+          onClick={() => setTab("analyzer")}
+        />
+
+        {/* Row 3 */}
+        <ToolCard
+          title="Sys Cleaner"
+          desc="Clear temp & cache."
+          icon={<Brush size={24} color="#3b82f6" />}
+          bg="rgba(59, 130, 246, 0.1)"
+          onClick={() => setTab("sysclean")}
+        />
+        <ToolCard
+          title="Meta Cleaner"
+          desc="Remove Exif/GPS data."
+          icon={<Eraser size={24} color="#22c55e" />}
+          bg="rgba(34, 197, 94, 0.1)"
+          onClick={() => setTab("cleaner")}
+        />
+        <ToolCard
+          title="Shredder"
+          desc="Permanently destroy files."
+          icon={<Trash2 size={24} color="#d94040" />}
+          bg="rgba(217, 64, 64, 0.1)"
+          onClick={() => setTab("shred")}
+        />
+        <ToolCard
+          title="QR Gen"
+          desc="Offline QR creation."
+          icon={<QrCode size={24} color="#ffffff" />}
+          bg="rgba(255, 255, 255, 0.1)"
+          onClick={() => setTab("qr")}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ToolCard({ title, desc, icon, bg, onClick }: any) {
+  return (
+    <div
+      onClick={onClick}
+      className="home-card"
+      style={{
+        padding: "15px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center", // Center content vertically
+        textAlign: "center",
+        cursor: "pointer",
+        height: "100%", // Fill the grid cell
+        minHeight: "120px",
+      }}
+    >
+      <div
+        className="card-icon"
+        style={{ background: bg, marginBottom: 12, width: 48, height: 48 }}
+      >
+        {icon}
+      </div>
+      <h3 style={{ fontSize: "1rem", margin: "0 0 5px 0" }}>{title}</h3>
+      <p
+        style={{
+          fontSize: "0.75rem",
+          margin: 0,
+          lineHeight: 1.3,
+          opacity: 0.8,
+        }}
+      >
+        {desc}
+      </p>
     </div>
   );
 }

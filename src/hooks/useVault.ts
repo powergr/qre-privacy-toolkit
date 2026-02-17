@@ -31,8 +31,14 @@ export function useVault() {
     try {
       setLoading(true);
       const vault = await invoke<PasswordVault>("load_password_vault");
-      // Initial sort by newest
-      setEntries(vault.entries.sort((a, b) => b.created_at - a.created_at));
+      // Sort: Pinned first, then Newest
+      setEntries(
+        vault.entries.sort((a, b) => {
+          if (a.is_pinned && !b.is_pinned) return -1;
+          if (!a.is_pinned && b.is_pinned) return 1;
+          return b.created_at - a.created_at;
+        }),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -42,17 +48,31 @@ export function useVault() {
 
   async function saveEntry(entry: VaultEntry) {
     try {
-      // Optimistic update
       const newEntries = [...entries];
       const index = newEntries.findIndex((e) => e.id === entry.id);
       if (index >= 0) newEntries[index] = entry;
-      else newEntries.unshift(entry); // Add to top
+      else newEntries.unshift(entry);
 
-      // Save to Rust
       await invoke("save_password_vault", { vault: { entries: newEntries } });
       setEntries(newEntries);
     } catch (e) {
       setError("Failed to save: " + String(e));
+    }
+  }
+
+  // --- NEW: BULK IMPORT ---
+  async function importEntries(newItems: VaultEntry[]) {
+    try {
+      // Merge new items with existing ones
+      // We add new items to the TOP
+      const combined = [...newItems, ...entries];
+
+      await invoke("save_password_vault", { vault: { entries: combined } });
+      setEntries(combined);
+      return true;
+    } catch (e) {
+      setError("Import failed: " + String(e));
+      return false;
     }
   }
 
@@ -66,5 +86,13 @@ export function useVault() {
     }
   }
 
-  return { entries, loading, error, saveEntry, deleteEntry, refreshVault };
+  return {
+    entries,
+    loading,
+    error,
+    saveEntry,
+    deleteEntry,
+    refreshVault,
+    importEntries,
+  };
 }

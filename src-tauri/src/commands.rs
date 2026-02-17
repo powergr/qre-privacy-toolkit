@@ -731,6 +731,18 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
     }
 }
 
+// --- HELPER COMMANDS FOR IMPORT/EXPORT ---
+
+#[tauri::command]
+pub fn read_text_file_content(path: String) -> CommandResult<String> {
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn write_text_file_content(path: String, content: String) -> CommandResult<()> {
+    std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
 // --- CRYPTO LOGIC ---
 
 #[tauri::command]

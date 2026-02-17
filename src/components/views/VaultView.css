@@ -6,12 +6,49 @@
   overflow-y: auto;
 }
 
+/* MAIN HEADER CONTAINER */
 .vault-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 25px;
   gap: 20px;
+}
+
+/* --- VIEW TOGGLE --- */
+.view-toggle {
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  gap: 4px;
+  height: 40px;
+  box-sizing: border-box;
+  align-items: center;
+}
+
+.view-btn {
+  background: transparent;
+  border: none;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  padding: 0;
+}
+.view-btn.active {
+  background: var(--highlight);
+  color: var(--accent);
+}
+.view-btn:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
 }
 
 /* --- SEARCH BAR --- */
@@ -19,17 +56,20 @@
   position: relative;
   flex: 1;
   max-width: 400px;
+  height: 40px;
 }
 
 .vault-view .search-input {
   width: 100%;
+  height: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 10px 15px 10px 40px;
+  padding: 0 15px 0 40px;
   border-radius: 8px;
   font-size: 0.95rem;
   transition: all 0.2s;
+  box-sizing: border-box;
 }
 
 .vault-view .search-input:focus {
@@ -47,29 +87,69 @@
   pointer-events: none;
 }
 
-/* --- CARD STYLES --- */
+/* --- ACTION BUTTONS --- */
+.vault-action-btn {
+  height: 40px;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+.vault-action-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-main);
+}
+.vault-action-btn:active {
+  transform: translateY(1px);
+}
+
+.vault-primary-btn {
+  height: 40px;
+  padding: 0 20px;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.vault-primary-btn:hover {
+  filter: brightness(1.1);
+}
+
+/* --- GRID CARDS --- */
 .vault-service-row {
   display: flex;
   align-items: center;
   gap: 15px;
   margin-bottom: 15px;
 }
-
 .service-icon {
   width: 42px;
   height: 42px;
   border-radius: 10px;
-  background: var(--bg-color); /* Fallback */
+  background: var(--bg-color);
   color: white;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
   font-size: 1.2rem;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
-
 .modern-card.pinned {
   border-color: rgba(255, 215, 0, 0.4);
   background: linear-gradient(
@@ -78,7 +158,6 @@
     rgba(255, 215, 0, 0.03)
   );
 }
-
 .pinned-icon-corner {
   color: #ffd700;
   position: absolute;
@@ -86,7 +165,100 @@
   right: 10px;
 }
 
-/* --- COLOR PICKER --- */
+/* --- LIST LAYOUT (Fixed Properties) --- */
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vault-list-row {
+  display: flex;
+  align-items: center;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 15px;
+  transition: all 0.1s;
+  cursor: pointer;
+}
+
+.vault-list-row:hover {
+  background: var(--highlight);
+  border-color: var(--accent);
+  transform: translateX(2px);
+}
+
+.vault-list-row.pinned {
+  border-left: 3px solid #ffd700;
+}
+
+.list-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- COMMON --- */
+.secret-pill {
+  background: var(--bg-color);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: monospace;
+  font-size: 0.95rem;
+  cursor: default;
+}
+.secret-text {
+  flex: 1;
+  margin-right: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Modal Inputs */
+.vault-view-custom-password-wrapper {
+  display: flex;
+  gap: 10px;
+}
+.vault-view-custom-password-toggle {
+  background: var(--highlight);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.vault-view-custom-password-toggle:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 .color-picker {
   display: flex;
   gap: 10px;
@@ -106,50 +278,4 @@
 .color-dot.selected {
   border-color: var(--text-main);
   box-shadow: 0 0 0 2px var(--bg-card);
-}
-
-/* --- INPUTS (SCOPED TO PREVENT CONFLICT) --- */
-
-.vault-view-custom-password-wrapper {
-  display: flex;
-  gap: 10px;
-}
-
-.vault-view-custom-password-toggle {
-  background: var(--highlight);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0 12px;
-  cursor: pointer;
-  color: var(--text-main);
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.vault-view-custom-password-toggle:hover {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-/* Secret Pill in Card */
-.secret-pill {
-  background: var(--bg-color);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-family: monospace;
-  font-size: 0.95rem;
-  cursor: default;
-}
-.secret-text {
-  flex: 1;
-  margin-right: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

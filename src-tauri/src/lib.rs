@@ -90,6 +90,8 @@ pub fn run() {
             commands::show_in_folder,
             commands::scan_system_junk,
             commands::clean_system_junk,
+            commands::read_text_file_content,
+            commands::write_text_file_content,
             // Crypto
             commands::lock_file,
             commands::unlock_file,

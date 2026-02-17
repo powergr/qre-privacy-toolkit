@@ -874,3 +874,76 @@ export function TimeoutWarningModal({
     </div>
   );
 }
+
+// --- EXPORT WARNING MODAL (New) ---
+export function ExportWarningModal({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onCancel}
+      style={{ zIndex: 100005 }}
+    >
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-header"
+          style={{ borderBottomColor: "var(--btn-danger)" }}
+        >
+          <AlertTriangle size={20} color="var(--btn-danger)" />
+          <h2 style={{ color: "var(--btn-danger)" }}>Security Warning</h2>
+        </div>
+        <div className="modal-body">
+          <p
+            style={{
+              color: "var(--text-main)",
+              fontWeight: "bold",
+              fontSize: "1.05rem",
+              marginBottom: 10,
+            }}
+          >
+            Export to Unencrypted File?
+          </p>
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.9rem",
+              lineHeight: "1.5",
+              marginBottom: 20,
+            }}
+          >
+            You are about to export your passwords to a standard <b>CSV</b>{" "}
+            file.
+            <br />
+            <br />
+            <span style={{ color: "var(--btn-danger)" }}>
+              Anyone who accesses this file can see all your passwords in plain
+              text.
+            </span>
+          </p>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+            <button
+              className="auth-btn danger-btn"
+              style={{ flex: 1 }}
+              onClick={onConfirm}
+            >
+              I Understand, Export
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
