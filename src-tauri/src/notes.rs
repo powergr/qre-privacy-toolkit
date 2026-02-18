@@ -1,45 +1,58 @@
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Represents a single encrypted note.
-///
-/// Secure Notes are useful for storing sensitive text that doesn't fit
-/// into a standard password field, such as Recovery Codes, PINs, or private diaries.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// SECURITY: Fields are zeroed in memory when dropped to prevent RAM scraping.
+#[derive(Serialize, Deserialize, Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct NoteEntry {
-    /// Unique UUID to identify the note for updates/deletions.
     pub id: String,
-    
-    /// The title displayed in the list view.
     pub title: String,
-    
-    /// The main body of the note. 
-    /// Since the entire vault is encrypted, this text is secure on disk.
     pub content: String,
-    
-    /// Timestamp of creation (Unix Epoch).
-    pub created_at: i64,
-    
-    /// Timestamp of last modification. Used for sorting.
-    pub updated_at: i64,
-
-    /// Whether the note is pinned to the top.
-    /// Default to false for backward compatibility with existing vaults.
+    pub created_at: i64, // Unix seconds
+    pub updated_at: i64, // Unix seconds
     #[serde(default)]
     pub is_pinned: bool,
 }
 
-/// The root container for the Secure Notes feature.
-///
-/// This entire struct is serialized, compressed, and encrypted 
-/// into `notes.qre` using the Master Key.
-#[derive(Serialize, Deserialize, Debug, Default)]
+/// The root container for the Secure Notes.
+#[derive(Serialize, Deserialize, Debug, Default, Zeroize, ZeroizeOnDrop)]
 pub struct NotesVault {
+    #[serde(default = "NotesVault::default_schema_version")]
+    pub schema_version: u32,
     pub entries: Vec<NoteEntry>,
 }
 
 impl NotesVault {
-    /// Creates a new, empty notes vault.
+    pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+    fn default_schema_version() -> u32 {
+        1
+    }
+
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            schema_version: Self::CURRENT_SCHEMA_VERSION,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Validates the vault to prevent corruption before saving/loading
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version > Self::CURRENT_SCHEMA_VERSION {
+            return Err(format!(
+                "Vault version {} is too new. Update app.",
+                self.schema_version
+            ));
+        }
+        let mut seen_ids = std::collections::HashSet::new();
+        for note in &self.entries {
+            if note.id.is_empty() {
+                return Err("Note has empty ID".into());
+            }
+            if !seen_ids.insert(&note.id) {
+                return Err(format!("Duplicate ID: {}", note.id));
+            }
+        }
+        Ok(())
     }
 }

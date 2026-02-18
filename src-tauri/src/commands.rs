@@ -265,8 +265,19 @@ pub fn generate_qr_code(text: String, fg: String, bg: String) -> CommandResult<S
 // --- PRIVACY & BREACH CHECK ---
 
 #[tauri::command]
-pub async fn check_password_breach(password: String) -> CommandResult<breach::BreachResult> {
-    breach::check_pwned(&password)
+pub async fn check_password_breach(sha1_hash: String) -> CommandResult<breach::BreachResult> {
+    // FIX: Validate input before doing anything — reject garbage early.
+    if sha1_hash.len() != 40 {
+        return Err("Invalid hash: expected 40 hex characters.".to_string());
+    }
+    if !sha1_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid hash: must contain only hex characters.".to_string());
+    }
+
+    let prefix = sha1_hash[..5].to_uppercase();
+    let suffix = sha1_hash[5..].to_uppercase();
+
+    breach::check_pwned_by_prefix(&prefix, &suffix)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1079,6 +1090,10 @@ pub fn save_password_vault(
     state: tauri::State<SessionState>,
     vault: PasswordVault,
 ) -> CommandResult<()> {
+    // 1. VALIDATE BEFORE SAVING
+    // This uses the method, fixing the warning and improving security
+    vault.validate().map_err(|e| e.to_string())?;
+
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -1140,6 +1155,9 @@ pub fn save_notes_vault(
     state: tauri::State<SessionState>,
     vault: NotesVault,
 ) -> CommandResult<()> {
+    // 1. VALIDATE BEFORE SAVING (Fixes "never used" warning & prevents corruption)
+    vault.validate().map_err(|e| e.to_string())?;
+
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -1147,16 +1165,21 @@ pub fn save_notes_vault(
             None => return Err("Vault is locked".to_string()),
         }
     };
+
     let path = resolve_keychain_path(&app)?
         .parent()
         .unwrap()
         .join("notes.qre");
+
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
+
     let container =
         crypto::encrypt_file_with_master_key(&master_key, None, "notes.json", &json_data, None, 3)
             .map_err(|e| e.to_string())?;
+
     container
         .save(path.to_str().unwrap())
         .map_err(|e| e.to_string())?;
+
     Ok(())
 }

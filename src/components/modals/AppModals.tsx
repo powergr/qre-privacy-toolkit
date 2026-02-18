@@ -19,6 +19,7 @@ import { PasswordInput } from "../common/PasswordInput";
 // Import version directly to ensure it matches the build
 // @ts-ignore
 import pkg from "../../../package.json";
+import { FileCheck } from "lucide-react";
 
 // --- INFO MODAL (Success) ---
 export function InfoModal({
@@ -804,6 +805,80 @@ export function ChangePassModal({
   );
 }
 
+// --- EXPORT SUCCESS MODAL ---
+export function ExportSuccessModal({
+  filePath,
+  onClose,
+}: {
+  filePath: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-overlay" style={{ zIndex: 100005 }} onClick={onClose}>
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-header"
+          style={{ borderBottomColor: "var(--btn-success)" }}
+        >
+          <CheckCircle size={20} color="var(--btn-success)" />
+          <h2 style={{ color: "var(--btn-success)" }}>Export Complete</h2>
+          <div style={{ flex: 1 }}></div>
+          <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
+        </div>
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", marginBottom: 10 }}>
+            File saved successfully:
+          </p>
+
+          <div
+            style={{
+              background: "rgba(0,0,0,0.3)",
+              padding: "12px",
+              borderRadius: "6px",
+              border: "1px solid var(--border)",
+              fontFamily: "monospace",
+              fontSize: "0.85rem",
+              color: "var(--accent)",
+              wordBreak: "break-all",
+              marginBottom: 15,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <FileCheck size={16} />
+            {filePath}
+          </div>
+
+          <div
+            style={{
+              background: "rgba(245, 158, 11, 0.1)", // Orange tint
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              borderRadius: "6px",
+              padding: "10px",
+              fontSize: "0.8rem",
+              color: "#f59e0b",
+              marginBottom: 20,
+            }}
+          >
+            <strong>Security Warning:</strong> This file is <u>not encrypted</u>
+            . Anyone with access to this computer can read it. Delete it or move
+            it to a secure location immediately.
+          </div>
+
+          <button
+            className="auth-btn"
+            style={{ width: "100%", background: "var(--btn-success)" }}
+            onClick={onClose}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- TIMEOUT WARNING MODAL ---
 export function TimeoutWarningModal({
   seconds,
@@ -875,13 +950,15 @@ export function TimeoutWarningModal({
   );
 }
 
-// --- EXPORT WARNING MODAL (New) ---
+// --- EXPORT WARNING MODAL (Improved) ---
 export function ExportWarningModal({
   onConfirm,
   onCancel,
+  type = "data", // "note" or "passwords"
 }: {
   onConfirm: () => void;
   onCancel: () => void;
+  type?: string;
 }) {
   return (
     <div
@@ -889,44 +966,52 @@ export function ExportWarningModal({
       onClick={onCancel}
       style={{ zIndex: 100005 }}
     >
-      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <div
-          className="modal-header"
-          style={{ borderBottomColor: "var(--btn-danger)" }}
-        >
-          <AlertTriangle size={20} color="var(--btn-danger)" />
-          <h2 style={{ color: "var(--btn-danger)" }}>Security Warning</h2>
+      <div
+        className="auth-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 450 }}
+      >
+        {/* Header */}
+        <div className="modal-header" style={{ borderBottomColor: "#f97316" }}>
+          <AlertTriangle size={24} color="#f97316" />
+          <h2 style={{ color: "#f97316" }}>Unencrypted Export</h2>
+          <div style={{ flex: 1 }}></div>
         </div>
+
         <div className="modal-body">
           <p
             style={{
               color: "var(--text-main)",
-              fontWeight: "bold",
-              fontSize: "1.05rem",
-              marginBottom: 10,
+              fontSize: "1rem",
+              lineHeight: 1.5,
             }}
           >
-            Export to Unencrypted File?
-          </p>
-          <p
-            style={{
-              color: "var(--text-dim)",
-              fontSize: "0.9rem",
-              lineHeight: "1.5",
-              marginBottom: 20,
-            }}
-          >
-            You are about to export your passwords to a standard <b>CSV</b>{" "}
-            file.
-            <br />
-            <br />
-            <span style={{ color: "var(--btn-danger)" }}>
-              Anyone who accesses this file can see all your passwords in plain
-              text.
-            </span>
+            You are about to export this <b>{type}</b> to your hard drive.
           </p>
 
-          <div style={{ display: "flex", gap: 10 }}>
+          {/* Warning Box */}
+          <div
+            style={{
+              background: "rgba(249, 115, 22, 0.1)",
+              border: "1px solid rgba(249, 115, 22, 0.3)",
+              borderRadius: "8px",
+              padding: "15px",
+              margin: "15px 0",
+              color: "#f97316",
+              fontSize: "0.9rem",
+              display: "flex",
+              gap: "10",
+              alignItems: "start",
+            }}
+          >
+            <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div>
+              <strong>Security Risk:</strong> The exported file will NOT be
+              encrypted. Anyone with access to this computer can read it.
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button
               className="secondary-btn"
               style={{ flex: 1 }}
@@ -935,11 +1020,16 @@ export function ExportWarningModal({
               Cancel
             </button>
             <button
-              className="auth-btn danger-btn"
-              style={{ flex: 1 }}
+              className="auth-btn"
+              style={{
+                flex: 1,
+                background: "#f97316",
+                border: "none",
+                color: "#fff",
+              }}
               onClick={onConfirm}
             >
-              I Understand, Export
+              <Download size={18} style={{ marginRight: 8 }} /> Export Anyway
             </button>
           </div>
         </div>

@@ -5,9 +5,9 @@ export interface NoteEntry {
   id: string;
   title: string;
   content: string;
-  created_at: number;
-  updated_at: number;
-  is_pinned?: boolean; // Added for pinning feature
+  created_at: number; // Seconds
+  updated_at: number; // Seconds
+  is_pinned?: boolean;
 }
 
 export interface NotesVault {
@@ -26,9 +26,19 @@ export function useNotes() {
   async function refreshVault() {
     try {
       setLoading(true);
+      setError(null);
       const vault = await invoke<NotesVault>("load_notes_vault");
-      // Initial sort by date (View handles the Pin sorting)
-      setEntries(vault.entries.sort((a, b) => b.updated_at - a.updated_at));
+
+      // Validate timestamps (Must be seconds, not milliseconds)
+      const validEntries = vault.entries.filter((note) => {
+        if (note.updated_at > 9999999999) {
+          console.warn("Detected invalid timestamp (ms?), skipping:", note.id);
+          return false;
+        }
+        return true;
+      });
+
+      setEntries(validEntries.sort((a, b) => b.updated_at - a.updated_at));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -36,31 +46,33 @@ export function useNotes() {
     }
   }
 
-  async function saveNote(note: NoteEntry) {
+  async function saveNote(note: NoteEntry): Promise<void> {
     try {
+      setError(null);
+      if (!note.title?.trim()) throw new Error("Title cannot be empty");
+
       const newEntries = [...entries];
       const index = newEntries.findIndex((e) => e.id === note.id);
 
-      if (index >= 0) {
-        newEntries[index] = note;
-      } else {
-        newEntries.unshift(note);
-      }
+      if (index >= 0) newEntries[index] = note;
+      else newEntries.unshift(note);
 
       await invoke("save_notes_vault", { vault: { entries: newEntries } });
       setEntries(newEntries);
     } catch (e) {
-      setError("Failed to save note: " + String(e));
+      const msg = "Failed to save note: " + String(e);
+      setError(msg);
+      throw new Error(msg); // Re-throw for UI handling
     }
   }
 
-  async function deleteNote(id: string) {
+  async function deleteNote(id: string): Promise<void> {
     try {
       const newEntries = entries.filter((e) => e.id !== id);
       await invoke("save_notes_vault", { vault: { entries: newEntries } });
       setEntries(newEntries);
     } catch (e) {
-      setError("Failed to delete note: " + String(e));
+      throw new Error("Failed to delete: " + String(e));
     }
   }
 

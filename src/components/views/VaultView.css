@@ -165,7 +165,7 @@
   right: 10px;
 }
 
-/* --- LIST LAYOUT (Fixed Properties) --- */
+/* --- LIST LAYOUT --- */
 .vault-list {
   display: flex;
   flex-direction: column;
@@ -227,7 +227,10 @@
   font-family: monospace;
   font-size: 0.95rem;
   cursor: default;
+  user-select: none;
+  -webkit-user-select: none; /* Safari / older WebKit */
 }
+
 .secret-text {
   flex: 1;
   margin-right: 10px;

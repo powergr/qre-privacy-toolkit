@@ -11,6 +11,7 @@ export interface VaultEntry {
   color?: string;
   is_pinned?: boolean;
   created_at: number;
+  updated_at: number;
 }
 
 export interface PasswordVault {

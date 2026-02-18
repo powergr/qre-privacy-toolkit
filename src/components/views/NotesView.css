@@ -6,6 +6,7 @@
   overflow-y: auto;
 }
 
+/* ... (Keep existing Header/Search styles) ... */
 .notes-header {
   display: flex;
   justify-content: space-between;
@@ -13,32 +14,30 @@
   margin-bottom: 20px;
   gap: 20px;
 }
-
-/* --- SEARCH BAR --- */
-.search-container {
+.notes-view .search-container {
   position: relative;
   flex: 1;
   max-width: 400px;
+  height: 40px;
 }
-
-.search-input {
+.notes-view .search-input {
   width: 100%;
+  height: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 10px 15px 10px 40px; /* Left padding for icon */
+  padding: 0 15px 0 40px;
   border-radius: 8px;
   font-size: 0.95rem;
   transition: all 0.2s;
+  box-sizing: border-box;
 }
-
-.search-input:focus {
+.notes-view .search-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.1);
   outline: none;
 }
-
-.search-icon {
+.notes-view .search-icon {
   position: absolute;
   left: 12px;
   top: 50%;
@@ -47,72 +46,289 @@
   pointer-events: none;
 }
 
-/* --- PINNED CARD STYLES --- */
+/* ... (Keep existing Grid Card styles) ... */
 .note-card-modern.pinned {
-  border-color: rgba(255, 215, 0, 0.4); /* Gold tint */
+  border-color: rgba(255, 215, 0, 0.4);
   background: linear-gradient(
     to bottom right,
     var(--bg-card),
     rgba(255, 215, 0, 0.03)
   );
 }
-
 .pinned-icon {
-  color: #ffd700; /* Gold */
+  color: #ffd700;
   margin-right: 5px;
 }
-
-/* --- LINE CLAMPING (Smart Preview) --- */
 .note-body {
   margin-bottom: 15px;
   color: var(--text-dim);
   font-size: 0.9rem;
   line-height: 1.5;
-  white-space: pre-wrap; /* Preserve line breaks */
-
-  /* Show max 4 lines, then ellipsis */
+  white-space: pre-wrap;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-height: 3em; /* Ensure card has some height even if empty */
+  min-height: 3em;
 }
 
-/* --- EDITOR TEXTAREA --- */
+/* --- EDITOR TOOLBAR --- */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  transition: all 0.2s;
+}
+.toolbar-btn:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+}
+.toolbar-btn.active {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+}
+.toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 5px;
+}
+
+/* --- NEW CUSTOM DROPDOWN STYLES --- */
+.custom-select-container {
+  position: relative;
+  min-width: 100px;
+}
+
+.custom-select-trigger {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 90px;
+}
+
+.custom-select-options {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%; /* Match trigger width */
+  min-width: 140px; /* Or go wider if needed */
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.custom-option {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.custom-option:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+}
+
+.custom-option.selected {
+  color: var(--accent);
+  font-weight: bold;
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+/* --- EDITOR & SCROLLBAR FIXES --- */
+.editor-container {
+  width: 100%;
+  height: 450px;
+  background: var(--bg-color);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 
+   FIX FOR SCROLLBAR CURSOR:
+   By default, a textarea makes the cursor an "I-Beam". 
+   We must force the scrollbar itself to show the default arrow.
+*/
 .editor-textarea {
   width: 100%;
-  height: 400px;
-  background: var(--bg-color);
+  height: 100%;
+  background: transparent;
   color: var(--text-main);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 15px;
-  font-family: "Segoe UI", sans-serif;
-  font-size: 1rem;
+  border: none;
+  padding: 20px;
   line-height: 1.6;
   resize: none;
   outline: none;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-sizing: border-box;
+  overflow-y: auto;
+  cursor: text; /* Text area is text cursor */
 }
 
-.editor-textarea:focus {
-  border-color: var(--accent);
-}
-
-/* Custom Scrollbar for Textarea */
+/* Force standard cursor on the scrollbar track/thumb */
 .editor-textarea::-webkit-scrollbar {
-  width: 10px;
+  width: 12px;
+  cursor: default;
 }
 .editor-textarea::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--bg-card);
+  cursor: default;
 }
 .editor-textarea::-webkit-scrollbar-thumb {
   background-color: var(--border);
-  border-radius: 5px;
-  border: 2px solid var(--bg-color);
+  border-radius: 6px;
+  border: 3px solid var(--bg-card); /* Creates padding effect */
+  cursor: default;
 }
-.editor-textarea::-webkit-scrollbar-corner {
-  background: transparent;
+.editor-textarea::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-dim);
+}
+
+/* Preview Mode */
+.editor-preview {
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--text-main);
+}
+.editor-preview::-webkit-scrollbar {
+  width: 12px;
+}
+.editor-preview::-webkit-scrollbar-track {
+  background: var(--bg-card);
+}
+.editor-preview::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 6px;
+  border: 3px solid var(--bg-card);
+}
+
+/* Markdown Styles in Preview */
+.md-h1 {
+  font-size: 1.8em;
+  font-weight: bold;
+  color: var(--accent);
+  margin-bottom: 0.5em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+}
+.md-h2 {
+  font-size: 1.4em;
+  font-weight: bold;
+  color: var(--text-main);
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+.md-list-item {
+  margin-left: 20px;
+  list-style-type: disc;
+  display: list-item;
+}
+.md-code-block {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px;
+  border-radius: 6px;
+  font-family: monospace;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  color: #a3e635;
+}
+.md-bold {
+  font-weight: bold;
+  color: #fff;
+}
+.md-italic {
+  font-style: italic;
+}
+
+.editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 5px 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+.note-body {
+  margin-bottom: 15px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 3em;
+
+  /* PREVENT ACCIDENTAL SELECTION */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.editor-preview {
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--text-main);
+  /* PREVENT ACCIDENTAL SELECTION */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.md-code-block {
+  /* CODE BLOCKS ARE SENSITIVE */
+  user-select: none;
+  -webkit-user-select: none;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px;
+  border-radius: 6px;
+  font-family: monospace;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  color: #a3e635;
 }

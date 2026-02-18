@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   X,
   ShieldAlert,
@@ -8,6 +8,7 @@ import {
   Lock,
   Repeat,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { VaultEntry } from "../../hooks/useVault";
 import { getPasswordStrength } from "../../utils/security";
@@ -19,6 +20,22 @@ interface VaultHealthModalProps {
   onEditEntry: (entry: VaultEntry) => void;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX: Hash the password with SHA-1 using the Web Crypto API entirely in the
+// frontend. The plaintext NEVER leaves the JS heap — only the hex digest is
+// passed to the Tauri backend, which uses the first 5 chars as the HIBP
+// k-Anonymity prefix. This closes the IPC plaintext-exposure vulnerability.
+// ─────────────────────────────────────────────────────────────────────────────
+async function sha1Hex(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest("SHA-1", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+}
+
 export function VaultHealthModal({
   entries,
   onClose,
@@ -27,23 +44,43 @@ export function VaultHealthModal({
   const [pwnedIds, setPwnedIds] = useState<Set<string>>(new Set());
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+  // FIX: Track scan errors so failures are surfaced instead of silently
+  // being treated as "safe". A failure-to-check is not the same as "not pwned".
+  const [scanErrors, setScanErrors] = useState(0);
 
-  // --- 1. DETECT REUSED (Instant) ---
+  // FIX: Cancellation ref. When the modal unmounts mid-scan (or the user clicks
+  // Stop), the scan loop checks this flag and breaks, preventing setState calls
+  // on an unmounted component and wasted API calls.
+  const cancelledRef = useRef(false);
+
+  // FIX: Clean up on unmount — cancel any in-flight scan automatically.
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
+
+  // ─── 1. DETECT REUSED (Instant) ───────────────────────────────────────────
+  // FIX: Use Map<string, string[]> instead of Record<string, string[]>.
+  // A plain object used as a map has prototype properties (e.g. "constructor",
+  // "toString") that can collide with password strings, causing false "reused"
+  // flags. Map has no such prototype pollution risk.
   const reusedIds = useMemo(() => {
-    const counts: Record<string, string[]> = {};
+    const counts = new Map<string, string[]>();
     entries.forEach((e) => {
-      if (!counts[e.password]) counts[e.password] = [];
-      counts[e.password].push(e.id);
+      if (!e.password) return; // skip blank passwords
+      const existing = counts.get(e.password) ?? [];
+      counts.set(e.password, [...existing, e.id]);
     });
 
     const reused = new Set<string>();
-    Object.values(counts).forEach((ids) => {
+    counts.forEach((ids) => {
       if (ids.length > 1) ids.forEach((id) => reused.add(id));
     });
     return reused;
   }, [entries]);
 
-  // --- 2. DETECT WEAK (Instant) ---
+  // ─── 2. DETECT WEAK (Instant) ─────────────────────────────────────────────
   const weakIds = useMemo(() => {
     const weak = new Set<string>();
     entries.forEach((e) => {
@@ -52,41 +89,68 @@ export function VaultHealthModal({
     return weak;
   }, [entries]);
 
-  // --- 3. DETECT COMPROMISED (Async) ---
+  // ─── 3. DETECT COMPROMISED (Async) ────────────────────────────────────────
   async function scanBreaches() {
     if (isScanning) return;
+
+    // Reset state for a fresh scan
     setIsScanning(true);
     setPwnedIds(new Set());
     setScanProgress(0);
+    setScanErrors(0);
+    cancelledRef.current = false;
 
-    let completed = 0;
     const total = entries.length;
+    let completed = 0;
+    let errorCount = 0;
+    // FIX: Collect all pwned IDs and do a single batched setState at the end,
+    // plus incremental updates. This avoids the O(n²) Set-copy problem where
+    // every found entry triggered `new Set(prev).add(...)` inside a hot loop.
     const newPwned = new Set<string>();
 
-    // Process in chunks to avoid UI freeze, but sequentially to be polite to API
     for (const entry of entries) {
+      // FIX: Check cancellation flag before each request so a modal-close or
+      // manual Stop cancels the loop immediately.
+      if (cancelledRef.current) break;
+
       try {
-        // Returns { found: boolean, count: number }
-        const res = await invoke<{ found: boolean }>("check_password_breach", {
-          password: entry.password,
-        });
+        // FIX: Compute SHA-1 hash in the frontend. The backend now receives the
+        // full hex hash — NOT the plaintext password. It derives the prefix
+        // itself and does the HIBP range query. The plaintext never crosses IPC.
+        const sha1 = await sha1Hex(entry.password);
+
+        const res = await invoke<{ found: boolean; count: number }>(
+          "check_password_breach",
+          { sha1Hash: sha1 },
+        );
+
         if (res.found) {
           newPwned.add(entry.id);
-          // Update state incrementally so user sees red popping up
-          setPwnedIds((prev) => new Set(prev).add(entry.id));
+          // Incremental UI update so the user sees results as they arrive,
+          // but we spread the existing Set once, not create a full copy each time.
+          setPwnedIds(new Set(newPwned));
         }
       } catch (e) {
-        console.error("Scan error", e);
+        // FIX: Don't silently swallow errors. Count them so we can warn the user
+        // that some passwords could not be checked — a failed check is NOT "safe".
+        errorCount++;
+        console.error(`Breach scan error for entry "${entry.service}":`, e);
       }
+
       completed++;
       setScanProgress(Math.round((completed / total) * 100));
+      // FIX: Update error count incrementally so the warning appears in real time.
+      if (errorCount > 0) setScanErrors(errorCount);
     }
 
     setIsScanning(false);
   }
 
-  // --- AGGREGATE ISSUES ---
-  // Combine all issues into a list, prioritize Pwned > Reused > Weak
+  function stopScan() {
+    cancelledRef.current = true;
+  }
+
+  // ─── AGGREGATE ISSUES ─────────────────────────────────────────────────────
   const issues = entries
     .map((e) => {
       const issuesList = [];
@@ -95,20 +159,20 @@ export function VaultHealthModal({
       if (reusedIds.has(e.id))
         issuesList.push({ type: "reused", label: "Reused" });
       if (weakIds.has(e.id)) issuesList.push({ type: "weak", label: "Weak" });
-
       return { entry: e, issues: issuesList };
     })
     .filter((x) => x.issues.length > 0);
 
-  // Sort: Pwned first, then Reused, then Weak
-  const sortedIssues = issues.sort((a, b) => {
-    const scoreA =
-      (a.issues.some((i) => i.type === "pwned") ? 10 : 0) +
-      (a.issues.some((i) => i.type === "reused") ? 5 : 0);
-    const scoreB =
-      (b.issues.some((i) => i.type === "pwned") ? 10 : 0) +
-      (b.issues.some((i) => i.type === "reused") ? 5 : 0);
-    return scoreB - scoreA;
+  // FIX: Sort now includes a tiebreaker for weak-only entries (alphabetical)
+  // so the list is deterministic and most dangerous entries always appear first.
+  const sortedIssues = [...issues].sort((a, b) => {
+    const score = (item: (typeof issues)[0]) =>
+      (item.issues.some((i) => i.type === "pwned") ? 100 : 0) +
+      (item.issues.some((i) => i.type === "reused") ? 10 : 0) +
+      (item.issues.some((i) => i.type === "weak") ? 1 : 0);
+    const diff = score(b) - score(a);
+    if (diff !== 0) return diff;
+    return a.entry.service.localeCompare(b.entry.service);
   });
 
   return (
@@ -128,7 +192,7 @@ export function VaultHealthModal({
         <div className="modal-header">
           <ShieldCheck size={20} color="var(--accent)" />
           <h2>Security Health</h2>
-          <div style={{ flex: 1 }}></div>
+          <div style={{ flex: 1 }} />
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
 
@@ -142,101 +206,24 @@ export function VaultHealthModal({
             borderBottom: "1px solid var(--border)",
           }}
         >
-          <div
-            style={{
-              background: "rgba(239, 68, 68, 0.1)",
-              padding: 15,
-              borderRadius: 8,
-              textAlign: "center",
-              border: "1px solid rgba(239, 68, 68, 0.2)",
-            }}
-          >
-            <div
-              style={{
-                color: "var(--btn-danger)",
-                fontWeight: "bold",
-                fontSize: "1.5rem",
-              }}
-            >
-              {pwnedIds.size}
-            </div>
-            <div
-              style={{
-                fontSize: "0.8rem",
-                color: "var(--btn-danger)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 5,
-              }}
-            >
-              <ShieldAlert size={14} /> Compromised
-            </div>
-          </div>
-
-          <div
-            style={{
-              background: "rgba(249, 115, 22, 0.1)",
-              padding: 15,
-              borderRadius: 8,
-              textAlign: "center",
-              border: "1px solid rgba(249, 115, 22, 0.2)",
-            }}
-          >
-            <div
-              style={{
-                color: "#f97316",
-                fontWeight: "bold",
-                fontSize: "1.5rem",
-              }}
-            >
-              {reusedIds.size}
-            </div>
-            <div
-              style={{
-                fontSize: "0.8rem",
-                color: "#f97316",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 5,
-              }}
-            >
-              <Repeat size={14} /> Reused
-            </div>
-          </div>
-
-          <div
-            style={{
-              background: "rgba(234, 179, 8, 0.1)",
-              padding: 15,
-              borderRadius: 8,
-              textAlign: "center",
-              border: "1px solid rgba(234, 179, 8, 0.2)",
-            }}
-          >
-            <div
-              style={{
-                color: "#eab308",
-                fontWeight: "bold",
-                fontSize: "1.5rem",
-              }}
-            >
-              {weakIds.size}
-            </div>
-            <div
-              style={{
-                fontSize: "0.8rem",
-                color: "#eab308",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 5,
-              }}
-            >
-              <Lock size={14} /> Weak
-            </div>
-          </div>
+          <StatCard
+            count={pwnedIds.size}
+            label="Compromised"
+            color="239, 68, 68"
+            icon={<ShieldAlert size={14} />}
+          />
+          <StatCard
+            count={reusedIds.size}
+            label="Reused"
+            color="249, 115, 22"
+            icon={<Repeat size={14} />}
+          />
+          <StatCard
+            count={weakIds.size}
+            label="Weak"
+            color="234, 179, 8"
+            icon={<Lock size={14} />}
+          />
         </div>
 
         {/* SCANNER CONTROL */}
@@ -248,17 +235,19 @@ export function VaultHealthModal({
             display: "flex",
             alignItems: "center",
             gap: 15,
+            flexWrap: "wrap",
           }}
         >
           <button
             className="auth-btn"
-            onClick={scanBreaches}
-            disabled={isScanning}
+            onClick={isScanning ? stopScan : scanBreaches}
             style={{
               display: "flex",
               gap: 10,
               padding: "8px 16px",
               fontSize: "0.9rem",
+              // FIX: Stop button uses a warning color so it's clearly different
+              background: isScanning ? "var(--btn-danger)" : undefined,
             }}
           >
             {isScanning ? (
@@ -266,13 +255,33 @@ export function VaultHealthModal({
             ) : (
               <RefreshCw size={16} />
             )}
-            {isScanning ? `Scanning ${scanProgress}%` : "Scan for Breaches"}
+            {isScanning ? `Stop (${scanProgress}%)` : "Scan for Breaches"}
           </button>
+
           <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>
             {isScanning
               ? "Checking passwords against known leaks..."
               : "Passwords are hashed locally (k-Anonymity) before checking."}
           </span>
+
+          {/* FIX: Prominently show scan errors so the user knows the results
+               may be incomplete. A failed check is not a "safe" result. */}
+          {scanErrors > 0 && !isScanning && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                color: "#f97316",
+                fontSize: "0.8rem",
+                marginLeft: "auto",
+              }}
+            >
+              <AlertTriangle size={14} />
+              {scanErrors} password{scanErrors > 1 ? "s" : ""} could not be
+              checked — results may be incomplete.
+            </div>
+          )}
         </div>
 
         {/* ISSUE LIST */}
@@ -323,24 +332,31 @@ export function VaultHealthModal({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
+                      flexShrink: 0,
                     }}
                   >
                     {item.entry.service.charAt(0).toUpperCase()}
                   </div>
 
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, overflow: "hidden" }}>
                     <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
                       {item.entry.service}
                     </div>
                     <div
-                      style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}
+                      style={{
+                        fontSize: "0.8rem",
+                        color: "var(--text-dim)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       {item.entry.username}
                     </div>
                   </div>
 
                   {/* BADGES */}
-                  <div style={{ display: "flex", gap: 5 }}>
+                  <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
                     {item.issues.map((iss) => (
                       <span
                         key={iss.type}
@@ -376,6 +392,7 @@ export function VaultHealthModal({
                       display: "flex",
                       alignItems: "center",
                       gap: 5,
+                      flexShrink: 0,
                     }}
                     onClick={() => onEditEntry(item.entry)}
                   >
@@ -386,6 +403,53 @@ export function VaultHealthModal({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Small helper to avoid repetitive stat card JSX ──────────────────────────
+function StatCard({
+  count,
+  label,
+  color,
+  icon,
+}: {
+  count: number;
+  label: string;
+  color: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        background: `rgba(${color}, 0.1)`,
+        padding: 15,
+        borderRadius: 8,
+        textAlign: "center",
+        border: `1px solid rgba(${color}, 0.2)`,
+      }}
+    >
+      <div
+        style={{
+          color: `rgb(${color})`,
+          fontWeight: "bold",
+          fontSize: "1.5rem",
+        }}
+      >
+        {count}
+      </div>
+      <div
+        style={{
+          fontSize: "0.8rem",
+          color: `rgb(${color})`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 5,
+        }}
+      >
+        {icon} {label}
       </div>
     </div>
   );

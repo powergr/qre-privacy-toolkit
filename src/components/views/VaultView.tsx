@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Copy,
   Eye,
@@ -25,6 +25,7 @@ import {
   InfoModal,
   EntryDeleteModal,
   ExportWarningModal,
+  ExportSuccessModal,
 } from "../modals/AppModals";
 import { VaultHealthModal } from "../modals/VaultHealthModal";
 import { getPasswordStrength, getStrengthColor } from "../../utils/security";
@@ -41,7 +42,10 @@ const BRAND_COLORS = [
   "#f1c40f",
 ];
 
-function generateUUID() {
+// 30s Clipboard Timeout
+const CLIPBOARD_CLEAR_DELAY_MS = 30_000;
+
+function generateUUID(): string {
   return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
     (
       +c ^
@@ -50,11 +54,116 @@ function generateUUID() {
   );
 }
 
+// Unbiased Password Generator
+function generateStrongPassword(length = 20): string {
+  const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const lower = "abcdefghijklmnopqrstuvwxyz";
+  const digits = "0123456789";
+  const symbols = "!@#$%^&*";
+  const all = upper + lower + digits + symbols;
+
+  const unbiasedRandom = (limit: number): number => {
+    const max = Math.floor(0x100000000 / limit) * limit;
+    let value: number;
+    do {
+      value = crypto.getRandomValues(new Uint32Array(1))[0];
+    } while (value >= max);
+    return value % limit;
+  };
+
+  const required = [
+    upper[unbiasedRandom(upper.length)],
+    lower[unbiasedRandom(lower.length)],
+    digits[unbiasedRandom(digits.length)],
+    symbols[unbiasedRandom(symbols.length)],
+  ];
+
+  const rest = Array.from(
+    { length: length - required.length },
+    () => all[unbiasedRandom(all.length)],
+  );
+
+  const combined = [...required, ...rest];
+  for (let i = combined.length - 1; i > 0; i--) {
+    const j = unbiasedRandom(i + 1);
+    [combined[i], combined[j]] = [combined[j], combined[i]];
+  }
+  return combined.join("");
+}
+
+// RFC 4180 CSV Parser
+function parseCSV(raw: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (raw[i + 1] === '"') {
+          field += '"';
+          i += 2;
+        } else {
+          inQuotes = false;
+          i++;
+        }
+      } else {
+        field += ch;
+        i++;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+        i++;
+      } else if (ch === ",") {
+        row.push(field);
+        field = "";
+        i++;
+      } else if (ch === "\r" && raw[i + 1] === "\n") {
+        row.push(field);
+        field = "";
+        rows.push(row);
+        row = [];
+        i += 2;
+      } else if (ch === "\n") {
+        row.push(field);
+        field = "";
+        rows.push(row);
+        row = [];
+        i++;
+      } else {
+        field += ch;
+        i++;
+      }
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function csvEscape(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function getInitial(name: string): string {
+  if (!name) return "?";
+  const clean = name.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
+  return clean.charAt(0).toUpperCase();
+}
+
 export function VaultView() {
   const { entries, loading, saveEntry, deleteEntry, importEntries } =
     useVault();
 
-  // State
   const [editing, setEditing] = useState<Partial<VaultEntry> | null>(null);
   const [showPass, setShowPass] = useState<string | null>(null);
   const [copyModalMsg, setCopyModalMsg] = useState<string | null>(null);
@@ -65,7 +174,17 @@ export function VaultView() {
   const [showHealth, setShowHealth] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("list");
 
-  // Dynamic strength calculation for the editor
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
+
+  const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    };
+  }, []);
+
   const strength = editing
     ? getPasswordStrength(editing.password || "")
     : { score: 0, feedback: "" };
@@ -90,28 +209,17 @@ export function VaultView() {
 
   const handleCopy = async (text: string) => {
     await writeText(text);
-    setCopyModalMsg("Password copied to clipboard.");
+    if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    clipboardTimerRef.current = setTimeout(async () => {
+      try {
+        await writeText("");
+      } catch {}
+    }, CLIPBOARD_CLEAR_DELAY_MS);
+    setCopyModalMsg(
+      `Password copied — clipboard will be cleared in ${CLIPBOARD_CLEAR_DELAY_MS / 1000} seconds.`,
+    );
   };
 
-  const generateStrongPassword = () => {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-    let pass = "";
-    const array = new Uint32Array(20);
-    crypto.getRandomValues(array);
-    for (let i = 0; i < 20; i++) {
-      pass += chars[array[i] % chars.length];
-    }
-    return pass;
-  };
-
-  const getInitial = (name: string) => {
-    if (!name) return "?";
-    let clean = name.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
-    return clean.charAt(0).toUpperCase();
-  };
-
-  // --- IMPORT / EXPORT ---
   const handleImport = async () => {
     try {
       const selected = await open({
@@ -125,39 +233,65 @@ export function VaultView() {
         path: selected,
       });
 
-      const lines = contents.split(/\r?\n/);
-      const newEntries: VaultEntry[] = [];
-      const startIdx = lines[0].toLowerCase().includes("password") ? 1 : 0;
+      const rows = parseCSV(contents);
+      if (rows.length === 0) {
+        setCopyModalMsg("No data found in the selected file.");
+        return;
+      }
 
-      for (let i = startIdx; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const parts = line.split(",");
-        if (parts.length >= 3) {
-          newEntries.push({
-            id: generateUUID(),
-            service: parts[0] || "Imported",
-            url: parts[1] || "",
-            username: parts[2] || "",
-            password: parts[3] || "",
-            notes: parts.slice(4).join(",") || "",
-            color: BRAND_COLORS[0],
-            is_pinned: false,
-            created_at: Date.now(),
-          });
+      const firstRow = rows[0].map((c) => c.toLowerCase());
+      const hasHeader =
+        firstRow.includes("password") ||
+        firstRow.includes("name") ||
+        firstRow.includes("username");
+      const startIdx = hasHeader ? 1 : 0;
+
+      const newEntries: VaultEntry[] = [];
+      const skipped: number[] = [];
+
+      for (let i = startIdx; i < rows.length; i++) {
+        const parts = rows[i];
+        if (parts.length < 3) continue;
+
+        const service = parts[0]?.trim() || "";
+        const url = parts[1]?.trim() || "";
+        const username = parts[2]?.trim() || "";
+        const password = parts[3]?.trim() || "";
+        const notes = parts.slice(4).join(",").trim();
+
+        if (!service || !password) {
+          skipped.push(i + 1);
+          continue;
         }
+
+        newEntries.push({
+          id: generateUUID(),
+          service,
+          url,
+          username,
+          password,
+          notes,
+          color: BRAND_COLORS[0],
+          is_pinned: false,
+          created_at: Math.floor(Date.now() / 1000),
+          updated_at: Math.floor(Date.now() / 1000),
+        });
       }
 
       if (newEntries.length > 0) {
         await importEntries(newEntries);
+        const skippedMsg =
+          skipped.length > 0 ? ` (${skipped.length} rows skipped)` : "";
         setCopyModalMsg(
-          `Successfully imported ${newEntries.length} passwords.`,
+          `Successfully imported ${newEntries.length} passwords.${skippedMsg}`,
         );
       } else {
-        alert("No valid entries found.");
+        setCopyModalMsg(
+          "No valid entries found. CSV must have at least Service and Password.",
+        );
       }
     } catch (e) {
-      alert("Import failed: " + e);
+      setSaveError("Import failed: " + e);
     } finally {
       setIsProcessing(false);
     }
@@ -172,22 +306,26 @@ export function VaultView() {
       });
       if (!path) return;
 
-      let csvContent = "name,url,username,password,note\n";
-      entries.forEach((e) => {
-        const row = [
-          e.service.replace(/,/g, " "),
-          e.url?.replace(/,/g, " ") || "",
-          e.username.replace(/,/g, " "),
-          e.password.replace(/,/g, " "),
-          e.notes.replace(/[\n,]/g, " "),
-        ].join(",");
-        csvContent += row + "\n";
-      });
+      const header = "name,url,username,password,note\n";
+      const rows = entries
+        .map((e) =>
+          [
+            csvEscape(e.service),
+            csvEscape(e.url || ""),
+            csvEscape(e.username),
+            csvEscape(e.password),
+            csvEscape(e.notes),
+          ].join(","),
+        )
+        .join("\n");
 
-      await invoke("write_text_file_content", { path, content: csvContent });
-      setCopyModalMsg("Vault exported successfully.");
+      await invoke("write_text_file_content", {
+        path,
+        content: header + rows + "\n",
+      });
+      setExportedPath(path);
     } catch (e) {
-      alert("Export failed: " + e);
+      setSaveError("Export failed: " + e);
     }
   };
 
@@ -200,9 +338,8 @@ export function VaultView() {
 
   return (
     <div className="vault-view">
-      {/* --- HEADER --- */}
+      {/* HEADER */}
       <div className="vault-header">
-        {/* LEFT: Title & View Toggle */}
         <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
           <div
             style={{
@@ -237,7 +374,6 @@ export function VaultView() {
           </div>
         </div>
 
-        {/* CENTER: Search Bar */}
         <div className="search-container">
           <Search size={18} className="search-icon" />
           <input
@@ -248,7 +384,6 @@ export function VaultView() {
           />
         </div>
 
-        {/* RIGHT: Actions */}
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
             className="vault-action-btn"
@@ -261,7 +396,6 @@ export function VaultView() {
           >
             <HeartPulse size={20} />
           </button>
-
           <button
             className="vault-action-btn"
             title="Import CSV"
@@ -270,7 +404,6 @@ export function VaultView() {
           >
             <Upload size={20} />
           </button>
-
           <button
             className="vault-action-btn"
             title="Export CSV"
@@ -278,7 +411,6 @@ export function VaultView() {
           >
             <Download size={20} />
           </button>
-
           <button
             className="vault-primary-btn"
             onClick={() =>
@@ -315,7 +447,7 @@ export function VaultView() {
         </div>
       )}
 
-      {/* --- LIST VIEW --- */}
+      {/* LIST VIEW */}
       {viewMode === "list" && (
         <div className="vault-list">
           {visibleEntries.map((entry) => (
@@ -369,7 +501,7 @@ export function VaultView() {
         </div>
       )}
 
-      {/* --- GRID VIEW --- */}
+      {/* GRID VIEW */}
       {viewMode === "grid" && (
         <div className="modern-grid">
           {visibleEntries.map((entry) => (
@@ -458,9 +590,35 @@ export function VaultView() {
         </div>
       )}
 
-      {/* MODALS */}
+      {/* --- EXPORT WARNING MODAL --- */}
+      {showExportWarning && (
+        <ExportWarningModal
+          onConfirm={executeExport}
+          onCancel={() => setShowExportWarning(false)}
+        />
+      )}
+
+      {/* --- HEALTH CHECK MODAL --- */}
+      {/* FIX: Removed setShowHealth(false) so it stays open when clicking fix */}
+      {showHealth && (
+        <VaultHealthModal
+          entries={entries}
+          onClose={() => setShowHealth(false)}
+          onEditEntry={(entry) => {
+            // DO NOT CLOSE HEALTH MODAL
+            setEditing(entry); // Just open the editor on top
+          }}
+        />
+      )}
+
+      {/* --- EDIT / ADD MODAL --- */}
       {editing && (
-        <div className="modal-overlay">
+        // FIX: High Z-Index (100010) ensures it sits ABOVE the Health Modal (100000)
+        <div
+          className="modal-overlay"
+          style={{ zIndex: 100010 }}
+          onClick={() => setEditing(null)}
+        >
           <div className="auth-card" onClick={(e) => e.stopPropagation()}>
             <div
               style={{
@@ -512,7 +670,7 @@ export function VaultView() {
                   className="auth-input"
                   style={{ paddingLeft: 40 }}
                   placeholder="Service Name (e.g. Google)"
-                  value={editing.service}
+                  value={editing.service ?? ""}
                   onChange={(e) =>
                     setEditing({ ...editing, service: e.target.value })
                   }
@@ -538,7 +696,7 @@ export function VaultView() {
                   className="auth-input"
                   style={{ paddingLeft: 40 }}
                   placeholder="Username / Email"
-                  value={editing.username}
+                  value={editing.username ?? ""}
                   onChange={(e) =>
                     setEditing({ ...editing, username: e.target.value })
                   }
@@ -575,7 +733,7 @@ export function VaultView() {
                   <input
                     className="auth-input has-icon"
                     placeholder="Password"
-                    value={editing.password}
+                    value={editing.password ?? ""}
                     onChange={(e) =>
                       setEditing({ ...editing, password: e.target.value })
                     }
@@ -656,28 +814,55 @@ export function VaultView() {
                 </div>
               </div>
 
+              {saveError && (
+                <div
+                  style={{
+                    color: "var(--btn-danger)",
+                    fontSize: "0.85rem",
+                    background: "rgba(239,68,68,0.1)",
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    borderRadius: 6,
+                    padding: "8px 12px",
+                  }}
+                >
+                  {saveError}
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 10, marginTop: 15 }}>
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
                   onClick={async () => {
+                    setSaveError(null);
+                    const trimmedService = (editing.service || "").trim();
+                    const trimmedPassword = (editing.password || "").trim();
+                    if (!trimmedService) {
+                      setSaveError("Service name is required.");
+                      return;
+                    }
+                    if (!trimmedPassword) {
+                      setSaveError("Password must not be empty.");
+                      return;
+                    }
+
                     try {
-                      const finalId = editing.id || generateUUID();
+                      const now = Math.floor(Date.now() / 1000);
                       await saveEntry({
-                        ...editing,
-                        created_at: editing.created_at || Date.now(),
-                        id: finalId,
-                        service: editing.service || "Untitled",
+                        id: editing.id || generateUUID(),
+                        service: trimmedService,
                         username: editing.username || "",
-                        password: editing.password || "",
+                        password: trimmedPassword,
                         notes: editing.notes || "",
                         url: editing.url || "",
                         color: editing.color || BRAND_COLORS[0],
                         is_pinned: editing.is_pinned || false,
+                        created_at: editing.created_at || now,
+                        updated_at: now,
                       } as VaultEntry);
                       setEditing(null);
                     } catch (e) {
-                      alert("Error saving: " + e);
+                      setSaveError("Error saving: " + e);
                     }
                   }}
                 >
@@ -686,7 +871,10 @@ export function VaultView() {
                 <button
                   className="secondary-btn"
                   style={{ flex: 1 }}
-                  onClick={() => setEditing(null)}
+                  onClick={() => {
+                    setSaveError(null);
+                    setEditing(null);
+                  }}
                 >
                   Cancel
                 </button>
@@ -694,24 +882,6 @@ export function VaultView() {
             </div>
           </div>
         </div>
-      )}
-
-      {showExportWarning && (
-        <ExportWarningModal
-          onConfirm={executeExport}
-          onCancel={() => setShowExportWarning(false)}
-        />
-      )}
-
-      {showHealth && (
-        <VaultHealthModal
-          entries={entries}
-          onClose={() => setShowHealth(false)}
-          onEditEntry={(entry) => {
-            setShowHealth(false);
-            setEditing(entry);
-          }}
-        />
       )}
 
       {itemToDelete && (
@@ -729,6 +899,15 @@ export function VaultView() {
           message={copyModalMsg}
           onClose={() => setCopyModalMsg(null)}
         />
+      )}
+      {exportedPath && (
+        <ExportSuccessModal
+          filePath={exportedPath}
+          onClose={() => setExportedPath(null)}
+        />
+      )}
+      {saveError && !editing && (
+        <InfoModal message={saveError} onClose={() => setSaveError(null)} />
       )}
     </div>
   );
