@@ -65,6 +65,17 @@
   gap: 15px;
   transition: all 0.2s;
 }
+
+/* NEW: Pinned State */
+.clipboard-card.pinned {
+  border-color: rgba(255, 215, 0, 0.4);
+  background: linear-gradient(
+    to right,
+    rgba(255, 215, 0, 0.05),
+    var(--panel-bg)
+  );
+}
+
 .clipboard-card:hover {
   border-color: var(--accent);
   transform: translateX(2px);

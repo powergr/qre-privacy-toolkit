@@ -105,6 +105,7 @@ pub fn run() {
             commands::analyze_file_metadata,
             commands::clean_file_metadata,
             commands::check_password_breach,
+            commands::check_email_breach,
             commands::get_public_ip_address,
             commands::generate_qr_code,
             commands::load_bookmarks_vault,

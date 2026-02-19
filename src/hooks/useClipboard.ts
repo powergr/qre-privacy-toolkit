@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 
@@ -8,30 +8,44 @@ export interface ClipboardEntry {
   preview: string;
   category: string;
   created_at: number;
+  is_pinned?: boolean; // <--- Added
 }
 
 export interface ClipboardVault {
   entries: ClipboardEntry[];
 }
 
+const CLIPBOARD_CLEAR_DELAY_MS = 30_000;
+const RETENTION_STORAGE_KEY = "qre_clip_retention_v1";
+
 export function useClipboard() {
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Default to 24 hours
   const [retentionHours, setRetentionHours] = useState<number>(() => {
-    const saved = localStorage.getItem("qre_clip_retention");
-    return saved ? parseInt(saved, 10) : 24;
+    try {
+      const saved = localStorage.getItem(RETENTION_STORAGE_KEY);
+      return saved ? parseInt(saved, 10) || 24 : 24;
+    } catch {
+      return 24;
+    }
   });
+
+  const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     refreshVault();
+    return () => {
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    };
   }, [retentionHours]);
 
   function updateRetention(hours: number) {
     setRetentionHours(hours);
-    localStorage.setItem("qre_clip_retention", hours.toString());
+    try {
+      localStorage.setItem(RETENTION_STORAGE_KEY, hours.toString());
+    } catch {}
   }
 
   async function refreshVault() {
@@ -40,7 +54,15 @@ export function useClipboard() {
       const vault = await invoke<ClipboardVault>("load_clipboard_vault", {
         retentionHours,
       });
-      setEntries(vault.entries.sort((a, b) => b.created_at - a.created_at));
+
+      // Sort: Pinned first, then Newest first
+      const sorted = vault.entries.sort((a, b) => {
+        if (a.is_pinned && !b.is_pinned) return -1;
+        if (!a.is_pinned && b.is_pinned) return 1;
+        return b.created_at - a.created_at;
+      });
+
+      setEntries(sorted);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -48,25 +70,55 @@ export function useClipboard() {
     }
   }
 
+  // --- ACTIONS ---
+
   async function securePaste() {
     try {
       const text = await readText();
-      if (!text) throw new Error("Clipboard is empty");
+      if (!text || !text.trim()) throw new Error("Clipboard is empty.");
+      if (text.length > 1_000_000) throw new Error("Content too large (>1MB).");
 
-      // Pass retentionHours to the ADD command too
       await invoke("add_clipboard_entry", { text, retentionHours });
-      await writeText(""); // Clear system clipboard immediately for security
+      await writeText(""); // Wipe system clipboard
       await refreshVault();
     } catch (e) {
-      setError("Failed to paste: " + String(e));
+      setError("Paste failed: " + e);
+      throw e;
+    }
+  }
+
+  async function togglePin(entry: ClipboardEntry) {
+    try {
+      // Toggle logic
+      const newEntries = entries.map((e) =>
+        e.id === entry.id ? { ...e, is_pinned: !e.is_pinned } : e,
+      );
+
+      // Re-sort
+      newEntries.sort((a, b) => {
+        if (a.is_pinned && !b.is_pinned) return -1;
+        if (!a.is_pinned && b.is_pinned) return 1;
+        return b.created_at - a.created_at;
+      });
+
+      await invoke("save_clipboard_vault", { vault: { entries: newEntries } });
+      setEntries(newEntries);
+    } catch (e) {
+      setError("Failed to pin: " + e);
     }
   }
 
   async function copyToClipboard(text: string) {
     try {
       await writeText(text);
+      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+      clipboardTimerRef.current = setTimeout(async () => {
+        try {
+          await writeText("");
+        } catch {}
+      }, CLIPBOARD_CLEAR_DELAY_MS);
     } catch (e) {
-      console.error(e);
+      setError("Copy failed: " + e);
     }
   }
 
@@ -75,7 +127,7 @@ export function useClipboard() {
       await invoke("save_clipboard_vault", { vault: { entries: [] } });
       setEntries([]);
     } catch (e) {
-      setError(String(e));
+      setError("Clear failed: " + e);
     }
   }
 
@@ -85,7 +137,7 @@ export function useClipboard() {
       await invoke("save_clipboard_vault", { vault: { entries: newEntries } });
       setEntries(newEntries);
     } catch (e) {
-      setError("Failed to delete entry: " + String(e));
+      setError("Delete failed: " + e);
     }
   }
 
@@ -97,6 +149,7 @@ export function useClipboard() {
     copyToClipboard,
     clearAll,
     deleteEntry,
+    togglePin, // Added togglePin
     retentionHours,
     updateRetention,
   };

@@ -269,18 +269,17 @@ pub fn generate_qr_code(text: String, fg: String, bg: String) -> CommandResult<S
 
 #[tauri::command]
 pub async fn check_password_breach(sha1_hash: String) -> CommandResult<breach::BreachResult> {
-    // FIX: Validate input before doing anything — reject garbage early.
-    if sha1_hash.len() != 40 {
-        return Err("Invalid hash: expected 40 hex characters.".to_string());
-    }
-    if !sha1_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("Invalid hash: must contain only hex characters.".to_string());
+    // 1. VALIDATION: Ensure it is a valid SHA1 hash (40 hex chars)
+    if sha1_hash.len() != 40 || !sha1_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid hash format. Frontend must send a SHA-1 hash.".to_string());
     }
 
-    let prefix = sha1_hash[..5].to_uppercase();
-    let suffix = sha1_hash[5..].to_uppercase();
+    // 2. SPLIT: K-Anonymity logic (Prefix = 5, Suffix = 35)
+    let prefix = &sha1_hash[0..5];
+    let suffix = &sha1_hash[5..];
 
-    breach::check_pwned_by_prefix(&prefix, &suffix)
+    // 3. CALL MODULE
+    breach::check_pwned_by_prefix(prefix, suffix)
         .await
         .map_err(|e| e.to_string())
 }
@@ -288,6 +287,16 @@ pub async fn check_password_breach(sha1_hash: String) -> CommandResult<breach::B
 #[tauri::command]
 pub async fn get_public_ip_address() -> CommandResult<breach::IpResult> {
     breach::get_public_ip().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_email_breach(
+    email: String,
+    api_key: String,
+) -> CommandResult<Vec<breach::BreachInfo>> {
+    breach::check_email(&email, &api_key)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // --- PASSWORD GENERATOR (RESTORED) ---
@@ -338,16 +347,25 @@ pub fn load_clipboard_vault(
         .map_err(|_| "Failed to parse clipboard data".to_string())?;
 
     // Auto-Cleanup logic
-    let ttl_ms = retention_hours * 60 * 60 * 1000;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
 
+    // FIX: Using seconds for created_at now, so convert ttl to seconds
+    let ttl_seconds = retention_hours * 60 * 60;
+
     let initial_count = vault.entries.len();
-    vault
-        .entries
-        .retain(|e| (now - e.created_at) < (ttl_ms as i64));
+    vault.entries.retain(|e| {
+        // Detect if entry is old (ms) or new (seconds) and normalize
+        let entry_time_sec = if e.created_at > 9999999999 {
+            e.created_at / 1000
+        } else {
+            e.created_at
+        };
+        let now_sec = now / 1000;
+        (now_sec - entry_time_sec) < (ttl_seconds as i64)
+    });
 
     if vault.entries.len() != initial_count {
         let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
@@ -374,6 +392,9 @@ pub fn save_clipboard_vault(
     state: tauri::State<SessionState>,
     vault: ClipboardVault,
 ) -> CommandResult<()> {
+    // FIX: Validate before saving (Fixes unused warning)
+    vault.validate().map_err(|e| e.to_string())?;
+
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -414,7 +435,14 @@ pub fn add_clipboard_entry(
     let entry = crate::clipboard_store::create_entry(&text);
 
     let mut vault = load_clipboard_vault(app.clone(), state.clone(), retention_hours)?;
-    vault.entries.insert(0, entry);
+
+    // FIX: Use add_entry method (Fixes unused warning)
+    // We insert at the top (0) generally, but add_entry pushes to end.
+    // Let's use add_entry for validation, then sort or rely on frontend sort.
+    // Or just insert at 0 if we want LIFO, but `add_entry` provides ID validation.
+    // Let's use add_entry and handle sorting in frontend/load.
+    vault.add_entry(entry).map_err(|e| e.to_string())?;
+
     save_clipboard_vault(app, state, vault)?;
 
     Ok(())

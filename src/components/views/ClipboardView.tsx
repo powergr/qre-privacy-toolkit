@@ -16,21 +16,26 @@ import {
   Mail,
   Landmark,
   ChevronDown,
+  AlertTriangle,
+  Pin,
+  PinOff, // <--- Icons
 } from "lucide-react";
 import { useClipboard } from "../../hooks/useClipboard";
 import { InfoModal } from "../modals/AppModals";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { platform } from "@tauri-apps/plugin-os"; // <--- Added Import
+import { platform } from "@tauri-apps/plugin-os";
 import "./ClipboardView.css";
 
 export function ClipboardView() {
   const {
     entries,
     loading,
+    error,
     securePaste,
     copyToClipboard,
     clearAll,
     deleteEntry,
+    togglePin, // <--- Added togglePin
     retentionHours,
     updateRetention,
   } = useClipboard();
@@ -40,29 +45,23 @@ export function ClipboardView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isAndroid, setIsAndroid] = useState(false); // <--- Mobile State
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Detect Platform
   useEffect(() => {
     try {
       if (platform() === "android") setIsAndroid(true);
-    } catch (e) {
-      console.error(e);
-    }
+    } catch {}
   }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
       if (isDropdownOpen) setIsDropdownOpen(false);
     };
-    if (isDropdownOpen) {
-      document.addEventListener("click", handleClickOutside);
-    }
+    if (isDropdownOpen) document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
   }, [isDropdownOpen]);
 
-  // --- LOGIC ---
   const toggleReveal = (id: string) => {
     const newSet = new Set(revealedIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -116,6 +115,65 @@ export function ClipboardView() {
     );
   };
 
+  const handleSecurePaste = async () => {
+    setActionError(null);
+    try {
+      await securePaste();
+      setMsg("Content securely pasted and system clipboard cleared.");
+    } catch (e) {
+      setActionError(String(e));
+    }
+  };
+
+  const handleCopy = async (text: string) => {
+    setActionError(null);
+    try {
+      await copyToClipboard(text);
+      setMsg("Copied to clipboard — will auto-clear in 30 seconds.");
+    } catch (e) {
+      setActionError(String(e));
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setActionError(null);
+    try {
+      await deleteEntry(id);
+    } catch (e) {
+      setActionError(String(e));
+    }
+  };
+
+  const handleClearAll = async () => {
+    setActionError(null);
+    try {
+      await clearAll();
+      setShowClearConfirm(false);
+      setMsg("All clipboard history cleared.");
+    } catch (e) {
+      setActionError(String(e));
+      setShowClearConfirm(false);
+    }
+  };
+
+  if (loading)
+    return (
+      <div style={{ padding: 40, color: "var(--text-dim)" }}>
+        Loading Clipboard History...
+      </div>
+    );
+
+  if (error && !actionError)
+    return (
+      <div
+        style={{ padding: 40, color: "var(--btn-danger)", textAlign: "center" }}
+      >
+        <AlertTriangle size={48} style={{ marginBottom: 10 }} />
+        <p>Failed to load clipboard vault:</p>
+        <p style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>{error}</p>
+      </div>
+    );
+
   return (
     <div className="clipboard-view">
       {/* HEADER */}
@@ -136,7 +194,6 @@ export function ClipboardView() {
           </p>
         </div>
 
-        {/* RIGHT ACTIONS TOOLBAR */}
         <div
           style={{
             display: "flex",
@@ -146,7 +203,6 @@ export function ClipboardView() {
             width: isAndroid ? "100%" : "auto",
           }}
         >
-          {/* 1. Search Bar */}
           <div
             style={{
               width: isAndroid ? "100%" : "220px",
@@ -179,7 +235,6 @@ export function ClipboardView() {
             />
           </div>
 
-          {/* Row for Options + Buttons (On Mobile this is Row 2) */}
           <div
             style={{
               display: "flex",
@@ -187,12 +242,9 @@ export function ClipboardView() {
               width: isAndroid ? "100%" : "auto",
             }}
           >
-            {/* 2. Retention Selector */}
+            {/* Retention Selector */}
             <div
-              style={{
-                position: "relative",
-                flex: isAndroid ? 1 : "unset",
-              }}
+              style={{ position: "relative", flex: isAndroid ? 1 : "unset" }}
             >
               <div
                 style={{
@@ -229,11 +281,11 @@ export function ClipboardView() {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {retentionHours === 1 && "1 Hour"}
-                  {retentionHours === 4 && "4 Hours"}
-                  {retentionHours === 12 && "12 Hours"}
-                  {retentionHours === 24 && "24 Hours"}
-                  {retentionHours === 72 && "3 Days"}
+                  {retentionHours === 1 && "1 Hour"}{" "}
+                  {retentionHours === 4 && "4 Hours"}{" "}
+                  {retentionHours === 12 && "12 Hours"}{" "}
+                  {retentionHours === 24 && "24 Hours"}{" "}
+                  {retentionHours === 72 && "3 Days"}{" "}
                   {retentionHours === 168 && "1 Week"}
                 </div>
                 <ChevronDown
@@ -248,8 +300,6 @@ export function ClipboardView() {
                   }}
                 />
               </div>
-
-              {/* Custom Dropdown Menu */}
               {isDropdownOpen && (
                 <div
                   className="custom-dropdown-menu"
@@ -257,7 +307,7 @@ export function ClipboardView() {
                     position: "absolute",
                     top: "calc(100% + 4px)",
                     left: 0,
-                    width: "100%", // Match parent width
+                    width: "100%",
                     background: "var(--panel-bg)",
                     border: "1px solid var(--border)",
                     borderRadius: "8px",
@@ -294,16 +344,6 @@ export function ClipboardView() {
                         updateRetention(option.value);
                         setIsDropdownOpen(false);
                       }}
-                      onMouseEnter={(e) => {
-                        if (retentionHours !== option.value) {
-                          e.currentTarget.style.background = "var(--highlight)";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (retentionHours !== option.value) {
-                          e.currentTarget.style.background = "transparent";
-                        }
-                      }}
                     >
                       {option.label}
                     </div>
@@ -312,7 +352,6 @@ export function ClipboardView() {
               )}
             </div>
 
-            {/* 3. Clear Button */}
             {entries.length > 0 && (
               <button
                 className="secondary-btn"
@@ -335,11 +374,9 @@ export function ClipboardView() {
                 Clear
               </button>
             )}
-
-            {/* 4. Secure Paste Button */}
             <button
               className="header-action-btn"
-              onClick={securePaste}
+              onClick={handleSecurePaste}
               style={{
                 height: "42px",
                 padding: "0 15px",
@@ -351,7 +388,7 @@ export function ClipboardView() {
                 fontWeight: 500,
                 whiteSpace: "nowrap",
                 boxSizing: "border-box",
-                flex: isAndroid ? 2 : "unset", // Larger button on mobile
+                flex: isAndroid ? 2 : "unset",
               }}
             >
               <Clipboard size={18} /> Paste
@@ -359,6 +396,26 @@ export function ClipboardView() {
           </div>
         </div>
       </div>
+
+      {actionError && (
+        <div
+          style={{
+            marginBottom: 15,
+            color: "var(--btn-danger)",
+            fontSize: "0.85rem",
+            background: "rgba(239,68,68,0.1)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            borderRadius: 6,
+            padding: "8px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <AlertTriangle size={16} />
+          {actionError}
+        </div>
+      )}
 
       {entries.length === 0 && !loading && (
         <div style={{ textAlign: "center", marginTop: 50, opacity: 0.5 }}>
@@ -378,13 +435,19 @@ export function ClipboardView() {
           const isLink = entry.category.includes("Link");
 
           return (
-            <div key={entry.id} className="clipboard-card">
+            <div
+              key={entry.id}
+              className={`clipboard-card ${entry.is_pinned ? "pinned" : ""}`}
+            >
               <div className="clip-icon">{getIcon(entry.category)}</div>
-
               <div className="clip-content">
                 <div
                   className="clip-preview"
                   title={isMasked ? "Hidden" : entry.content}
+                  style={{
+                    userSelect: sensitive ? "none" : "auto",
+                    WebkitUserSelect: sensitive ? "none" : "auto",
+                  }}
                 >
                   {isMasked ? "•••• •••• •••• ••••" : entry.preview}
                 </div>
@@ -392,12 +455,21 @@ export function ClipboardView() {
                   <span className={getBadgeClass(entry.category)}>
                     {entry.category}
                   </span>
-                  <span>{new Date(entry.created_at).toLocaleString()}</span>
+                  <span>
+                    {new Date(entry.created_at * 1000).toLocaleString()}
+                  </span>
                 </div>
               </div>
-
               <div className="card-actions" style={{ opacity: 1 }}>
-                {/* Eye Button for ALL Sensitive types */}
+                {/* NEW PIN BUTTON */}
+                <button
+                  className={`icon-btn-ghost ${entry.is_pinned ? "active" : ""}`}
+                  onClick={() => togglePin(entry)}
+                  title={entry.is_pinned ? "Unpin" : "Pin to Top"}
+                >
+                  {entry.is_pinned ? <PinOff size={18} /> : <Pin size={18} />}
+                </button>
+
                 {sensitive && (
                   <button
                     className="icon-btn-ghost"
@@ -407,8 +479,6 @@ export function ClipboardView() {
                     {isMasked ? <Eye size={18} /> : <EyeOff size={18} />}
                   </button>
                 )}
-
-                {/* Open Link Button */}
                 {isLink && (
                   <button
                     className="icon-btn-ghost"
@@ -418,22 +488,17 @@ export function ClipboardView() {
                     <ExternalLink size={18} />
                   </button>
                 )}
-
                 <button
                   className="icon-btn-ghost"
                   title="Copy"
-                  onClick={() => {
-                    copyToClipboard(entry.content);
-                    setMsg("Copied to clipboard");
-                  }}
+                  onClick={() => handleCopy(entry.content)}
                 >
                   <Copy size={18} />
                 </button>
-
                 <button
                   className="icon-btn-ghost danger"
                   title="Delete Entry"
-                  onClick={() => deleteEntry(entry.id)}
+                  onClick={() => handleDelete(entry.id)}
                 >
                   <Trash2 size={18} />
                 </button>
@@ -445,7 +510,6 @@ export function ClipboardView() {
 
       {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
 
-      {/* CONFIRMATION MODAL */}
       {showClearConfirm && (
         <div
           className="modal-overlay"
@@ -478,10 +542,7 @@ export function ClipboardView() {
                 <button
                   className="auth-btn danger-btn"
                   style={{ flex: 1 }}
-                  onClick={() => {
-                    clearAll();
-                    setShowClearConfirm(false);
-                  }}
+                  onClick={handleClearAll}
                 >
                   Yes, Clear All
                 </button>
