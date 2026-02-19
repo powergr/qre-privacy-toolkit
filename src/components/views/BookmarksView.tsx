@@ -9,6 +9,9 @@ import {
   Download,
   Pin,
   PinOff,
+  LayoutGrid,
+  List as ListIcon,
+  AlertTriangle,
 } from "lucide-react";
 import { useBookmarks, BookmarkEntry } from "../../hooks/useBookmarks";
 import { EntryDeleteModal, InfoModal } from "../modals/AppModals";
@@ -27,18 +30,27 @@ const BRAND_COLORS = [
 ];
 
 // Manual UUID Generator
-function generateUUID() {
-  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
-    (
-      +c ^
-      (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))
-    ).toString(16),
-  );
+function generateUUID(): string {
+  return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) => {
+    const n = +c;
+    const max = Math.floor(0x10 / 1) * 1;
+    let value: number;
+    do {
+      value = crypto.getRandomValues(new Uint8Array(1))[0] & 0x0f;
+    } while (value >= max);
+    return (n ^ value).toString(16);
+  });
 }
 
 export function BookmarksView() {
-  const { entries, loading, saveBookmark, deleteBookmark, refreshVault } =
-    useBookmarks();
+  const {
+    entries,
+    loading,
+    error,
+    saveBookmark,
+    deleteBookmark,
+    refreshVault,
+  } = useBookmarks();
 
   // --- STATE ---
   const [editing, setEditing] = useState<Partial<BookmarkEntry> | null>(null);
@@ -48,6 +60,10 @@ export function BookmarksView() {
   const [importLoading, setImportLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [isAndroid, setIsAndroid] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // NEW: View Mode
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     try {
@@ -66,7 +82,7 @@ export function BookmarksView() {
       if (!target.startsWith("http")) target = "https://" + target;
       await openUrl(target);
     } catch (e) {
-      alert("Error opening link: " + e);
+      setMsg("Error opening link: " + e);
     }
   };
 
@@ -126,6 +142,17 @@ export function BookmarksView() {
     });
   }, [entries, searchQuery]);
 
+  // DUPLICATE CHECK
+  const isDuplicate = (url: string) => {
+    if (!url) return false;
+    const clean = url.trim().replace(/\/$/, "").toLowerCase();
+    return entries.some(
+      (e) =>
+        e.url.trim().replace(/\/$/, "").toLowerCase() === clean &&
+        e.id !== editing?.id,
+    );
+  };
+
   // --- SHARED STYLES ---
   const commonButtonStyle = {
     height: "42px",
@@ -150,6 +177,22 @@ export function BookmarksView() {
       </div>
     );
 
+  if (error && !editing) {
+    return (
+      <div
+        style={{
+          padding: 40,
+          color: "var(--btn-danger)",
+          textAlign: "center",
+        }}
+      >
+        <AlertTriangle size={48} style={{ marginBottom: 10 }} />
+        <p>Failed to load bookmarks vault:</p>
+        <p style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>{error}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="vault-view">
       {/* --- HEADER --- */}
@@ -161,17 +204,51 @@ export function BookmarksView() {
           gap: isAndroid ? 15 : 20,
         }}
       >
-        {/* Title Section */}
-        <div>
-          <h2 style={{ margin: 0 }}>Secure Bookmarks</h2>
-          <p
-            style={{ margin: 0, fontSize: "0.9rem", color: "var(--text-dim)" }}
+        {/* LEFT: Title & Toggle */}
+        <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Bookmarks</h2>
+            <p
+              style={{
+                margin: 0,
+                fontSize: "0.9rem",
+                color: "var(--text-dim)",
+              }}
+            >
+              {entries.length} stored
+            </p>
+          </div>
+
+          {/* View Toggle */}
+          <div
+            className="view-toggle"
+            style={{
+              height: "42px",
+              boxSizing: "border-box",
+              display: "flex",
+              alignItems: "center",
+            }}
           >
-            {entries.length} private links stored.
-          </p>
+            <button
+              className={`view-btn ${viewMode === "grid" ? "active" : ""}`}
+              onClick={() => setViewMode("grid")}
+              title="Grid View"
+              style={{ height: "34px", width: "34px", padding: 0 }}
+            >
+              <LayoutGrid size={18} />
+            </button>
+            <button
+              className={`view-btn ${viewMode === "list" ? "active" : ""}`}
+              onClick={() => setViewMode("list")}
+              title="List View"
+              style={{ height: "34px", width: "34px", padding: 0 }}
+            >
+              <ListIcon size={18} />
+            </button>
+          </div>
         </div>
 
-        {/* Unified Right Side: Search + Actions */}
+        {/* RIGHT: Search + Actions */}
         <div
           style={{
             display: "flex",
@@ -189,7 +266,7 @@ export function BookmarksView() {
             <Search size={18} className="search-icon" />
             <input
               className="search-input"
-              placeholder="Search bookmarks..."
+              placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
@@ -208,7 +285,6 @@ export function BookmarksView() {
               width: isAndroid ? "100%" : "auto",
             }}
           >
-            {/* Import Button */}
             {!isAndroid && (
               <button
                 className="secondary-btn"
@@ -226,18 +302,18 @@ export function BookmarksView() {
               </button>
             )}
 
-            {/* Add Button */}
             <button
               className="header-action-btn"
-              onClick={() =>
+              onClick={() => {
+                setSaveError(null);
                 setEditing({
                   title: "",
                   url: "",
                   category: "General",
                   color: BRAND_COLORS[0],
                   is_pinned: false,
-                })
-              }
+                });
+              }}
               style={{
                 ...commonButtonStyle,
                 border: "1px solid transparent",
@@ -290,135 +366,214 @@ export function BookmarksView() {
         </div>
       ) : null}
 
-      {/* --- GRID --- */}
-      <div className="modern-grid">
-        {filteredEntries.map((entry) => {
-          const isPinned = entry.is_pinned || false;
-          const entryColor = entry.color || BRAND_COLORS[0];
-
-          return (
+      {/* --- LIST VIEW --- */}
+      {viewMode === "list" && (
+        <div className="vault-list">
+          {filteredEntries.map((entry) => (
             <div
               key={entry.id}
-              className={`modern-card ${isPinned ? "pinned" : ""}`}
-              style={{ height: "auto", minHeight: 160, position: "relative" }}
-              onClick={() => setEditing(entry)}
+              className={`vault-list-row ${entry.is_pinned ? "pinned" : ""}`}
+              onClick={() => {
+                setSaveError(null);
+                setEditing(entry);
+              }}
             >
-              {/* Pinned Icon Overlay */}
-              {isPinned && (
-                <Pin
-                  size={16}
-                  className="pinned-icon-corner"
-                  fill="currentColor"
-                />
-              )}
+              {/* Icon */}
+              <div
+                className="service-icon"
+                style={{
+                  backgroundColor: entry.color || BRAND_COLORS[0],
+                  width: 36,
+                  height: 36,
+                  fontSize: "1rem",
+                  marginRight: 15,
+                }}
+              >
+                {getInitial(entry.title)}
+              </div>
 
-              <div style={{ display: "flex", gap: 15 }}>
-                {/* Visual Icon with Color */}
-                <div
-                  style={{
-                    width: 50,
-                    height: 50,
-                    borderRadius: 12,
-                    backgroundColor: entryColor,
-                    color: "white",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "1.4rem",
-                    fontWeight: "bold",
-                    flexShrink: 0,
-                    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
-                  }}
-                >
-                  {getInitial(entry.title)}
+              {/* Info */}
+              <div className="list-info">
+                <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                  {entry.title}
                 </div>
-
-                <div style={{ flex: 1, overflow: "hidden" }}>
-                  <div
+                <div className="list-meta">
+                  {getDomain(entry.url)}
+                  <span
                     style={{
-                      fontWeight: "bold",
-                      fontSize: "1.05rem",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: "var(--text-main)",
+                      fontSize: "0.7rem",
+                      background: "var(--highlight)",
+                      padding: "1px 6px",
+                      borderRadius: 4,
                     }}
                   >
-                    {entry.title}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: "0.85rem",
-                      color: "var(--text-dim)",
-                      marginTop: 2,
-                    }}
-                  >
-                    {getDomain(entry.url)}
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <span
-                      style={{
-                        fontSize: "0.7rem",
-                        background: "var(--highlight)",
-                        padding: "3px 8px",
-                        borderRadius: 4,
-                        color: "var(--text-dim)",
-                        textTransform: "uppercase",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      {entry.category}
-                    </span>
-                  </div>
+                    {entry.category}
+                  </span>
                 </div>
               </div>
 
-              <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
-                <button
-                  className="auth-btn"
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    fontSize: "0.9rem",
-                    padding: "8px",
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openLink(entry.url);
-                  }}
-                >
-                  <ExternalLink size={16} /> Open
-                </button>
-
-                {/* Quick Pin Toggle */}
+              {/* Actions */}
+              <div
+                className="list-actions"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button
                   className="icon-btn-ghost"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    saveBookmark({ ...entry, is_pinned: !isPinned });
-                  }}
+                  title="Open Link"
+                  style={{ color: "var(--text-dim)" }}
+                  onClick={() => openLink(entry.url)}
                 >
-                  {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+                  <ExternalLink size={16} />
                 </button>
+
+                {entry.is_pinned && (
+                  <Pin size={16} color="#ffd700" style={{ marginRight: 10 }} />
+                )}
 
                 <button
                   className="icon-btn-ghost danger"
-                  title="Delete Bookmark"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setItemToDelete(entry);
-                  }}
+                  onClick={() => setItemToDelete(entry)}
                 >
-                  <Trash2 size={18} />
+                  <Trash2 size={16} />
                 </button>
               </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {/* --- GRID VIEW --- */}
+      {viewMode === "grid" && (
+        <div className="modern-grid">
+          {filteredEntries.map((entry) => {
+            const isPinned = entry.is_pinned || false;
+            const entryColor = entry.color || BRAND_COLORS[0];
+
+            return (
+              <div
+                key={entry.id}
+                className={`modern-card ${isPinned ? "pinned" : ""}`}
+                style={{ height: "auto", minHeight: 160, position: "relative" }}
+                onClick={() => {
+                  setSaveError(null);
+                  setEditing(entry);
+                }}
+              >
+                {/* Pinned Icon Overlay */}
+                {isPinned && (
+                  <Pin
+                    size={16}
+                    className="pinned-icon-corner"
+                    fill="currentColor"
+                  />
+                )}
+
+                <div style={{ display: "flex", gap: 15 }}>
+                  <div
+                    style={{
+                      width: 50,
+                      height: 50,
+                      borderRadius: 12,
+                      backgroundColor: entryColor,
+                      color: "white",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1.4rem",
+                      fontWeight: "bold",
+                      flexShrink: 0,
+                      boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+                    }}
+                  >
+                    {getInitial(entry.title)}
+                  </div>
+
+                  <div style={{ flex: 1, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        fontWeight: "bold",
+                        fontSize: "1.05rem",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        color: "var(--text-main)",
+                      }}
+                    >
+                      {entry.title}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "0.85rem",
+                        color: "var(--text-dim)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {getDomain(entry.url)}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <span
+                        style={{
+                          fontSize: "0.7rem",
+                          background: "var(--highlight)",
+                          padding: "3px 8px",
+                          borderRadius: 4,
+                          color: "var(--text-dim)",
+                          textTransform: "uppercase",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        {entry.category}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+                  <button
+                    className="auth-btn"
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      fontSize: "0.9rem",
+                      padding: "8px",
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openLink(entry.url);
+                    }}
+                  >
+                    <ExternalLink size={16} /> Open
+                  </button>
+
+                  <button
+                    className="icon-btn-ghost"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      saveBookmark({ ...entry, is_pinned: !isPinned });
+                    }}
+                  >
+                    {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
+                  </button>
+
+                  <button
+                    className="icon-btn-ghost danger"
+                    title="Delete Bookmark"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setItemToDelete(entry);
+                    }}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* --- IMPORT MODAL --- */}
       {showImportModal && (
@@ -465,7 +620,13 @@ export function BookmarksView() {
 
       {/* --- EDIT MODAL --- */}
       {editing && (
-        <div className="modal-overlay">
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            setSaveError(null);
+            setEditing(null);
+          }}
+        >
           <div className="auth-card" onClick={(e) => e.stopPropagation()}>
             <div
               style={{
@@ -479,27 +640,24 @@ export function BookmarksView() {
               <h3 style={{ margin: 0 }}>
                 {editing.id ? "Edit Bookmark" : "Add Bookmark"}
               </h3>
-              {/* Pin Toggle in Editor */}
               <button
                 className="icon-btn-ghost"
-                title={(editing as any).is_pinned ? "Unpin" : "Pin"}
+                title={editing.is_pinned ? "Unpin" : "Pin"}
                 onClick={() =>
                   setEditing({
                     ...editing,
-                    is_pinned: !(editing as any).is_pinned,
+                    is_pinned: !editing.is_pinned,
                   })
                 }
                 style={{
-                  color: (editing as any).is_pinned
-                    ? "#ffd700"
-                    : "var(--text-dim)",
+                  color: editing.is_pinned ? "#ffd700" : "var(--text-dim)",
                   position: "absolute",
                   right: 0,
                 }}
               >
                 <Pin
                   size={20}
-                  fill={(editing as any).is_pinned ? "currentColor" : "none"}
+                  fill={editing.is_pinned ? "currentColor" : "none"}
                 />
               </button>
             </div>
@@ -508,12 +666,11 @@ export function BookmarksView() {
               className="modal-body"
               style={{ display: "flex", flexDirection: "column", gap: 15 }}
             >
-              {/* Title */}
               <div style={{ position: "relative" }}>
                 <input
                   className="auth-input"
                   placeholder="Title (e.g. My Bank)"
-                  value={editing.title}
+                  value={editing.title ?? ""}
                   onChange={(e) =>
                     setEditing({ ...editing, title: e.target.value })
                   }
@@ -521,7 +678,6 @@ export function BookmarksView() {
                 />
               </div>
 
-              {/* URL */}
               <div
                 style={{
                   position: "relative",
@@ -541,24 +697,37 @@ export function BookmarksView() {
                   className="auth-input"
                   style={{ paddingLeft: 40 }}
                   placeholder="URL (https://...)"
-                  value={editing.url}
+                  value={editing.url ?? ""}
                   onChange={(e) =>
                     setEditing({ ...editing, url: e.target.value })
                   }
                 />
               </div>
+              {editing.url && isDuplicate(editing.url) && (
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "#f59e0b",
+                    marginTop: -10,
+                    display: "flex",
+                    gap: 5,
+                    alignItems: "center",
+                  }}
+                >
+                  <AlertTriangle size={12} /> Warning: This URL already exists
+                  in your vault.
+                </div>
+              )}
 
-              {/* Category */}
               <input
                 className="auth-input"
                 placeholder="Category (e.g. Finance)"
-                value={editing.category}
+                value={editing.category ?? ""}
                 onChange={(e) =>
                   setEditing({ ...editing, category: e.target.value })
                 }
               />
 
-              {/* Color Picker */}
               <div>
                 <label
                   style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}
@@ -569,7 +738,7 @@ export function BookmarksView() {
                   {BRAND_COLORS.map((c) => (
                     <div
                       key={c}
-                      className={`color-dot ${(editing as any).color === c ? "selected" : ""}`}
+                      className={`color-dot ${editing.color === c ? "selected" : ""}`}
                       style={{ backgroundColor: c }}
                       onClick={() => setEditing({ ...editing, color: c })}
                     />
@@ -577,34 +746,57 @@ export function BookmarksView() {
                 </div>
               </div>
 
-              {/* Actions */}
+              {saveError && (
+                <div
+                  style={{
+                    color: "var(--btn-danger)",
+                    fontSize: "0.85rem",
+                    background: "rgba(239,68,68,0.1)",
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    borderRadius: 6,
+                    padding: "8px 12px",
+                  }}
+                >
+                  {saveError}
+                </div>
+              )}
+
               <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  // FIX: Use async/await + manual UUID + error handling
                   onClick={async () => {
+                    setSaveError(null);
+
+                    const trimmedTitle = (editing.title || "").trim();
+                    const trimmedUrl = (editing.url || "").trim();
+
+                    if (!trimmedTitle) {
+                      setSaveError("Bookmark title cannot be empty.");
+                      return;
+                    }
+                    if (!trimmedUrl) {
+                      setSaveError("Bookmark URL cannot be empty.");
+                      return;
+                    }
+
                     try {
                       const finalId = editing.id || generateUUID();
-                      let finalUrl = editing.url || "";
-                      if (finalUrl && !finalUrl.startsWith("http")) {
-                        finalUrl = "https://" + finalUrl;
-                      }
+                      const now = Math.floor(Date.now() / 1000);
 
                       await saveBookmark({
-                        ...editing,
-                        created_at: editing.created_at || Date.now(),
                         id: finalId,
-                        url: finalUrl,
-                        title: editing.title || "New Link",
-                        category: editing.category || "General",
-                        is_pinned: (editing as any).is_pinned || false,
-                        color: (editing as any).color || BRAND_COLORS[0],
+                        title: trimmedTitle,
+                        url: trimmedUrl,
+                        category: (editing.category || "General").trim(),
+                        is_pinned: editing.is_pinned || false,
+                        color: editing.color || BRAND_COLORS[0],
+                        created_at: editing.created_at || now,
                       } as BookmarkEntry);
 
                       setEditing(null);
                     } catch (e) {
-                      alert("Error saving bookmark: " + e);
+                      setSaveError(String(e));
                     }
                   }}
                 >
@@ -613,7 +805,10 @@ export function BookmarksView() {
                 <button
                   className="secondary-btn"
                   style={{ flex: 1 }}
-                  onClick={() => setEditing(null)}
+                  onClick={() => {
+                    setSaveError(null);
+                    setEditing(null);
+                  }}
                 >
                   Cancel
                 </button>
@@ -623,7 +818,6 @@ export function BookmarksView() {
         </div>
       )}
 
-      {/* --- DELETE MODAL --- */}
       {itemToDelete && (
         <EntryDeleteModal
           title={itemToDelete.title}
@@ -635,7 +829,6 @@ export function BookmarksView() {
         />
       )}
 
-      {/* --- INFO MSG --- */}
       {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
     </div>
   );

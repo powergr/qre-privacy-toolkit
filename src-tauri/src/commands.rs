@@ -198,6 +198,9 @@ pub fn save_bookmarks_vault(
     state: tauri::State<SessionState>,
     vault: BookmarksVault,
 ) -> CommandResult<()> {
+    // 1. VALIDATE BEFORE SAVING (Fixes "never used" warning & prevents corruption)
+    vault.validate().map_err(|e| e.to_string())?;
+
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
