@@ -111,6 +111,10 @@ pub fn run() {
             commands::save_bookmarks_vault,
             commands::import_browser_bookmarks,
             commands::calculate_file_hashes,
+            commands::get_file_metadata,
+            commands::cancel_hashing,
+            commands::save_text_to_file,
+            commands::calculate_text_hashes,
             commands::scan_directory_targets,
             // Clipboard
             commands::add_clipboard_entry,

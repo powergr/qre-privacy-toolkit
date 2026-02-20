@@ -147,13 +147,46 @@ pub async fn clean_file_metadata(
 
 // --- HASHER  ---
 #[tauri::command]
-pub async fn calculate_file_hashes(path: String) -> CommandResult<hasher::HashResult> {
-    // Run on a separate thread to not freeze UI
-    tauri::async_runtime::spawn_blocking(move || {
-        hasher::calculate_hashes(&path).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+pub async fn calculate_file_hashes(
+    path: String,
+    app_handle: tauri::AppHandle, // Add this parameter
+) -> CommandResult<hasher::HashResult> {
+    hasher::calculate_hashes(&path, &app_handle).map_err(|e| e.to_string())
+}
+
+/// Gets file metadata (size, type, symlink status) for validation.
+///
+/// This is called BEFORE hashing to validate the file is safe to process.
+#[tauri::command]
+pub async fn get_file_metadata(path: String) -> CommandResult<hasher::FileMetadata> {
+    hasher::get_file_metadata(&path).map_err(|e| e.to_string())
+}
+
+/// Cancels an ongoing hash calculation.
+///
+/// Sets a global flag that the hashing loop checks periodically.
+#[tauri::command]
+pub async fn cancel_hashing() -> CommandResult<()> {
+    hasher::cancel_hashing();
+    Ok(())
+}
+
+/// Saves text content to a file (used for exporting hash results).
+///
+/// # Arguments
+/// * `path` - Destination file path (from save dialog)
+/// * `content` - Text content to write (formatted hash report)
+#[tauri::command]
+pub async fn save_text_to_file(path: String, content: String) -> CommandResult<()> {
+    hasher::save_text_to_file(&path, &content).map_err(|e| e.to_string())
+}
+
+/// Calculates hashes for a text string instead of a file.
+///
+/// Optional feature for Phase 3. Can hash passwords, API keys, or any text.
+#[tauri::command]
+pub async fn calculate_text_hashes(text: String) -> CommandResult<hasher::HashResult> {
+    Ok(hasher::calculate_text_hashes(&text))
 }
 
 // --- BOOKMARKS COMMANDS ---
