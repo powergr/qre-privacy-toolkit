@@ -129,23 +129,16 @@ export function HomeView({ setTab }: HomeViewProps) {
           onClick={() => setTab("breach")}
         />
         <ToolCard
-          title="Integrity"
+          title="Integrity Check"
           desc="Verify file hashes."
           icon={<FileCheck size={24} color="#eab308" />}
           bg="rgba(234, 179, 8, 0.1)"
           onClick={() => setTab("hash")}
         />
-        <ToolCard
-          title="File Analyzer"
-          desc="Detect fake extensions."
-          icon={<FileSearch size={24} color="#ec4899" />}
-          bg="rgba(236, 72, 153, 0.1)"
-          onClick={() => setTab("analyzer")}
-        />
 
         {/* Row 3 */}
         <ToolCard
-          title="Sys Cleaner"
+          title="System Clean"
           desc="Clear temp & cache."
           icon={<Brush size={24} color="#3b82f6" />}
           bg="rgba(59, 130, 246, 0.1)"
@@ -166,7 +159,14 @@ export function HomeView({ setTab }: HomeViewProps) {
           onClick={() => setTab("shred")}
         />
         <ToolCard
-          title="QR Gen"
+          title="File Analyzer"
+          desc="Detect fake extensions."
+          icon={<FileSearch size={24} color="#ec4899" />}
+          bg="rgba(236, 72, 153, 0.1)"
+          onClick={() => setTab("analyzer")}
+        />
+        <ToolCard
+          title="QR Generator"
           desc="Offline QR creation."
           icon={<QrCode size={24} color="#ffffff" />}
           bg="rgba(255, 255, 255, 0.1)"

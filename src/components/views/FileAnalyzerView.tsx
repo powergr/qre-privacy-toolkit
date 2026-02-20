@@ -4,16 +4,17 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  FileSearch,
   ShieldAlert,
   AlertTriangle,
   CheckCircle,
   FolderSearch,
   Search,
   X,
-  RefreshCw,
   Globe,
+  Upload,
+  RefreshCw,
 } from "lucide-react";
+import { useDragDrop } from "../../hooks/useDragDrop";
 
 interface AnalysisResult {
   path: string;
@@ -27,11 +28,19 @@ interface AnalysisResult {
 export function FileAnalyzerView() {
   const [results, setResults] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [hasScanned, setHasanned] = useState(false);
+  const [hasScanned, setHasScanned] = useState(false);
   const [scanPath, setScanPath] = useState<string | null>(null);
   const [scanLog, setScanLog] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const isCancelled = useRef(false);
+
+  // Integrate Drag & Drop hook (matches Integrity Checker)
+  const { isDragging } = useDragDrop(async (paths) => {
+    if (paths.length > 0 && !loading && !hasScanned) {
+      runScan(paths[0]); // Scan the first dropped item (file or folder)
+    }
+  });
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -51,8 +60,9 @@ export function FileAnalyzerView() {
   async function runScan(path: string | null) {
     setLoading(true);
     setResults([]);
-    setHasanned(false);
-    setScanPath(path || "Smart Scan (Downloads & Desktop)");
+    setHasScanned(false);
+    setError(null);
+    setScanPath(path || "Smart Scan (Downloads, Documents, and Desktop)");
     setScanLog([]);
     isCancelled.current = false;
 
@@ -67,10 +77,13 @@ export function FileAnalyzerView() {
           return a.filename.localeCompare(b.filename);
         });
         setResults(sorted);
-        setHasanned(true);
+        setHasScanned(true);
       }
     } catch (e) {
-      if (!isCancelled.current) alert("Scan Error: " + e);
+      if (!isCancelled.current) {
+        setError("Scan Error: " + e);
+        setHasScanned(false);
+      }
     } finally {
       if (!isCancelled.current) setLoading(false);
     }
@@ -79,14 +92,18 @@ export function FileAnalyzerView() {
   const handleCancel = () => {
     isCancelled.current = true;
     setLoading(false);
+    setScanLog([]);
   };
 
   async function handleBrowse() {
     try {
-      const selected = await open({ directory: true });
+      const selected = await open({
+        directory: true,
+        title: "Select folder to scan deeply",
+      });
       if (selected && typeof selected === "string") runScan(selected);
     } catch (e) {
-      console.error(e);
+      setError("Failed to open file dialog: " + e);
     }
   }
 
@@ -95,7 +112,7 @@ export function FileAnalyzerView() {
   }
 
   function searchMismatch(ext: string, realType: string) {
-    const query = `file extension .${ext} detected as ${realType}`;
+    const query = `file extension .${ext} detected as ${realType} malware indicator`;
     openUrl(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
   }
 
@@ -108,242 +125,253 @@ export function FileAnalyzerView() {
         overflow: "hidden",
       }}
     >
-      {/* HEADER */}
-      <div
-        style={{
-          padding: "20px 30px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "var(--panel-bg)",
-          flexShrink: 0,
-        }}
-      >
-        <div>
-          <h2 style={{ margin: 0, fontSize: "1.4rem" }}>File Analyzer</h2>
-          <p
-            style={{ color: "var(--text-dim)", margin: 0, fontSize: "0.9rem" }}
-          >
-            Scan for files with disguised extensions.
-          </p>
-        </div>
-
-        {hasScanned && (
-          <button
-            className="auth-btn"
-            onClick={() => {
-              setHasanned(false);
-              setResults([]);
-            }}
-            style={{ display: "flex", gap: 8 }}
-          >
-            <RefreshCw size={16} /> New Scan
-          </button>
-        )}
-      </div>
-
-      {/* CONTENT AREA */}
+      {/* Scrollable Area */}
       <div
         style={{
           flex: 1,
           overflowY: "auto",
+          padding: "30px",
           display: "flex",
           flexDirection: "column",
-          // Center vertically if NOT showing results list (Start or Loading)
-          justifyContent: !hasScanned || loading ? "center" : "flex-start",
+          justifyContent: !hasScanned ? "center" : "flex-start",
         }}
       >
-        {/* 1. START SCREEN */}
-        {!hasScanned && !loading && (
+        {/* Header matching Integrity Checker style */}
+        <div
+          style={{ textAlign: "center", marginBottom: hasScanned ? 30 : 40 }}
+        >
+          <h2 style={{ margin: 0 }}>File Analyzer</h2>
+          <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
+            Deep scan files and folders for spoofed extensions, RTLO Unicode
+            tricks, and hidden executables.
+          </p>
+        </div>
+
+        {/* Global Error Banner */}
+        {error && (
           <div
             style={{
-              width: "100%",
+              maxWidth: 600,
+              margin: "0 auto 20px auto",
+              padding: 12,
+              background: "rgba(239, 68, 68, 0.1)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              borderRadius: 8,
+              color: "var(--btn-danger)",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              gap: 10,
             }}
           >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 30,
-                maxWidth: 700,
-                width: "90%",
-              }}
-            >
-              <div
-                onClick={() => runScan(null)}
-                className="modern-card"
-                style={{
-                  textAlign: "center",
-                  cursor: "pointer",
-                  padding: 40,
-                  border: "1px solid var(--accent)",
-                  background: "rgba(0, 122, 204, 0.05)",
-                }}
-              >
-                <div
-                  style={{
-                    background: "rgba(0, 122, 204, 0.1)",
-                    padding: 15,
-                    borderRadius: "50%",
-                    display: "inline-block",
-                    marginBottom: 15,
-                  }}
-                >
-                  <FileSearch size={50} color="var(--accent)" />
-                </div>
-                <h3 style={{ fontSize: "1.2rem", margin: 0 }}>Smart Scan</h3>
-                <p
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "var(--text-dim)",
-                    marginTop: 5,
-                  }}
-                >
-                  Downloads, Documents, and Desktop
-                </p>
-              </div>
-
-              <div
-                onClick={handleBrowse}
-                className="modern-card"
-                style={{ textAlign: "center", cursor: "pointer", padding: 40 }}
-              >
-                <div
-                  style={{
-                    background: "rgba(255, 255, 255, 0.05)",
-                    padding: 15,
-                    borderRadius: "50%",
-                    display: "inline-block",
-                    marginBottom: 15,
-                  }}
-                >
-                  <FolderSearch size={50} color="var(--text-dim)" />
-                </div>
-                <h3 style={{ fontSize: "1.2rem", margin: 0 }}>Custom Folder</h3>
-                <p
-                  style={{
-                    fontSize: "0.9rem",
-                    color: "var(--text-dim)",
-                    marginTop: 5,
-                  }}
-                >
-                  Select directory
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 2. LOADING SCREEN */}
-        {loading && (
-          <div
-            style={{
-              width: "100%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <div className="spinner" style={{ marginBottom: 20 }}>
-              <Search size={64} color="var(--accent)" />
-            </div>
-            <h3>Deep Scanning...</h3>
-            <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-              {scanPath?.split(/[/\\]/).pop() || "Directory"}
-            </p>
-
-            {/* WIDER LOG BOX */}
-            <div
-              style={{
-                background: "#000",
-                padding: 15,
-                borderRadius: 8,
-                fontFamily: "monospace",
-                fontSize: "0.85rem",
-                color: "#4ade80",
-                width: "80%",
-                maxWidth: "800px",
-                height: "100px",
-                overflow: "hidden",
-                opacity: 0.9,
-                border: "1px solid #333",
-              }}
-            >
-              {scanLog.map((line, i) => (
-                <div
-                  key={i}
-                  style={{
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    opacity: 1 - i * 0.3,
-                  }}
-                >
-                  &gt; {line}
-                </div>
-              ))}
-            </div>
-
+            <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{error}</span>
             <button
-              className="secondary-btn"
-              onClick={handleCancel}
-              style={{ marginTop: 30, padding: "10px 25px" }}
+              onClick={() => setError(null)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "inherit",
+                padding: 4,
+              }}
             >
-              <X size={16} style={{ marginRight: 8 }} /> Stop Scan
+              <X size={16} />
             </button>
           </div>
         )}
 
-        {/* 3. RESULTS GRID */}
+        {/* DROP ZONE (Replaces the 2-card layout) */}
+        {!hasScanned && (
+          <>
+            <div
+              className={`shred-zone ${isDragging ? "active" : ""}`}
+              style={{
+                borderColor: loading ? "var(--text-dim)" : "var(--accent)",
+                width: "100%",
+                maxWidth: "600px",
+                margin: "0 auto",
+                minHeight: "300px",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+              }}
+              onClick={!loading ? handleBrowse : undefined}
+            >
+              {loading ? (
+                <div
+                  style={{ textAlign: "center", width: "100%", padding: 20 }}
+                >
+                  <Search
+                    size={48}
+                    color="var(--accent)"
+                    className="spinner"
+                    style={{ marginBottom: 15 }}
+                  />
+                  <h3>Deep Scanning...</h3>
+                  <p style={{ color: "var(--text-dim)", marginBottom: 15 }}>
+                    {scanPath?.split(/[/\\]/).pop() || "Directory"}
+                  </p>
+
+                  {/* Terminal Log Box restricted inside the drop zone */}
+                  <div
+                    style={{
+                      background: "#0a0a0a",
+                      padding: 15,
+                      borderRadius: 8,
+                      fontFamily: "monospace",
+                      fontSize: "0.8rem",
+                      color: "#4ade80",
+                      width: "100%",
+                      maxWidth: "400px",
+                      height: "80px",
+                      margin: "0 auto",
+                      overflow: "hidden",
+                      border: "1px solid #333",
+                      textAlign: "left",
+                    }}
+                  >
+                    {scanLog.map((line, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          opacity: 1 - i * 0.3,
+                        }}
+                      >
+                        &gt; {line}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    className="secondary-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCancel();
+                    }}
+                    style={{ marginTop: 20 }}
+                  >
+                    Cancel Scan
+                  </button>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", opacity: 0.8 }}>
+                  <div
+                    style={{
+                      background: "rgba(0, 122, 204, 0.1)",
+                      padding: 20,
+                      borderRadius: "50%",
+                      marginBottom: 20,
+                      display: "inline-block",
+                    }}
+                  >
+                    <FolderSearch size={48} color="var(--accent)" />
+                  </div>
+                  <h3>Drag & Drop a File or Folder</h3>
+                  <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
+                    Supports single files and deep directory traversal
+                  </p>
+
+                  <button
+                    className="secondary-btn"
+                    style={{ marginTop: 10 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleBrowse();
+                    }}
+                  >
+                    <Upload size={16} style={{ marginRight: 8 }} /> Select
+                    Target
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Smart Scan Alternate Option */}
+            {!loading && (
+              <div style={{ textAlign: "center", marginTop: 25 }}>
+                <button
+                  className="icon-btn-ghost"
+                  onClick={() => runScan(null)}
+                  style={{
+                    color: "var(--text-dim)",
+                    textDecoration: "underline",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Or run a Smart System Scan (Downloads, Documents, Desktop)
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* RESULTS GRID */}
         {hasScanned && !loading && (
           <div
             style={{
-              padding: 20,
               maxWidth: 1000,
               margin: "0 auto",
               width: "100%",
             }}
           >
-            {results.length === 0 ? (
-              <div style={{ textAlign: "center", marginTop: 50 }}>
-                <CheckCircle
-                  size={64}
-                  color="#4ade80"
-                  style={{ marginBottom: 15 }}
-                />
-                <h3>Clean! No Mismatches Found.</h3>
-                <p style={{ color: "var(--text-dim)" }}>
-                  All scanned files match their extensions.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 20,
-                    marginBottom: 20,
-                    fontSize: "0.9rem",
-                  }}
-                >
+            {/* Top Action Bar */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 20,
+              }}
+            >
+              <div style={{ display: "flex", gap: 20, fontSize: "0.9rem" }}>
+                {results.length === 0 ? (
                   <div
-                    style={{ color: "var(--btn-danger)", fontWeight: "bold" }}
+                    style={{
+                      color: "#4ade80",
+                      fontWeight: "bold",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
                   >
-                    {results.filter((r) => r.risk_level === "DANGER").length}{" "}
-                    Dangers
+                    <CheckCircle size={18} /> No malicious files found
                   </div>
-                  <div style={{ color: "#f59e0b", fontWeight: "bold" }}>
-                    {results.filter((r) => r.risk_level === "WARNING").length}{" "}
-                    Warnings
-                  </div>
-                </div>
+                ) : (
+                  <>
+                    <div
+                      style={{ color: "var(--btn-danger)", fontWeight: "bold" }}
+                    >
+                      {results.filter((r) => r.risk_level === "DANGER").length}{" "}
+                      Dangers
+                    </div>
+                    <div style={{ color: "#f59e0b", fontWeight: "bold" }}>
+                      {results.filter((r) => r.risk_level === "WARNING").length}{" "}
+                      Warnings
+                    </div>
+                  </>
+                )}
+              </div>
 
-                {/* HEADER */}
+              <button
+                className="secondary-btn"
+                onClick={() => {
+                  setHasScanned(false);
+                  setResults([]);
+                }}
+                style={{ display: "flex", gap: 8, alignItems: "center" }}
+              >
+                <RefreshCw size={16} /> New Scan
+              </button>
+            </div>
+
+            {/* GRID HEADER */}
+            {results.length > 0 && (
+              <>
                 <div
                   style={{
                     display: "grid",
@@ -366,7 +394,7 @@ export function FileAnalyzerView() {
                   <div></div>
                 </div>
 
-                {/* ROWS */}
+                {/* GRID ROWS */}
                 {results.map((item, i) => (
                   <div
                     key={i}

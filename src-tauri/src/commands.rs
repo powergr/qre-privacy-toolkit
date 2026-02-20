@@ -322,7 +322,7 @@ pub async fn get_public_ip_address() -> CommandResult<breach::IpResult> {
     breach::get_public_ip().await.map_err(|e| e.to_string())
 }
 
-// --- PASSWORD GENERATOR (RESTORED) ---
+// --- PASSWORD GENERATOR  ---
 #[tauri::command]
 pub fn generate_passphrase() -> String {
     let mut rng = rand::thread_rng();
