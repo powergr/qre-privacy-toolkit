@@ -12,12 +12,14 @@ import {
   AlertTriangle,
   Mail,
   ExternalLink,
-  Key,
+  Copy,
+  Check,
+  RefreshCw,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { PasswordInput } from "../common/PasswordInput";
 
-// --- CLIENT SIDE HASHING ---
+// --- CLIENT SIDE HASHING (Zero-Knowledge) ---
 async function sha1Hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -29,15 +31,37 @@ async function sha1Hex(text: string): Promise<string> {
     .toUpperCase();
 }
 
-interface BreachInfo {
-  Name: string;
-  Title: string;
-  Domain: string;
-  BreachDate: string;
-  Description: string;
-  PwnCount: number;
-  DataClasses: string[];
-  IsVerified: boolean;
+// --- PASSWORD STRENGTH ANALYZER ---
+function getPasswordStrength(pwd: string): {
+  label: string;
+  color: string;
+  score: number;
+} {
+  const hasUpper = /[A-Z]/.test(pwd);
+  const hasLower = /[a-z]/.test(pwd);
+  const hasDigit = /[0-9]/.test(pwd);
+  const hasSpecial = /[^A-Za-z0-9]/.test(pwd);
+
+  let score = 0;
+  if (hasUpper) score++;
+  if (hasLower) score++;
+  if (hasDigit) score++;
+  if (hasSpecial) score++;
+
+  // Length bonus
+  if (pwd.length >= 12) score++;
+  if (pwd.length >= 16) score++;
+
+  if (pwd.length < 8) {
+    return { label: "Very Weak", color: "#ef4444", score: 0 };
+  }
+  if (score <= 2) {
+    return { label: "Weak", color: "#f97316", score: 1 };
+  }
+  if (score === 3 || score === 4) {
+    return { label: "Medium", color: "#eab308", score: 2 };
+  }
+  return { label: "Strong", color: "#22c55e", score: 3 };
 }
 
 export function BreachView() {
@@ -55,14 +79,10 @@ export function BreachView() {
   } | null>(null);
   const [passError, setPassError] = useState<string | null>(null);
   const [lastCheckTime, setLastCheckTime] = useState(0);
+  const [autoClearPassword, setAutoClearPassword] = useState(true);
 
-  // --- EMAIL STATE ---
+  // --- EMAIL STATE (Simplified - No API) ---
   const [email, setEmail] = useState("");
-  const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem("hibp_api_key") || "",
-  );
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [emailBreaches, setEmailBreaches] = useState<BreachInfo[] | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
 
   // --- NETWORK STATE ---
@@ -70,16 +90,34 @@ export function BreachView() {
   const [isWarp, setIsWarp] = useState(false);
   const [ipLoading, setIpLoading] = useState(false);
   const [ipService, setIpService] = useState("");
+  const [copiedIp, setCopiedIp] = useState(false);
 
-  // --- ACTIONS ---
-
+  // --- PASSWORD CHECK ---
   async function checkPassword() {
-    if (!password.trim()) {
+    // FIX: Comprehensive input validation
+    const trimmedPassword = password.trim();
+
+    if (!trimmedPassword) {
       setPassError("Please enter a password.");
       return;
     }
+
+    // FIX: Max length validation (prevent memory exhaustion)
+    if (trimmedPassword.length > 1000) {
+      setPassError("Password is too long (max 1000 characters).");
+      return;
+    }
+
+    // FIX: Character validation (reject binary data / control characters)
+    if (!/^[\x20-\x7E]+$/.test(trimmedPassword)) {
+      setPassError("Password contains invalid characters.");
+      return;
+    }
+
+    // FIX: Rate limiting (2 second cooldown)
     if (Date.now() - lastCheckTime < 2000) {
-      setPassError("Please wait a moment.");
+      const remaining = Math.ceil((2000 - (Date.now() - lastCheckTime)) / 1000);
+      setPassError(`Please wait ${remaining} second(s) before checking again.`);
       return;
     }
 
@@ -87,52 +125,76 @@ export function BreachView() {
     setPassResult(null);
     setPassError(null);
     setLastCheckTime(Date.now());
+
     try {
-      const hash = await sha1Hex(password);
+      // SECURITY: Hash password locally (zero-knowledge)
+      const hash = await sha1Hex(trimmedPassword);
+
+      // Send ONLY the hash to backend
       const res = await invoke<{ found: boolean; count: number }>(
         "check_password_breach",
         { sha1Hash: hash },
       );
+
       setPassResult(res);
+
+      // FIX: Auto-clear password after successful check (optional)
+      if (autoClearPassword && res) {
+        setTimeout(() => {
+          setPassword("");
+        }, 3000);
+      }
     } catch (e) {
-      setPassError("Connection failed: " + e);
+      const errorMsg = String(e);
+      if (errorMsg.toLowerCase().includes("network")) {
+        setPassError(
+          "Cannot reach HIBP database. Please check your internet connection.",
+        );
+      } else if (errorMsg.toLowerCase().includes("timeout")) {
+        setPassError("Request timed out. Please try again.");
+      } else if (errorMsg.toLowerCase().includes("429")) {
+        setPassError(
+          "Rate limit exceeded. Please wait a moment and try again.",
+        );
+      } else {
+        setPassError("Connection failed: " + errorMsg);
+      }
     } finally {
       setPassLoading(false);
     }
   }
 
-  async function checkEmail() {
-    if (!email.trim() || !email.includes("@")) {
-      setEmailError("Invalid email address.");
+  // --- EMAIL CHECK (Option 1: Redirect to HIBP Website) ---
+  function checkEmailOnWebsite() {
+    // FIX: Improved email validation
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+      setEmailError("Please enter an email address.");
       return;
     }
 
-    // If no API key, offer external link
-    if (!apiKey.trim()) {
-      setEmailError(
-        "API Key required for inline check. Use the button below to check for free on the website.",
-      );
+    // FIX: Max length validation (RFC 5321 max email length)
+    if (trimmedEmail.length > 254) {
+      setEmailError("Email address is too long.");
       return;
     }
 
-    setEmailLoading(true);
-    setEmailBreaches(null);
+    // FIX: Proper email regex validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setEmailError("Invalid email address format.");
+      return;
+    }
+
+    // Clear error and open HIBP website
     setEmailError(null);
-    localStorage.setItem("hibp_api_key", apiKey); // Save key for convenience
-
-    try {
-      const res = await invoke<BreachInfo[]>("check_email_breach", {
-        email,
-        apiKey,
-      });
-      setEmailBreaches(res);
-    } catch (e) {
-      setEmailError("API Error: " + e);
-    } finally {
-      setEmailLoading(false);
-    }
+    openUrl(
+      `https://haveibeenpwned.com/account/${encodeURIComponent(trimmedEmail)}`,
+    );
   }
 
+  // --- IP CHECK ---
   async function checkIp() {
     setIpLoading(true);
     try {
@@ -144,15 +206,33 @@ export function BreachView() {
       setPublicIp(res.ip);
       setIsWarp(res.is_warp);
       setIpService(res.service_used);
-    } catch {
-      setPublicIp("Unknown");
+    } catch (e) {
+      setPublicIp("Unknown (Service unavailable)");
+      setIpService("Error");
+      console.error("IP check failed:", e);
     } finally {
       setIpLoading(false);
     }
   }
 
+  // FIX: Copy IP to clipboard
+  async function copyIpAddress() {
+    if (publicIp && publicIp !== "Unknown (Service unavailable)") {
+      try {
+        await navigator.clipboard.writeText(publicIp);
+        setCopiedIp(true);
+        setTimeout(() => setCopiedIp(false), 2000);
+      } catch (e) {
+        console.error("Failed to copy IP:", e);
+      }
+    }
+  }
+
+  // Auto-check IP when Network tab is opened
   useEffect(() => {
-    if (activeTab === "network" && !publicIp) checkIp();
+    if (activeTab === "network" && !publicIp) {
+      checkIp();
+    }
   }, [activeTab]);
 
   return (
@@ -186,22 +266,26 @@ export function BreachView() {
             padding: "4px",
           }}
         >
-          {["password", "email", "network"].map((t) => (
+          {[
+            { id: "password", label: "Password Breach" },
+            { id: "email", label: "Email Breach" },
+            { id: "network", label: "Network Security" },
+          ].map((tab) => (
             <button
-              key={t}
-              onClick={() => setActiveTab(t as any)}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
               style={{
                 padding: "8px 20px",
                 borderRadius: "6px",
                 border: "none",
-                background: activeTab === t ? "var(--accent)" : "transparent",
-                color: activeTab === t ? "white" : "var(--text-dim)",
+                background:
+                  activeTab === tab.id ? "var(--accent)" : "transparent",
+                color: activeTab === tab.id ? "white" : "var(--text-dim)",
                 cursor: "pointer",
                 fontWeight: 500,
-                textTransform: "capitalize",
               }}
             >
-              {t} Breach
+              {tab.label}
             </button>
           ))}
         </div>
@@ -233,8 +317,9 @@ export function BreachView() {
               <span style={{ color: "var(--success)" }}>
                 ✓ Zero-Knowledge:
               </span>{" "}
-              Hash calculated locally.
+              Hash calculated locally using k-Anonymity.
             </p>
+
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               <PasswordInput
                 value={password}
@@ -247,6 +332,28 @@ export function BreachView() {
                 showStrength={false}
                 autoFocus
               />
+
+              {/* FIX: Auto-clear checkbox */}
+              <label
+                style={{
+                  fontSize: "0.85rem",
+                  color: "var(--text-dim)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={autoClearPassword}
+                  onChange={(e) => setAutoClearPassword(e.target.checked)}
+                  style={{ cursor: "pointer" }}
+                />
+                Clear password 3 seconds after check
+              </label>
+
               <button
                 className="auth-btn"
                 onClick={checkPassword}
@@ -267,6 +374,8 @@ export function BreachView() {
                 {passLoading ? "Checking..." : "Scan Password"}
               </button>
             </div>
+
+            {/* FIX: Inline error display */}
             {passError && (
               <div
                 style={{
@@ -274,9 +383,11 @@ export function BreachView() {
                   padding: 10,
                   borderRadius: 6,
                   background: "rgba(239, 68, 68, 0.1)",
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
                   color: "var(--btn-danger)",
                   fontSize: "0.9rem",
                   display: "flex",
+                  alignItems: "center",
                   gap: 10,
                 }}
               >
@@ -284,6 +395,8 @@ export function BreachView() {
               </div>
             )}
           </div>
+
+          {/* PASSWORD RESULTS */}
           {passResult && (
             <div
               className="modern-card"
@@ -309,6 +422,10 @@ export function BreachView() {
                     Found in{" "}
                     <strong>{passResult.count.toLocaleString()}</strong>{" "}
                     breaches.
+                    <br />
+                    <span style={{ fontSize: "0.9rem" }}>
+                      Do not use this password anywhere.
+                    </span>
                   </p>
                 </div>
               ) : (
@@ -319,9 +436,50 @@ export function BreachView() {
                   <h3 style={{ margin: "0 0 10px 0", fontSize: "1.4rem" }}>
                     ✅ CLEAN
                   </h3>
-                  <p style={{ color: "var(--text-main)" }}>
+                  <p style={{ color: "var(--text-main)", marginBottom: 10 }}>
                     Not found in public leaks.
                   </p>
+
+                  {/* FIX: Password strength indicator */}
+                  {password &&
+                    (() => {
+                      const strength = getPasswordStrength(password);
+                      return (
+                        <div
+                          style={{
+                            marginTop: 10,
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            background: `${strength.color}22`,
+                            border: `1px solid ${strength.color}44`,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: "0.85rem",
+                              color: "var(--text-dim)",
+                            }}
+                          >
+                            Password Strength:{" "}
+                            <strong style={{ color: strength.color }}>
+                              {strength.label}
+                            </strong>
+                          </div>
+                          {strength.score < 3 && (
+                            <div
+                              style={{
+                                fontSize: "0.75rem",
+                                color: "var(--text-dim)",
+                                marginTop: 4,
+                              }}
+                            >
+                              Consider using a longer password with mixed
+                              characters.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                 </div>
               )}
             </div>
@@ -329,7 +487,7 @@ export function BreachView() {
         </div>
       )}
 
-      {/* --- TAB 2: EMAIL BREACH (NEW) --- */}
+      {/* --- TAB 2: EMAIL BREACH (Option 1: Redirect to Website) --- */}
       {activeTab === "email" && (
         <div
           style={{
@@ -340,18 +498,35 @@ export function BreachView() {
           }}
         >
           <div className="modern-card" style={{ padding: 30 }}>
-            <p
+            <div
               style={{
-                marginTop: 0,
-                marginBottom: 20,
-                color: "var(--text-dim)",
-                lineHeight: "1.5",
-                fontSize: "0.9rem",
                 textAlign: "center",
+                marginBottom: 20,
               }}
             >
-              Check which services have leaked your email address.
-            </p>
+              <Mail
+                size={48}
+                style={{ color: "var(--accent)", marginBottom: 10 }}
+              />
+              <h3 style={{ margin: "0 0 8px 0" }}>Email Breach Check</h3>
+              <p
+                style={{
+                  color: "var(--text-dim)",
+                  lineHeight: "1.5",
+                  fontSize: "0.9rem",
+                  margin: 0,
+                }}
+              >
+                Check if your email has been exposed in data breaches.
+                <br />
+                <small>
+                  Powered by{" "}
+                  <strong style={{ color: "var(--accent)" }}>
+                    haveibeenpwned.com
+                  </strong>
+                </small>
+              </p>
+            </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
               <div
@@ -362,7 +537,7 @@ export function BreachView() {
                   background: "var(--bg-color)",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
-                  padding: "0 10px",
+                  padding: "0 12px",
                 }}
               >
                 <Mail size={18} color="var(--text-dim)" />
@@ -373,78 +548,52 @@ export function BreachView() {
                     background: "transparent",
                     paddingLeft: 0,
                   }}
+                  type="email"
                   placeholder="name@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setEmailError(null);
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === "Enter") checkEmailOnWebsite();
+                  }}
                 />
               </div>
 
-              <div
+              <button
+                className="auth-btn"
+                onClick={checkEmailOnWebsite}
+                disabled={!email.trim()}
                 style={{
                   display: "flex",
                   alignItems: "center",
+                  justifyContent: "center",
                   gap: 10,
-                  background: "var(--bg-color)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "0 10px",
+                  padding: 12,
                 }}
               >
-                <Key size={18} color="var(--text-dim)" />
-                <input
-                  className="auth-input"
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    paddingLeft: 0,
-                  }}
-                  type="password"
-                  placeholder="HIBP API Key (Optional)"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-              </div>
+                <ExternalLink size={20} />
+                Check on haveibeenpwned.com (Free & Secure)
+              </button>
 
-              <div style={{ display: "flex", gap: 10 }}>
-                <button
-                  className="auth-btn"
-                  onClick={checkEmail}
-                  disabled={emailLoading}
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    padding: 12,
-                  }}
-                >
-                  {emailLoading ? (
-                    <Loader2 className="spinner" size={20} />
-                  ) : (
-                    <Search size={20} />
-                  )}
-                  {emailLoading ? "Scanning..." : "Scan with API"}
-                </button>
-
-                <button
-                  className="secondary-btn"
-                  onClick={() =>
-                    openUrl(`https://haveibeenpwned.com/account/${email}`)
-                  }
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                  }}
-                >
-                  <ExternalLink size={20} /> Check Website (Free)
-                </button>
-              </div>
+              <p
+                style={{
+                  fontSize: "0.75rem",
+                  color: "var(--text-dim)",
+                  textAlign: "center",
+                  margin: 0,
+                  opacity: 0.7,
+                  lineHeight: 1.5,
+                }}
+              >
+                Your email will be checked securely on HIBP's website.
+                <br />
+                No account or API key required.
+              </p>
             </div>
 
+            {/* FIX: Inline error display */}
             {emailError && (
               <div
                 style={{
@@ -452,94 +601,57 @@ export function BreachView() {
                   padding: 10,
                   borderRadius: 6,
                   background: "rgba(239, 68, 68, 0.1)",
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
                   color: "var(--btn-danger)",
                   fontSize: "0.85rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
                 }}
               >
-                {emailError}
+                <AlertTriangle size={16} /> {emailError}
               </div>
             )}
           </div>
 
-          {/* EMAIL RESULTS */}
-          {emailBreaches && (
-            <div style={{ marginTop: 20 }}>
-              {emailBreaches.length === 0 ? (
-                <div
-                  className="modern-card"
-                  style={{ textAlign: "center", color: "#4ade80" }}
-                >
-                  <CheckCircle size={48} style={{ marginBottom: 10 }} />
-                  <h3>Good News! No breaches found.</h3>
-                </div>
-              ) : (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 15 }}
-                >
-                  <h3 style={{ margin: 0, color: "var(--btn-danger)" }}>
-                    {emailBreaches.length} Breaches Found:
-                  </h3>
-                  {emailBreaches.map((b) => (
-                    <div
-                      key={b.Name}
-                      className="modern-card"
-                      style={{ padding: 20, borderColor: "var(--btn-danger)" }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "flex-start",
-                        }}
-                      >
-                        <h3 style={{ margin: 0 }}>{b.Title}</h3>
-                        <span
-                          style={{
-                            fontSize: "0.8rem",
-                            background: "var(--bg-color)",
-                            padding: "2px 8px",
-                            borderRadius: 4,
-                          }}
-                        >
-                          {b.BreachDate}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: "0.85rem",
-                          color: "var(--text-dim)",
-                          margin: "10px 0",
-                        }}
-                        dangerouslySetInnerHTML={{ __html: b.Description }}
-                      />
-                      <div
-                        style={{ display: "flex", gap: 5, flexWrap: "wrap" }}
-                      >
-                        {b.DataClasses.map((d) => (
-                          <span
-                            key={d}
-                            style={{
-                              fontSize: "0.75rem",
-                              background: "rgba(239, 68, 68, 0.1)",
-                              color: "var(--btn-danger)",
-                              padding: "2px 6px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {d}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {/* Information Card */}
+          <div
+            className="modern-card"
+            style={{
+              marginTop: 20,
+              padding: 20,
+              background: "rgba(59, 130, 246, 0.05)",
+              borderColor: "rgba(59, 130, 246, 0.3)",
+            }}
+          >
+            <h4
+              style={{
+                margin: "0 0 10px 0",
+                fontSize: "1rem",
+                color: "var(--text-main)",
+              }}
+            >
+              What You'll See:
+            </h4>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 20,
+                color: "var(--text-dim)",
+                fontSize: "0.85rem",
+                lineHeight: 1.6,
+              }}
+            >
+              <li>Which services have been breached (LinkedIn, Adobe, etc.)</li>
+              <li>What data was exposed (passwords, emails, addresses)</li>
+              <li>When each breach occurred</li>
+              <li>Recommendations for next steps</li>
+            </ul>
+          </div>
         </div>
       )}
 
-      {/* --- TAB 3: NETWORK --- */}
+      {/* --- TAB 3: NETWORK SECURITY --- */}
       {activeTab === "network" && (
         <div
           style={{
@@ -549,6 +661,7 @@ export function BreachView() {
             animation: "fadeIn 0.3s ease",
           }}
         >
+          {/* IP STATUS CARD */}
           <div
             className="modern-card"
             style={{
@@ -580,20 +693,55 @@ export function BreachView() {
             >
               {isWarp ? <CheckCircle size={28} /> : <AlertTriangle size={28} />}
             </div>
+
             <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
               {isWarp ? "Secure Connection" : "Unverified Network"}
             </h3>
+
+            {/* IP ADDRESS with Copy Button */}
             <div
               style={{
-                fontSize: "1.5rem",
-                fontWeight: "bold",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
                 margin: "10px 0",
-                fontFamily: "monospace",
-                letterSpacing: "1px",
               }}
             >
-              {ipLoading ? <Loader2 className="spinner" /> : publicIp || "---"}
+              <div
+                style={{
+                  fontSize: "1.5rem",
+                  fontWeight: "bold",
+                  fontFamily: "monospace",
+                  letterSpacing: "1px",
+                }}
+              >
+                {ipLoading ? (
+                  <Loader2 className="spinner" />
+                ) : (
+                  publicIp || "---"
+                )}
+              </div>
+
+              {/* FIX: Copy IP button */}
+              {publicIp && publicIp !== "Unknown (Service unavailable)" && (
+                <button
+                  onClick={copyIpAddress}
+                  className="icon-btn-ghost"
+                  title="Copy IP Address"
+                  style={{
+                    padding: 6,
+                    borderRadius: 4,
+                  }}
+                >
+                  {copiedIp ? (
+                    <Check size={18} color="var(--success)" />
+                  ) : (
+                    <Copy size={18} />
+                  )}
+                </button>
+              )}
             </div>
+
             <div
               style={{
                 background: isWarp
@@ -619,17 +767,35 @@ export function BreachView() {
                 </>
               )}
             </div>
+
             <div
               style={{
                 marginTop: 10,
                 fontSize: "0.7rem",
                 color: "var(--text-dim)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
-              Source: {ipService}
+              <span>Source: {ipService}</span>
+              {/* FIX: Refresh button */}
+              <button
+                onClick={checkIp}
+                disabled={ipLoading}
+                className="icon-btn-ghost"
+                title="Refresh IP"
+                style={{
+                  padding: 4,
+                  borderRadius: 4,
+                }}
+              >
+                <RefreshCw size={14} className={ipLoading ? "spinner" : ""} />
+              </button>
             </div>
           </div>
 
+          {/* WARP RECOMMENDATION CARD */}
           {!isWarp && (
             <div
               className="modern-card"
@@ -676,6 +842,7 @@ export function BreachView() {
                     FREE
                   </div>
                 </div>
+
                 <p
                   style={{
                     color: "var(--text-dim)",
@@ -684,13 +851,18 @@ export function BreachView() {
                     fontSize: "0.9rem",
                   }}
                 >
-                  Your public IP is exposed. If you are already using a VPN
-                  (NordVPN, Proton), you are safe.
+                  Your public IP is exposed. If you're already using a VPN
+                  (NordVPN, ProtonVPN, etc.), you're protected.
                   <br />
                   <br />
-                  If not, we recommend <strong>Cloudflare WARP</strong>. It
-                  creates an encrypted tunnel to mask your location.
+                  If not, we recommend{" "}
+                  <strong style={{ color: "var(--text-main)" }}>
+                    Cloudflare WARP
+                  </strong>
+                  . It creates an encrypted tunnel to mask your location and
+                  prevent ISP tracking.
                 </p>
+
                 <button
                   onClick={() => openUrl("https://one.one.one.one")}
                   style={{
@@ -714,6 +886,20 @@ export function BreachView() {
               </div>
             </div>
           )}
+
+          {/* DISCLAIMER */}
+          <p
+            style={{
+              textAlign: "center",
+              fontSize: "0.75rem",
+              color: "var(--text-dim)",
+              marginTop: 15,
+              opacity: 0.6,
+            }}
+          >
+            QRE recommends Cloudflare Warp for privacy, but is not affiliated
+            with Cloudflare, Inc.
+          </p>
         </div>
       )}
     </div>

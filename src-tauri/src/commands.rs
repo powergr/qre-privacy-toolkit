@@ -269,16 +269,16 @@ pub fn generate_qr_code(text: String, fg: String, bg: String) -> CommandResult<S
 
 #[tauri::command]
 pub async fn check_password_breach(sha1_hash: String) -> CommandResult<breach::BreachResult> {
-    // 1. VALIDATION: Ensure it is a valid SHA1 hash (40 hex chars)
+    // Validate input (40 hex characters)
     if sha1_hash.len() != 40 || !sha1_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid hash format. Frontend must send a SHA-1 hash.".to_string());
     }
 
-    // 2. SPLIT: K-Anonymity logic (Prefix = 5, Suffix = 35)
+    // Split hash for k-Anonymity
     let prefix = &sha1_hash[0..5];
     let suffix = &sha1_hash[5..];
 
-    // 3. CALL MODULE
+    // Call breach check
     breach::check_pwned_by_prefix(prefix, suffix)
         .await
         .map_err(|e| e.to_string())
@@ -287,16 +287,6 @@ pub async fn check_password_breach(sha1_hash: String) -> CommandResult<breach::B
 #[tauri::command]
 pub async fn get_public_ip_address() -> CommandResult<breach::IpResult> {
     breach::get_public_ip().await.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn check_email_breach(
-    email: String,
-    api_key: String,
-) -> CommandResult<Vec<breach::BreachInfo>> {
-    breach::check_email(&email, &api_key)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 // --- PASSWORD GENERATOR (RESTORED) ---

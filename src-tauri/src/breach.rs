@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::time::Duration;
 
 #[derive(Serialize)]
@@ -16,98 +16,111 @@ pub struct IpResult {
     pub service_used: String,
 }
 
-// --- NEW STRUCT FOR EMAIL BREACHES ---
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "PascalCase")] // HIBP returns PascalCase JSON
-pub struct BreachInfo {
-    pub name: String,
-    pub title: String,
-    pub domain: String,
-    pub breach_date: String,
-    pub description: String,
-    pub pwn_count: u64,
-    pub data_classes: Vec<String>,
-    pub is_verified: bool,
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// PASSWORD BREACH CHECK (k-Anonymity with HIBP)
+// ─────────────────────────────────────────────────────────────────────────────
 
-// --- PASSWORD CHECK (k-Anonymity) ---
+/// Checks if a password hash appears in the HIBP database using k-Anonymity.
+///
+/// SECURITY: Only the first 5 characters of the SHA-1 hash are sent to HIBP.
+/// The remaining 35 characters are matched locally, ensuring zero-knowledge.
+///
+/// # Arguments
+/// * `prefix` - First 5 characters of SHA-1 hash (uppercase hex)
+/// * `suffix` - Remaining 35 characters of SHA-1 hash (uppercase hex)
+///
+/// # Returns
+/// * `BreachResult` with `found` status and breach `count`
 pub async fn check_pwned_by_prefix(prefix: &str, suffix: &str) -> Result<BreachResult> {
+    // Validate inputs (defense in depth - frontend also validates)
+    if prefix.len() != 5 || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!("Invalid prefix: must be 5 hex characters"));
+    }
+    if suffix.len() != 35 || !suffix.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!("Invalid suffix: must be 35 hex characters"));
+    }
+
     let url = format!("https://api.pwnedpasswords.com/range/{}", prefix);
     let client = Client::new();
 
     let response = client
         .get(&url)
-        .header("User-Agent", "QRE-Privacy-Toolkit")
+        .header("User-Agent", "QRE-Privacy-Toolkit/1.0")
         .timeout(Duration::from_secs(10))
         .send()
         .await?;
 
+    // Check for rate limiting
+    if response.status().as_u16() == 429 {
+        return Err(anyhow!(
+            "HIBP rate limit exceeded. Please wait a moment and try again."
+        ));
+    }
+
+    // Check for other HTTP errors
     if !response.status().is_success() {
-        return Err(anyhow!("HIBP API Error: {}", response.status()));
+        return Err(anyhow!("HIBP API error: {}", response.status()));
     }
 
     let text = response.text().await?;
 
+    // Parse response and find suffix match
     for line in text.lines() {
         let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() == 2 {
-            if parts[0].to_uppercase() == suffix.to_uppercase() {
-                let count = parts[1].parse::<u64>().unwrap_or(0);
-                return Ok(BreachResult { found: true, count });
-            }
+
+        if parts.len() != 2 {
+            // Malformed line - log warning and continue
+            eprintln!("Warning: Malformed HIBP response line: {}", line);
+            continue;
+        }
+
+        if parts[0].to_uppercase() == suffix.to_uppercase() {
+            let count = parts[1]
+                .parse::<u64>()
+                .map_err(|_| anyhow!("Invalid count in HIBP response"))?;
+            return Ok(BreachResult { found: true, count });
         }
     }
 
+    // Not found in any breaches
     Ok(BreachResult {
         found: false,
         count: 0,
     })
 }
 
-// --- NEW: EMAIL CHECK (Requires API Key) ---
-pub async fn check_email(email: &str, api_key: &str) -> Result<Vec<BreachInfo>> {
-    let url = format!(
-        "https://haveibeenpwned.com/api/v3/breachedaccount/{}?truncateResponse=false",
-        email
-    );
-    let client = Client::new();
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC IP ADDRESS CHECK (with VPN Detection)
+// ─────────────────────────────────────────────────────────────────────────────
 
-    let response = client
-        .get(&url)
-        .header("User-Agent", "QRE-Privacy-Toolkit")
-        .header("hibp-api-key", api_key)
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await?;
-
-    // 404 means "Not Found" in HIBP terms (Good news!)
-    if response.status() == 404 {
-        return Ok(Vec::new());
-    }
-
-    if !response.status().is_success() {
-        return Err(anyhow!("API Error: {} (Check API Key)", response.status()));
-    }
-
-    let breaches: Vec<BreachInfo> = response.json().await?;
-    Ok(breaches)
-}
-
-// --- IP CHECK ---
+/// Gets the user's public IP address with automatic fallback.
+///
+/// Tries Cloudflare first (can detect Warp), then falls back to ipify.
+/// Both services are privacy-respecting and use HTTPS.
 pub async fn get_public_ip() -> Result<IpResult> {
+    // Try Cloudflare first (supports Warp detection)
     match get_ip_cloudflare().await {
         Ok(res) => return Ok(res),
-        Err(e) => eprintln!("Cloudflare IP check failed: {}", e),
+        Err(e) => {
+            eprintln!("Cloudflare IP check failed: {}", e);
+        }
     }
+
+    // Fallback to ipify
     match get_ip_ipify().await {
         Ok(res) => return Ok(res),
-        Err(e) => eprintln!("Ipify IP check failed: {}", e),
+        Err(e) => {
+            eprintln!("ipify IP check failed: {}", e);
+        }
     }
+
+    // All services failed
     Err(anyhow!(
-        "All IP services failed. Check internet connection."
+        "All IP check services failed. Please check your internet connection."
     ))
 }
 
+/// Gets IP from Cloudflare's trace endpoint (supports Warp detection)
 async fn get_ip_cloudflare() -> Result<IpResult> {
     let client = Client::new();
     let resp = client
@@ -118,7 +131,7 @@ async fn get_ip_cloudflare() -> Result<IpResult> {
         .text()
         .await?;
 
-    let mut ip = "Unknown".to_string();
+    let mut ip = String::new();
     let mut is_warp = false;
 
     for line in resp.lines() {
@@ -133,9 +146,10 @@ async fn get_ip_cloudflare() -> Result<IpResult> {
         }
     }
 
-    if ip == "Unknown" {
+    if ip.is_empty() {
         return Err(anyhow!("Could not parse Cloudflare response"));
     }
+
     Ok(IpResult {
         ip,
         is_warp,
@@ -143,6 +157,7 @@ async fn get_ip_cloudflare() -> Result<IpResult> {
     })
 }
 
+/// Gets IP from ipify (fallback service)
 async fn get_ip_ipify() -> Result<IpResult> {
     let client = Client::new();
     let ip = client
@@ -154,8 +169,8 @@ async fn get_ip_ipify() -> Result<IpResult> {
         .await?;
 
     Ok(IpResult {
-        ip,
-        is_warp: false,
+        ip: ip.trim().to_string(),
+        is_warp: false, // ipify cannot detect Warp
         service_used: "ipify".into(),
     })
 }
