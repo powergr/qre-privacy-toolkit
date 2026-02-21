@@ -62,10 +62,31 @@ pub async fn scan_system_junk() -> CommandResult<Vec<system_cleaner::JunkItem>> 
 }
 
 #[tauri::command]
-pub async fn clean_system_junk(paths: Vec<String>) -> CommandResult<u64> {
-    tauri::async_runtime::spawn_blocking(move || Ok(system_cleaner::clean_paths(paths)))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn clean_system_junk(
+    paths: Vec<String>,
+    app_handle: tauri::AppHandle, // ← Add this
+) -> CommandResult<system_cleaner::CleanResult> {
+    // ← Changed return type
+    system_cleaner::clean_paths(paths, &app_handle).map_err(|e| e.to_string())
+}
+
+/// Performs a dry run (preview) of what would be deleted.
+///
+/// NEW COMMAND: Shows user exactly what will be deleted before they confirm.
+/// Returns file count, total size, file list, and warnings.
+#[tauri::command]
+pub async fn dry_run_clean(paths: Vec<String>) -> CommandResult<system_cleaner::DryRunResult> {
+    system_cleaner::dry_run(paths).map_err(|e| e.to_string())
+}
+
+/// Cancels an ongoing cleanup operation.
+///
+/// NEW COMMAND: Allows user to stop mid-operation.
+/// Sets a global flag that the cleanup loop checks periodically.
+#[tauri::command]
+pub async fn cancel_system_clean() -> CommandResult<()> {
+    system_cleaner::cancel_cleaning();
+    Ok(())
 }
 
 // --- FILE ANALYZER COMMANDS ---

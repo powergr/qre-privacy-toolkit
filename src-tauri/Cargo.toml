@@ -63,6 +63,9 @@ trash = "3.3.1"
 [profile.dev.package."*"]
 opt-level = 3
 
+[features]
+clipboard = []
+
 [profile.release]
 codegen-units = 1
 lto = true
