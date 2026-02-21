@@ -13,7 +13,7 @@ use sysinfo::Disks;
 use crate::analyzer;
 use crate::bookmarks::BookmarksVault;
 use crate::breach;
-use crate::cleaner::{self, MetadataReport};
+use crate::cleaner::{self};
 use crate::clipboard_store::ClipboardVault;
 use crate::crypto;
 use crate::crypto_stream;
@@ -152,18 +152,47 @@ fn is_already_compressed(filename: &str) -> bool {
 
 // --- METADATA CLEANER  ---
 #[tauri::command]
-pub async fn analyze_file_metadata(path: String) -> CommandResult<MetadataReport> {
-    cleaner::analyze_file(Path::new(&path)).map_err(|e| e.to_string())
+pub async fn analyze_file_metadata(path: String) -> CommandResult<cleaner::MetadataReport> {
+    cleaner::analyze_file(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn clean_file_metadata(
     path: String,
+    output_dir: Option<String>,
     options: cleaner::CleaningOptions,
 ) -> CommandResult<String> {
-    let out_path =
-        cleaner::remove_metadata(Path::new(&path), options).map_err(|e| e.to_string())?;
-    Ok(out_path.to_string_lossy().to_string())
+    cleaner::remove_metadata(&path, output_dir.as_deref(), options).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn batch_clean_metadata(
+    paths: Vec<String>,
+    output_dir: Option<String>,
+    options: cleaner::CleaningOptions,
+    app_handle: tauri::AppHandle, // Required for progress events
+) -> CommandResult<cleaner::CleanResult> {
+    cleaner::batch_clean(paths, output_dir, options, &app_handle).map_err(|e| e.to_string())
+}
+
+/// Cancels an ongoing batch cleaning operation.
+///
+/// NEW COMMAND: Allows user to stop mid-operation.
+#[tauri::command]
+pub async fn cancel_metadata_clean() -> CommandResult<()> {
+    cleaner::cancel_cleaning();
+    Ok(())
+}
+
+/// Compares original and cleaned file to show what was removed.
+///
+/// NEW COMMAND: Shows before/after comparison with size reduction.
+#[tauri::command]
+pub async fn compare_metadata_files(
+    original: String,
+    cleaned: String,
+) -> CommandResult<cleaner::ComparisonResult> {
+    cleaner::compare_files(&original, &cleaned).map_err(|e| e.to_string())
 }
 
 // --- HASHER  ---
