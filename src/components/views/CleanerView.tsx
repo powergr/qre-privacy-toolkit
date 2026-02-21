@@ -61,13 +61,6 @@ interface FailedFile {
   error: string;
 }
 
-interface ComparisonResult {
-  original_size: number;
-  cleaned_size: number;
-  removed_tags: string[];
-  size_reduction: number;
-}
-
 const formatSize = (bytes: number): string => {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
