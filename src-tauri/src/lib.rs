@@ -1,9 +1,10 @@
+// Declare all modules
 mod analyzer;
 mod bookmarks;
 mod breach;
 mod cleaner;
 mod clipboard_store;
-mod commands;
+mod commands; // Refers to src/commands/mod.rs
 mod crypto;
 mod crypto_stream;
 mod entropy;
@@ -12,13 +13,14 @@ mod keychain;
 mod notes;
 mod qr;
 mod secure_rng;
+mod shredder;
 mod state;
 mod system_cleaner;
+#[cfg(test)]
 mod tests;
 mod utils;
 mod vault;
 mod wordlist;
-mod shredder;
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
@@ -31,6 +33,7 @@ pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
+        // FIX: Wrapped Mutex in Arc::new() to match SessionState struct definition
         .manage(SessionState {
             master_key: Arc::new(Mutex::new(None)),
         })
@@ -39,7 +42,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        // --- ADDED UPDATER PLUGIN HERE ---
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(not(mobile))]
@@ -70,68 +72,75 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // Auth
-            commands::check_auth_status,
-            commands::init_vault,
-            commands::login,
-            commands::logout,
-            commands::recover_vault,
-            commands::regenerate_recovery_code,
-            commands::change_user_password,
-            // System
-            commands::get_drives,
-            commands::get_startup_file,
-            commands::export_keychain,
-            commands::get_keychain_data,
-            // File Ops
-            commands::delete_items,
-            commands::trash_items,
-            commands::create_dir,
-            commands::rename_item,
-            commands::show_in_folder,
-            commands::scan_system_junk,
-            commands::clean_system_junk,
-            commands::dry_run_clean,
-            commands::cancel_system_clean,
-            commands::read_text_file_content,
-            commands::write_text_file_content,
-            // Crypto
-            commands::lock_file,
-            commands::unlock_file,
-            // Vaults
-            commands::load_password_vault,
-            commands::save_password_vault,
-            commands::load_notes_vault,
-            commands::save_notes_vault,
-            // Utilities
-            commands::generate_passphrase,
-            commands::analyze_file_metadata,
-            commands::clean_file_metadata,
-            commands::batch_clean_metadata,
-            commands::cancel_metadata_clean,
-            commands::compare_metadata_files,
-            commands::check_password_breach,
-            commands::get_public_ip_address,
-            commands::generate_qr,
-            commands::generate_wifi_qr,
-            commands::validate_qr_input,
-            commands::load_bookmarks_vault,
-            commands::save_bookmarks_vault,
-            commands::import_browser_bookmarks,
-            commands::calculate_file_hashes,
-            commands::get_file_metadata,
-            commands::cancel_hashing,
-            commands::save_text_to_file,
-            commands::calculate_text_hashes,
-            commands::scan_directory_targets,
-            // Clipboard
-            commands::add_clipboard_entry,
-            commands::load_clipboard_vault,
-            commands::save_clipboard_vault,
-            // Shredder
-            commands::dry_run_shred,
-            commands::batch_shred_files,
-            commands::cancel_shred,
+            // --- FILE COMMANDS (commands/files.rs) ---
+            commands::files::lock_file,
+            commands::files::unlock_file,
+            commands::files::delete_items,
+            commands::files::trash_items,
+            commands::files::create_dir,
+            commands::files::rename_item,
+            commands::files::show_in_folder,
+            commands::files::read_text_file_content,
+            commands::files::write_text_file_content,
+            commands::files::dry_run_shred,
+            commands::files::batch_shred_files,
+            commands::files::cancel_shred,
+            commands::files::get_drives,
+            commands::files::get_startup_file,
+            // --- VAULT COMMANDS (commands/vault.rs) ---
+            // Auth & System
+            commands::vault::check_auth_status,
+            commands::vault::init_vault,
+            commands::vault::login,
+            commands::vault::logout,
+            commands::vault::change_user_password,
+            commands::vault::recover_vault,
+            commands::vault::regenerate_recovery_code,
+            commands::vault::get_keychain_data,
+            commands::vault::export_keychain,
+            // Password Vault
+            commands::vault::load_password_vault,
+            commands::vault::save_password_vault,
+            // Notes Vault
+            commands::vault::load_notes_vault,
+            commands::vault::save_notes_vault,
+            // Bookmarks Vault
+            commands::vault::load_bookmarks_vault,
+            commands::vault::save_bookmarks_vault,
+            commands::vault::import_browser_bookmarks,
+            // Clipboard Vault
+            commands::vault::load_clipboard_vault,
+            commands::vault::save_clipboard_vault,
+            commands::vault::add_clipboard_entry,
+            // --- TOOLS COMMANDS (commands/tools.rs) ---
+            // System Cleaner
+            commands::tools::scan_system_junk,
+            commands::tools::clean_system_junk,
+            commands::tools::dry_run_clean, // Ensure these exist in tools.rs
+            commands::tools::cancel_system_clean, // Ensure these exist in tools.rs
+            // File Analyzer
+            commands::tools::scan_directory_targets,
+            // Metadata Cleaner
+            commands::tools::analyze_file_metadata,
+            commands::tools::clean_file_metadata,
+            commands::tools::batch_clean_metadata,
+            commands::tools::cancel_metadata_clean,
+            commands::tools::compare_metadata_files,
+            // Hasher
+            commands::tools::calculate_file_hashes,
+            commands::tools::get_file_metadata,
+            commands::tools::cancel_hashing,
+            commands::tools::save_text_to_file,
+            commands::tools::calculate_text_hashes,
+            // QR Generator
+            commands::tools::generate_qr,
+            commands::tools::generate_wifi_qr,
+            commands::tools::validate_qr_input,
+            // Privacy Check
+            commands::tools::check_password_breach,
+            commands::tools::get_public_ip_address,
+            // Generator
+            commands::tools::generate_passphrase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
