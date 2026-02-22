@@ -345,8 +345,28 @@ pub fn import_browser_bookmarks(
 
 // --- QR CODE COMMAND ---
 #[tauri::command]
-pub fn generate_qr_code(text: String, fg: String, bg: String) -> CommandResult<String> {
-    qr::generate_qr(&text, &fg, &bg).map_err(|e| e.to_string())
+pub async fn generate_qr(
+    options: qr::QrOptions,
+) -> CommandResult<qr::QrResult> {
+    qr::generate_qr(options).map_err(|e| e.to_string())
+}
+
+// --- Generates WiFi QR code with validation. ---
+
+#[tauri::command]
+pub async fn generate_wifi_qr(
+    options: qr::WifiQrOptions,
+) -> CommandResult<qr::QrResult> {
+    qr::generate_wifi_qr(options).map_err(|e| e.to_string())
+}
+
+// --- Validates QR input without generating. ---
+
+#[tauri::command]
+pub async fn validate_qr_input(
+    text: String,
+) -> CommandResult<qr::QrValidation> {
+    Ok(qr::validate_qr_input(&text))
 }
 
 // --- PRIVACY & BREACH CHECK ---
