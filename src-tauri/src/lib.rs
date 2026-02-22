@@ -18,6 +18,7 @@ mod tests;
 mod utils;
 mod vault;
 mod wordlist;
+mod shredder;
 
 use state::SessionState;
 use std::sync::{Arc, Mutex};
@@ -124,7 +125,11 @@ pub fn run() {
             // Clipboard
             commands::add_clipboard_entry,
             commands::load_clipboard_vault,
-            commands::save_clipboard_vault
+            commands::save_clipboard_vault,
+            // Shredder
+            commands::dry_run_shred,
+            commands::batch_shred_files,
+            commands::cancel_shred,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

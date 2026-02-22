@@ -26,6 +26,7 @@ use crate::system_cleaner;
 use crate::utils;
 use crate::vault::PasswordVault;
 use crate::wordlist::WORDLIST;
+use crate::shredder;
 use rand::RngCore;
 type CommandResult<T> = Result<T, String>;
 
@@ -1157,6 +1158,31 @@ pub async fn unlock_file(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// --- SHREDDER COMMANDS ---
+
+#[tauri::command]
+pub async fn dry_run_shred(
+    paths: Vec<String>,
+) -> CommandResult<shredder::DryRunResult> {
+    shredder::dry_run(paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn batch_shred_files(
+    paths: Vec<String>,
+    method: shredder::ShredMethod,
+    app_handle: tauri::AppHandle,
+) -> CommandResult<shredder::ShredResult> {
+    shredder::batch_shred(paths, method, &app_handle)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_shred() -> CommandResult<()> {
+    shredder::cancel_shred();
+    Ok(())
 }
 
 // --- VAULT COMMANDS ---
