@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { platform } from "@tauri-apps/plugin-os"; // <--- Import platform
 import {
   Download,
   RefreshCw,
@@ -9,6 +10,7 @@ import {
   CheckCircle,
   AlertTriangle,
   Play,
+  Smartphone,
 } from "lucide-react";
 
 interface UpdateModalProps {
@@ -17,13 +19,21 @@ interface UpdateModalProps {
 
 export function UpdateModal({ onClose }: UpdateModalProps) {
   const [status, setStatus] = useState<
-    "checking" | "available" | "uptodate" | "downloading" | "ready" | "error"
+    | "checking"
+    | "available"
+    | "uptodate"
+    | "downloading"
+    | "ready"
+    | "error"
+    | "wrong-platform"
   >("checking");
+
   const [updateInfo, setUpdateInfo] = useState<{
     version: string;
     body?: string;
     date?: string;
   } | null>(null);
+
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentVersion, setCurrentVersion] = useState<string>("");
@@ -34,11 +44,20 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
 
   async function initialize() {
     try {
+      // 1. Safety Check for Android
+      if (platform() === "android" || platform() === "ios") {
+        setStatus("wrong-platform");
+        return;
+      }
+
+      // 2. Normal Desktop Logic
       const v = await getVersion();
       setCurrentVersion(v);
       checkForUpdates();
     } catch (e) {
       console.error(e);
+      setStatus("error");
+      setErrorMsg("Initialization failed: " + String(e));
     }
   }
 
@@ -90,12 +109,9 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             break;
         }
       });
-
-      // Just in case the event loop finishes without setting ready
       setStatus("ready");
     } catch (e) {
       setStatus("error");
-      // Clean up error message for common issues
       let msg = String(e);
       if (msg.includes("Signature")) msg = "Signature verification failed.";
       if (msg.includes("404")) msg = "Update file not found on server.";
@@ -114,7 +130,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
   return (
     <div className="modal-overlay" style={{ zIndex: 99999 }}>
       <div className="auth-card" style={{ width: 450 }}>
-        {/* HEADER */}
         <div className="modal-header">
           <RefreshCw
             size={20}
@@ -134,12 +149,33 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
           className="modal-body"
           style={{ textAlign: "center", padding: "20px 0" }}
         >
-          {/* STATE: CHECKING */}
+          {/* WRONG PLATFORM GUARD */}
+          {status === "wrong-platform" && (
+            <div style={{ color: "#f59e0b" }}>
+              <Smartphone size={48} style={{ marginBottom: 15 }} />
+              <h3>Wrong Updater Loaded</h3>
+              <p
+                style={{
+                  color: "var(--text-dim)",
+                  fontSize: "0.9rem",
+                  marginBottom: 20,
+                }}
+              >
+                This is the Desktop updater. <br />
+                Please use <b>UniversalUpdateModal</b> in your code.
+              </p>
+              <button className="secondary-btn" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          )}
+
+          {/* CHECKING */}
           {status === "checking" && (
             <p style={{ color: "var(--text-dim)" }}>Checking for updates...</p>
           )}
 
-          {/* STATE: UP TO DATE */}
+          {/* UP TO DATE */}
           {status === "uptodate" && (
             <div style={{ color: "#42b883" }}>
               <CheckCircle size={48} style={{ marginBottom: 15 }} />
@@ -157,7 +193,7 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             </div>
           )}
 
-          {/* STATE: AVAILABLE */}
+          {/* AVAILABLE */}
           {status === "available" && updateInfo && (
             <div>
               <h3 style={{ margin: "0 0 10px 0" }}>New Version Available</h3>
@@ -174,7 +210,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
               >
                 v{updateInfo.version}
               </div>
-
               <div
                 style={{
                   display: "flex",
@@ -189,7 +224,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                   <span>{updateInfo.date.split(" ")[0]}</span>
                 )}
               </div>
-
               {updateInfo.body && (
                 <div
                   style={{
@@ -208,7 +242,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                   {updateInfo.body}
                 </div>
               )}
-
               <button
                 className="auth-btn"
                 onClick={startUpdate}
@@ -220,10 +253,10 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             </div>
           )}
 
-          {/* STATE: DOWNLOADING */}
+          {/* DOWNLOADING */}
           {status === "downloading" && (
             <div>
-              <h3 style={{ marginBottom: 15 }}>Downloading Update...</h3>
+              <h3 style={{ marginBottom: 15 }}>Downloading...</h3>
               <div
                 style={{
                   width: "100%",
@@ -249,7 +282,7 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             </div>
           )}
 
-          {/* STATE: READY */}
+          {/* READY */}
           {status === "ready" && (
             <div>
               <CheckCircle
@@ -258,9 +291,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                 style={{ marginBottom: 15 }}
               />
               <h3>Update Installed!</h3>
-              <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-                The application needs to restart to apply changes.
-              </p>
               <button
                 className="auth-btn"
                 onClick={restartApp}
@@ -271,7 +301,7 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             </div>
           )}
 
-          {/* STATE: ERROR */}
+          {/* ERROR */}
           {status === "error" && (
             <div style={{ color: "var(--btn-danger)" }}>
               <AlertTriangle size={48} style={{ marginBottom: 15 }} />

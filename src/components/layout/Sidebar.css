@@ -7,42 +7,27 @@
   flex-direction: column;
   padding: 20px;
   height: 100vh;
-  /* CRITICAL: Parent allows overflow so popups can escape */
-  overflow: visible;
+  overflow: visible; /* Parent allows overflow so popups can escape */
 }
 
 /* Zone 1: Tool Icons (Scrollable) */
 .sidebar-scroll-area {
-  flex: 1; /* Takes all available space */
-  overflow-y: auto; /* Scrolls if too many icons */
+  flex: 1;
+  overflow-y: auto;
   overflow-x: hidden;
-  margin-bottom: 20px; /* Gap before bottom actions */
-
+  margin-bottom: 20px;
   /* Scrollbar Styling */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
 
-/* Zone 2: Bottom Actions (Fixed, Visible) */
+/* Zone 2: Bottom Actions (Fixed) */
 .sidebar-bottom {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex-shrink: 0; /* Never shrink */
-  /* CRITICAL: Must be visible for flyout menus */
+  flex-shrink: 0;
   overflow: visible;
-}
-
-/* Header (Removed but keeping class just in case) */
-.sidebar-header {
-  display: none;
-}
-
-.nav-links {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
 }
 
 /* BUTTON STYLES */
@@ -76,7 +61,7 @@
   border-color: var(--accent);
 }
 
-/* POPUP MENUS (Flyout Right) */
+/* MENU POPUPS (Desktop) */
 .help-menu {
   position: absolute;
   left: 100%; /* Right of button */
@@ -87,9 +72,7 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px;
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   z-index: 2000;
   opacity: 0;
   transform: translateX(-10px) scale(0.95);
@@ -130,7 +113,6 @@
 .dropdown-item:hover {
   background-color: var(--highlight);
   color: white;
-  transform: translateX(2px);
 }
 .dropdown-divider {
   height: 1px;
@@ -138,127 +120,127 @@
   margin: 6px 0;
   opacity: 0.5;
 }
-/* NEW: Inner wrapper for Icon+Text */
+
+/* Inner Wrappers for text hiding */
 .btn-inner {
   display: flex;
   gap: 15px;
   align-items: center;
+  width: 100%;
 }
-
-/* NEW: Buttons with Space-Between (Help/Options on Desktop) */
 .btn-split {
   justify-content: space-between;
-  margin-bottom: 5px;
 }
 
-/* --- MOBILE RESPONSIVE (Horizontal Scroll) --- */
+/* --- MOBILE LAYOUT (BOTTOM BAR) --- */
 @media (max-width: 600px) {
   .sidebar {
+    position: fixed; /* Force fixed at bottom */
+    bottom: 0;
+    left: 0;
+    right: 0;
     width: 100%;
     height: auto;
-    min-height: 70px;
+    min-height: 65px;
+    padding: 8px;
 
-    /* Padding to sit above Android nav bar */
-    padding: 10px 10px calc(env(safe-area-inset-bottom) + 25px) 10px;
-
+    /* Layout: Horizontal Row */
     flex-direction: row;
     align-items: center;
+
     border-right: none;
     border-top: 1px solid var(--border);
-    order: 2;
+    background-color: var(--bg-card); /* Slightly lighter than panel-bg */
+    z-index: 1000;
 
-    /* Global Scroll */
+    /* Scroll Behavior */
     overflow-x: auto;
     overflow-y: hidden;
     white-space: nowrap;
-    gap: 0;
-
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .sidebar::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Reset containers to simple rows */
-  .sidebar-scroll-area,
-  .nav-links,
-  .sidebar-bottom {
-    width: auto;
-    flex: initial;
-    margin: 0;
-    padding: 0;
-    overflow: visible;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
     gap: 5px;
   }
 
-  /* Add divider before the bottom actions */
-  .sidebar-bottom {
-    padding-left: 10px;
-    margin-left: 5px;
-    border-left: 1px solid var(--border);
-  }
-
-  /* --- BUTTON FIXES --- */
-  .nav-btn {
-    flex-direction: column;
-    gap: 0;
+  /* Reset the inner scroll area to flow horizontally */
+  .nav-links {
+    display: flex;
+    flex-direction: row;
+    gap: 5px;
+    width: auto;
+    flex: 1;
+    overflow: visible;
     padding: 0;
-    width: 50px;
-    height: 50px; /* Square buttons */
-    justify-content: center;
-    align-items: center;
-    flex-shrink: 0;
   }
 
-  /* CRITICAL: HIDE TEXT LABELS ON MOBILE */
-  .nav-btn span {
+  /* Each group becomes a horizontal list */
+  .nav-links > div {
+    display: flex;
+    flex-direction: row;
+    gap: 5px;
+  }
+
+  /* Remove separators on mobile to save space */
+  .nav-links > div > div {
     display: none;
   }
 
-  /* Fix Help/Options inner wrappers to not break layout */
-  .btn-inner {
-    display: contents; /* Removes the div wrapper from layout flow */
+  /* Bottom Actions (Settings/Help) move to the right */
+  .sidebar-bottom {
+    display: flex;
+    flex-direction: row;
+    border-top: none;
+    border-left: 1px solid var(--border);
+    margin-top: 0;
+    padding-top: 0;
+    padding-left: 8px;
+    margin-left: 5px;
+  }
+
+  /* --- ICON-ONLY BUTTONS --- */
+  .nav-btn {
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    justify-content: center;
+    align-items: center;
+    border-radius: 12px;
+  }
+
+  /* HIDE LABELS */
+  .nav-btn span {
+    display: none;
   }
   .btn-inner span {
-    display: none; /* Ensure text inside wrappers is also hidden */
+    display: none;
   }
 
-  /* Reset Split Buttons (Help/Options) to act like normal buttons */
+  /* Reset Split Buttons */
   .btn-split {
-    justify-content: center !important;
     margin-bottom: 0;
   }
+  .btn-inner {
+    justify-content: center;
+    width: auto;
+    gap: 0;
+  }
 
-  /* Hide Chevron Arrows */
   .chevron {
     display: none;
   }
 
-  /* --- MENU POSITIONING --- */
+  /* --- MENU FIXES FOR MOBILE --- */
   .help-menu {
     position: fixed;
-    bottom: 90px; /* Float above the bar */
+    bottom: 80px; /* Above the bar */
     left: 10px;
     right: 10px;
     width: auto;
-    margin-left: 0;
-    transform: translateY(10px) scale(0.95);
-    animation: menuEnterMobile 0.2s forwards;
-    z-index: 9999;
-    box-shadow: 0 5px 25px rgba(0, 0, 0, 0.5);
+    margin: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+    box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--border);
   }
   .help-menu::before {
     display: none;
-  }
-
-  @keyframes menuEnterMobile {
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
   }
 }

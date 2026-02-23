@@ -24,7 +24,7 @@ import {
   Brush,
   FileSearch,
 } from "lucide-react";
-import { UpdateModal } from "../modals/UpdateModal";
+import { UniversalUpdateModal } from "../modals/UniversalUpdateModal";
 
 interface SidebarProps {
   activeTab: string;
@@ -56,7 +56,7 @@ export function Sidebar({
   const helpRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // Grouped Tabs with Descriptions for Tooltips
+  // Grouped Tabs
   const groups = [
     {
       items: [
@@ -70,7 +70,7 @@ export function Sidebar({
           id: "files",
           label: "Files",
           icon: <Lock size={20} strokeWidth={2.5} />,
-          desc: "Encrypt and decrypt files",
+          desc: "Encrypt files",
         },
       ],
     },
@@ -80,25 +80,25 @@ export function Sidebar({
           id: "notes",
           label: "Notes",
           icon: <StickyNote size={20} strokeWidth={2.5} />,
-          desc: "Secure encrypted notepad",
+          desc: "Secure notepad",
         },
         {
           id: "vault",
           label: "Passwords",
           icon: <Key size={20} strokeWidth={2.5} />,
-          desc: "Manage logins and secrets",
+          desc: "Password manager",
         },
         {
           id: "bookmarks",
           label: "Bookmarks",
           icon: <Bookmark size={20} strokeWidth={2.5} />,
-          desc: "Private encrypted links",
+          desc: "Private links",
         },
         {
           id: "clipboard",
           label: "Clipboard",
           icon: <ClipboardList size={20} strokeWidth={2.5} />,
-          desc: "Secure copy/paste history",
+          desc: "Copy history",
         },
       ],
     },
@@ -106,45 +106,45 @@ export function Sidebar({
       items: [
         {
           id: "breach",
-          label: "Privacy Check",
+          label: "Privacy",
           icon: <Radar size={20} strokeWidth={2.5} />,
-          desc: "Check for data leaks and IP exposure",
+          desc: "Leak check",
         },
         {
           id: "hash",
-          label: "Integrity Check",
+          label: "Integrity",
           icon: <FileCheck size={20} strokeWidth={2.5} />,
-          desc: "Verify file hashes",
+          desc: "Verify hashes",
         },
         {
           id: "sysclean",
-          label: "System Clean",
+          label: "Clean",
           icon: <Brush size={20} strokeWidth={2.5} />,
-          desc: "Clear temp files and history",
+          desc: "System cleaner",
         },
         {
           id: "cleaner",
-          label: "Meta Cleaner",
+          label: "Meta",
           icon: <Eraser size={20} strokeWidth={2.5} />,
-          desc: "Remove metadata from photos/docs",
+          desc: "Metadata wiper",
         },
         {
           id: "shred",
-          label: "Shredder",
+          label: "Shred",
           icon: <Trash2 size={20} strokeWidth={2.5} />,
-          desc: "Permanently delete files",
+          desc: "Delete forever",
         },
         {
           id: "analyzer",
-          label: "File Analyzer",
+          label: "Analyzer",
           icon: <FileSearch size={20} strokeWidth={2.5} />,
-          desc: "Detect fake extensions & malware types",
+          desc: "File analysis",
         },
         {
           id: "qr",
-          label: "QR Generator",
+          label: "QR Code",
           icon: <QrCode size={20} strokeWidth={2.5} />,
-          desc: "Generate secure QR codes offline",
+          desc: "QR generator",
         },
       ],
     },
@@ -168,38 +168,20 @@ export function Sidebar({
 
   return (
     <>
-      <div className="sidebar" style={{ width: "220px", padding: "15px 10px" }}>
-        {/* NAVIGATION LIST */}
-        <div
-          className="nav-links"
-          style={{ overflowY: "auto", flex: 1, paddingBottom: 10 }}
-        >
+      <div className="sidebar">
+        {/* SCROLL AREA */}
+        <div className="nav-links sidebar-scroll-area">
           {groups.map((group, index) => (
             <div key={index}>
-              {/* Spacer/Divider between groups */}
-              {index > 0 && (
-                <div
-                  style={{
-                    height: 1,
-                    background: "var(--border)",
-                    margin: "10px 10px 10px 10px",
-                    opacity: 0.3,
-                  }}
-                ></div>
-              )}
+              {/* Divider (Desktop Only - handled by CSS) */}
+              {index > 0 && <div className="group-divider"></div>}
 
-              {/* Safe Mapping: Now we are guaranteed 'group.items' exists */}
               {group.items.map((t) => (
                 <button
                   key={t.id}
                   className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
                   onClick={() => setTab(t.id)}
                   title={t.desc}
-                  style={{
-                    fontSize: "0.85rem",
-                    padding: "8px 12px",
-                    marginBottom: 2,
-                  }}
                 >
                   {t.icon}
                   <span>{t.label}</span>
@@ -210,15 +192,8 @@ export function Sidebar({
         </div>
 
         {/* BOTTOM SECTION */}
-        <div
-          className="sidebar-bottom"
-          style={{
-            marginTop: 10,
-            borderTop: "1px solid var(--border)",
-            paddingTop: 10,
-          }}
-        >
-          {/* 1. HELP MENU */}
+        <div className="sidebar-bottom">
+          {/* HELP MENU */}
           <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
             {showHelpMenu && (
               <div className="help-menu">
@@ -254,17 +229,11 @@ export function Sidebar({
                 <CircleHelp size={20} strokeWidth={2.5} />
                 <span>Help</span>
               </div>
-              {showHelpMenu && (
-                <ChevronRight
-                  size={16}
-                  style={{ opacity: 0.7 }}
-                  className="chevron"
-                />
-              )}
+              {showHelpMenu && <ChevronRight size={16} className="chevron" />}
             </button>
           </div>
 
-          {/* 2. SETTINGS MENU */}
+          {/* SETTINGS MENU */}
           <div
             style={{ position: "relative", width: "100%" }}
             ref={settingsRef}
@@ -339,19 +308,16 @@ export function Sidebar({
                 <span>Settings</span>
               </div>
               {showSettingsMenu && (
-                <ChevronRight
-                  size={16}
-                  style={{ opacity: 0.7 }}
-                  className="chevron"
-                />
+                <ChevronRight size={16} className="chevron" />
               )}
             </button>
           </div>
         </div>
       </div>
 
+      {/* UPDATE MODAL (Universal) */}
       {showUpdateModal && (
-        <UpdateModal onClose={() => setShowUpdateModal(false)} />
+        <UniversalUpdateModal onClose={() => setShowUpdateModal(false)} />
       )}
     </>
   );
