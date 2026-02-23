@@ -35,14 +35,17 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
+          # On macOS, we install standard targets + add aarch64 later
           targets: ${{ matrix.platform == 'macos-latest' && 'x86_64-apple-darwin' || matrix.target }}
 
+      # Add macOS targets for Universal Build
       - name: Add macOS targets
         if: matrix.platform == 'macos-latest'
         run: |
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
 
+      # Linux Dependencies
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -52,41 +55,59 @@ jobs:
       - name: install frontend dependencies
         run: npm install
 
-      # --- BUILD ---
-      - name: Build Tauri App
+      # --- BUILD STEPS ---
+
+      # macOS Build
+      - name: Build Tauri App (macOS)
+        if: matrix.platform == 'macos-latest'
         env:
           MACOSX_DEPLOYMENT_TARGET: "10.15"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --target universal-apple-darwin
+
+      # Windows/Linux Build
+      - name: Build Tauri App (Windows/Linux)
+        if: matrix.platform != 'macos-latest'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --target ${{ matrix.target }}
 
-      # --- WINDOWS PROCESSING ---
-      - name: Sign and Json (Windows)
+      # --- SIGNING & JSON GENERATION ---
+
+      # Windows Signing & JSON (FIXED RENAME LOGIC)
+      - name: Sign and create updater JSON (Windows)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           $bundlePath = "src-tauri/target/${{ matrix.target }}/release/bundle/nsis"
 
-          # 1. Get original installer
+          # 1. Find Installer
           $exe = Get-ChildItem "$bundlePath/*.exe" | Select-Object -First 1
-          if (-not $exe) { Write-Error "Installer not found"; exit 1 }
+          if (-not $exe) { Write-Error "NSIS Installer not found"; exit 1 }
 
-          # 2. Rename to Safe Name (No Spaces)
-          # e.g., "QRE Privacy Toolkit.exe" -> "QRE-Privacy-Toolkit_2.6.3_x64-setup.exe"
+          # 2. Define Safe Name (No Spaces)
           $safeName = "QRE-Privacy-Toolkit_${version}_x64-setup.exe"
-          $safePath = Join-Path $bundlePath $safeName
-          Rename-Item $exe.FullName $safePath
 
-          # 3. Sign the RENAMED file
+          # 3. Rename (Fix: Pass only the name, not the path)
+          Rename-Item -Path $exe.FullName -NewName $safeName
+
+          # 4. Construct Full Path for Signing
+          $safePath = Join-Path $bundlePath $safeName
+
+          # 5. Sign
           $keyPath = "$env:TEMP\signing.key"
           "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | Out-File -FilePath $keyPath -Encoding utf8 -NoNewline
 
           Write-Host "Signing $safePath..."
           npx tauri signer sign "$safePath" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
+
+          # Clean up key
           Remove-Item $keyPath -Force
 
-          # 4. Generate JSON
+          # 6. Generate JSON
           $sig = Get-Content "$safePath.sig" -Raw
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$safeName"
 
@@ -102,32 +123,33 @@ jobs:
           "@
           [System.IO.File]::WriteAllText("latest-windows.json", $json, [System.Text.UTF8Encoding]::new($false))
 
-      # --- MACOS PROCESSING ---
-      - name: Sign and Json (macOS)
+      # macOS Signing & JSON
+      - name: Sign and create updater JSON (macOS)
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
 
+          keyPath=$(mktemp)
+          echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "$keyPath"
+
           bundlePath="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
           dmgFile=$(find "$bundlePath" -name "*.dmg" | head -n 1)
 
-          # Rename to safe name
-          safeName="QRE-Privacy-Toolkit_${version}_universal.dmg"
-          mv "$dmgFile" "$bundlePath/$safeName"
-          safePath="$bundlePath/$safeName"
+          if [ -n "$dmgFile" ]; then
+            # Rename to safe name
+            safeName="QRE-Privacy-Toolkit_${version}_universal.dmg"
+            mv "$dmgFile" "$bundlePath/$safeName"
+            safePath="$bundlePath/$safeName"
 
-          # Sign
-          keyPath=$(mktemp)
-          echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "$keyPath"
-          npx tauri signer sign "$safePath" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
-          rm -f "$keyPath"
-
-          signature=$(cat "$safePath.sig")
-          url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$safeName"
-
-          cat > latest-macos.json << EOF
+            echo "Signing DMG..."
+            npx tauri signer sign "$safePath" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
+            
+            signature=$(cat "$safePath.sig")
+            url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$safeName"
+            
+            cat > latest-macos.json << EOF
           {
             "version": "$version",
             "notes": "See release notes",
@@ -139,33 +161,39 @@ jobs:
             }
           }
           EOF
+          else
+            echo "Error: DMG not found"
+            exit 1
+          fi
+          rm -f "$keyPath"
 
-      # --- LINUX PROCESSING ---
-      - name: Sign and Json (Linux)
+      # Linux Signing & JSON
+      - name: Sign and create updater JSON (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         shell: bash
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle/appimage"
-          appImage=$(find "$bundlePath" -name "*.AppImage" | head -n 1)
-
-          # Rename
-          safeName="QRE-Privacy-Toolkit_${version}_amd64.AppImage"
-          mv "$appImage" "$bundlePath/$safeName"
-          safePath="$bundlePath/$safeName"
-
-          # Sign
           keyPath=$(mktemp)
           echo -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "$keyPath"
-          npx tauri signer sign "$safePath" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
-          rm -f "$keyPath"
 
-          signature=$(cat "$safePath.sig")
-          url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$safeName"
+          bundlePath="src-tauri/target/${{ matrix.target }}/release/bundle/appimage"
+          appImageFile=$(find "$bundlePath" -name "*.AppImage" | head -n 1)
 
-          cat > latest-linux.json << EOF
+          if [ -n "$appImageFile" ]; then
+            # Rename
+            safeName="QRE-Privacy-Toolkit_${version}_amd64.AppImage"
+            mv "$appImageFile" "$bundlePath/$safeName"
+            safePath="$bundlePath/$safeName"
+
+            echo "Signing AppImage..."
+            npx tauri signer sign "$safePath" --private-key-path "$keyPath" --password "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
+            
+            signature=$(cat "$safePath.sig")
+            url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$safeName"
+            
+            cat > latest-linux.json << EOF
           {
             "version": "$version",
             "notes": "See release notes",
@@ -175,50 +203,80 @@ jobs:
             }
           }
           EOF
+          else
+            echo "Error: AppImage not found"
+            exit 1
+          fi
+          rm -f "$keyPath"
 
-      # --- UPLOAD ASSETS (USING GLOB TO FIND RENAMED FILES) ---
-      - name: Upload Assets
+      # --- UPLOAD INSTALLERS ---
+
+      - name: Upload Windows Assets
+        if: matrix.platform == 'windows-latest'
         uses: softprops/action-gh-release@v1
         with:
           files: |
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS Assets
+        if: matrix.platform == 'macos-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux Assets
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- SAVE JSON FOR MERGE ---
       - name: Upload JSON Artifact
         uses: actions/upload-artifact@v4
         with:
           name: update-json-${{ matrix.os_name }}
           path: latest-*.json
+          if-no-files-found: ignore
 
-  # --- JOB 2: MERGE JSON ---
+  # --- JOB 2: MERGE JSON & PUBLISH ---
   publish-updater:
     needs: release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download all JSON artifacts
+        uses: actions/download-artifact@v4
         with:
           pattern: update-json-*
           merge-multiple: true
 
-      - name: Merge JSON
-        run: jq -s 'reduce .[] as $item ({}; . * $item)' latest-*.json > latest.json
+      - name: Merge JSON files
+        run: |
+          jq -s 'reduce .[] as $item ({}; . * $item)' latest-*.json > latest.json
+          echo "Merged JSON content:"
+          cat latest.json
 
-      - uses: softprops/action-gh-release@v1
+      - name: Upload latest.json to Release
+        uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --- JOB 3: ANDROID BUILD ---
+  # --- JOB 3: Android (APK) ---
   release-android:
     permissions:
       contents: write
@@ -226,18 +284,22 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with: { distribution: "temurin", java-version: "17" }
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           {
             targets: aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android,
           }
-      - uses: android-actions/setup-android@v3
-      - run: npm install
-
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install dependencies
+        run: npm install
       - name: Build Android APK
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -253,13 +315,12 @@ jobs:
 
           npm run tauri android build -- --apk --target aarch64
 
-      # RENAME APK for consistency
+      # FIX: Rename Android APK to safe name
       - name: Rename APK
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          # Find the built APK
           apkPath=$(find src-tauri/gen/android/app/build/outputs/apk -name "*-release.apk" | head -n 1)
 
           if [ -f "$apkPath" ]; then
@@ -273,6 +334,7 @@ jobs:
 
       - name: Upload APK
         uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: ./*.apk
         env:
