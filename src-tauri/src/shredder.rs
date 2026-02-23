@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use rand::Rng;
 use std::fs::{self, OpenOptions};
-use std::io::{Seek, Read, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
@@ -69,10 +69,10 @@ pub struct DryRunResult {
 #[derive(serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ShredMethod {
-    Simple,      // 1 pass (zeros)
-    DoD3Pass,    // 3 passes (DoD 5220.22-M)
-    DoD7Pass,    // 7 passes (DoD 5220.22-M Extended)
-    Gutmann,     // 35 passes (Peter Gutmann method)
+    Simple,   // 1 pass (zeros)
+    DoD3Pass, // 3 passes (DoD 5220.22-M)
+    DoD7Pass, // 7 passes (DoD 5220.22-M Extended)
+    Gutmann,  // 35 passes (Peter Gutmann method)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -81,25 +81,26 @@ pub enum ShredMethod {
 
 /// Gets system directory blacklist - directories that should NEVER be deleted.
 fn get_blacklist() -> Vec<PathBuf> {
-    let mut blacklist = Vec::new();
+    // FIX: Explicit type annotation required because on Android none of the
+    // platform cfg blocks below fire (target_os = "android", not "linux"), so
+    // the compiler has no push() call to infer the element type from, causing
+    // E0282/E0283 in the filter_map closure at the end of this function.
+    let mut blacklist: Vec<PathBuf> = Vec::new();
 
     // Universal critical paths
     #[cfg(target_os = "windows")]
     {
         if let Ok(sys_drive) = std::env::var("SystemDrive") {
-
-            
             blacklist.push(PathBuf::from(format!("{}\\Windows", sys_drive)));
             blacklist.push(PathBuf::from(format!("{}\\Program Files", sys_drive)));
             blacklist.push(PathBuf::from(format!("{}\\Program Files (x86)", sys_drive)));
-            blacklist.push(PathBuf::from(format!("{}\\ProgramData", sys_drive))); // Added for extra security
-            blacklist.push(PathBuf::from(format!("{}\\Users\\Default", sys_drive))); // Added for extra security
+            blacklist.push(PathBuf::from(format!("{}\\ProgramData", sys_drive)));
+            blacklist.push(PathBuf::from(format!("{}\\Users\\Default", sys_drive)));
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        
         blacklist.push(PathBuf::from("/System"));
         blacklist.push(PathBuf::from("/Library"));
         blacklist.push(PathBuf::from("/Applications"));
@@ -113,8 +114,6 @@ fn get_blacklist() -> Vec<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-
-        
         blacklist.push(PathBuf::from("/bin"));
         blacklist.push(PathBuf::from("/boot"));
         blacklist.push(PathBuf::from("/dev"));
@@ -129,10 +128,30 @@ fn get_blacklist() -> Vec<PathBuf> {
         blacklist.push(PathBuf::from("/var"));
     }
 
-    // Canonicalize all blacklist paths
+    // FIX: Android has target_os = "android", not "linux", so it previously
+    // matched no cfg block and got an empty blacklist — meaning no system
+    // directory protection at all on Android builds.
+    #[cfg(target_os = "android")]
+    {
+        blacklist.push(PathBuf::from("/system"));
+        blacklist.push(PathBuf::from("/data/app"));
+        blacklist.push(PathBuf::from("/data/data"));
+        blacklist.push(PathBuf::from("/data/system"));
+        blacklist.push(PathBuf::from("/proc"));
+        blacklist.push(PathBuf::from("/sys"));
+        blacklist.push(PathBuf::from("/dev"));
+        blacklist.push(PathBuf::from("/etc"));
+        blacklist.push(PathBuf::from("/bin"));
+        blacklist.push(PathBuf::from("/sbin"));
+        blacklist.push(PathBuf::from("/vendor"));
+        blacklist.push(PathBuf::from("/apex"));
+    }
+
+    // Canonicalize all blacklist paths; silently drop any that don't exist
+    // on this particular device (e.g. /lib64 on 32-bit systems).
     blacklist
         .into_iter()
-        .filter_map(|p| fs::canonicalize(p).ok())
+        .filter_map(|p: PathBuf| fs::canonicalize(p).ok())
         .collect()
 }
 
@@ -161,7 +180,9 @@ fn validate_path(path: &Path) -> Result<PathBuf> {
 
     // 4. Must be regular file
     if !metadata.is_file() {
-        return Err(anyhow!("Only regular files are supported (not directories or special files)"));
+        return Err(anyhow!(
+            "Only regular files are supported (not directories or special files)"
+        ));
     }
 
     // 5. Check file size
@@ -284,15 +305,15 @@ fn shred_file<R: tauri::Runtime>(
 ) -> Result<u64> {
     let metadata = fs::metadata(path)?;
     let file_size = metadata.len();
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let file_name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
     let passes = match method {
         ShredMethod::Simple => vec![ShredPass::Zeros],
-        ShredMethod::DoD3Pass => vec![
-            ShredPass::Random,
-            ShredPass::Complement,
-            ShredPass::Random,
-        ],
+        ShredMethod::DoD3Pass => vec![ShredPass::Random, ShredPass::Complement, ShredPass::Random],
         ShredMethod::DoD7Pass => vec![
             ShredPass::Pattern(0xF6),
             ShredPass::Pattern(0x00),
@@ -356,7 +377,11 @@ enum ShredPass {
     Complement,
 }
 
-fn write_pass<W: Read + Write + Seek>(writer: &mut W, size: u64, pass_type: &ShredPass) -> Result<()> {
+fn write_pass<W: Read + Write + Seek>(
+    writer: &mut W,
+    size: u64,
+    pass_type: &ShredPass,
+) -> Result<()> {
     writer.seek(SeekFrom::Start(0))?;
 
     let mut rng = rand::thread_rng();
@@ -436,7 +461,12 @@ fn get_gutmann_passes() -> Vec<ShredPass> {
     ]
 }
 
-fn calculate_percentage(current_file: usize, total_files: usize, current_pass: usize, total_passes: usize) -> u8 {
+fn calculate_percentage(
+    current_file: usize,
+    total_files: usize,
+    current_pass: usize,
+    total_passes: usize,
+) -> u8 {
     if total_files == 0 || total_passes == 0 {
         return 0;
     }
@@ -465,16 +495,14 @@ pub fn batch_shred<R: tauri::Runtime>(
     // Validate all paths first
     let validated: Vec<(String, PathBuf)> = paths
         .into_iter()
-        .filter_map(|path_str| {
-            match validate_path(Path::new(&path_str)) {
-                Ok(canonical) => Some((path_str, canonical)),
-                Err(e) => {
-                    failed.push(FailedFile {
-                        path: path_str,
-                        error: e.to_string(),
-                    });
-                    None
-                }
+        .filter_map(|path_str| match validate_path(Path::new(&path_str)) {
+            Ok(canonical) => Some((path_str, canonical)),
+            Err(e) => {
+                failed.push(FailedFile {
+                    path: path_str,
+                    error: e.to_string(),
+                });
+                None
             }
         })
         .collect();
