@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import { platform } from "@tauri-apps/plugin-os";
+// FIX: Use Tauri's HTTP plugin to bypass CORS/Network restrictions on Android
+import { fetch } from "@tauri-apps/plugin-http";
 import {
   Download,
   RefreshCw,
@@ -42,8 +44,9 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
 
   async function checkPlatformAndUpdate() {
     try {
-      const currentPlatform = platform();
-      if (currentPlatform !== "android") {
+      const os = platform();
+      // Only run on Android
+      if (os !== "android") {
         setStatus("error");
         setErrorMsg("This update checker is only for Android");
         return;
@@ -54,38 +57,35 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
       checkForUpdates(version);
     } catch (e) {
       setStatus("error");
-      setErrorMsg("Failed to initialize: " + String(e));
+      setErrorMsg("Initialization failed: " + String(e));
     }
   }
 
   async function checkForUpdates(currentVersion: string) {
     try {
-      // 1. Fetch release data directly from GitHub API
-      // This bypasses latest.json which might not have Android data
+      // Fetch latest release from GitHub API using Tauri HTTP Plugin
       const response = await fetch(
         "https://api.github.com/repos/powergr/qre-privacy-toolkit/releases/latest",
         {
+          method: "GET",
           headers: {
-            "User-Agent": "QRE-Privacy-Toolkit-Android", // Good practice
+            "User-Agent": "QRE-Toolkit-Android",
           },
         },
       );
 
       if (!response.ok) {
-        throw new Error(`GitHub API Error: ${response.status}`);
+        throw new Error(
+          `GitHub API Error: ${response.status} ${response.statusText}`,
+        );
       }
 
-      const release: GitHubRelease = await response.json();
+      const release = (await response.json()) as GitHubRelease;
 
-      // 2. Normalize Version Strings
-      // Removes 'v' prefix if present
+      // Extract version from tag (remove 'v' prefix if present)
       const latestVersion = release.tag_name.replace(/^v/, "");
 
-      console.log(
-        `Checking update: Current=${currentVersion}, Latest=${latestVersion}`,
-      );
-
-      // 3. Find APK Asset
+      // Find APK asset (case insensitive check)
       const apkAsset = release.assets.find((asset) =>
         asset.name.toLowerCase().endsWith(".apk"),
       );
@@ -94,11 +94,11 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
         throw new Error("Release found, but no APK file is attached.");
       }
 
-      // 4. Compare
+      // Compare versions
       if (isNewerVersion(latestVersion, currentVersion)) {
         setUpdateInfo({
           version: latestVersion,
-          notes: release.body || "See GitHub for release notes.",
+          notes: release.body || "See release notes for details",
           downloadUrl: apkAsset.browser_download_url,
         });
         setStatus("available");
@@ -112,7 +112,6 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
     }
   }
 
-  // Semantic Versioning Helper
   function isNewerVersion(latest: string, current: string): boolean {
     if (latest === current) return false;
 
@@ -124,22 +123,26 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
       i < Math.max(latestParts.length, currentParts.length);
       i++
     ) {
-      const l = latestParts[i] || 0;
-      const c = currentParts[i] || 0;
-      if (l > c) return true;
-      if (l < c) return false;
+      const latestPart = latestParts[i] || 0;
+      const currentPart = currentParts[i] || 0;
+
+      if (latestPart > currentPart) return true;
+      if (latestPart < currentPart) return false;
     }
+
     return false;
   }
 
   async function downloadUpdate() {
     if (!updateInfo) return;
+
     try {
       await openUrl(updateInfo.downloadUrl);
+      // Android usually handles the download via the default browser
       onClose();
     } catch (e) {
       setStatus("error");
-      setErrorMsg("Failed to open browser: " + String(e));
+      setErrorMsg("Failed to open download link: " + String(e));
     }
   }
 
@@ -162,18 +165,18 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
           className="modal-body"
           style={{ textAlign: "center", padding: "20px 0" }}
         >
-          {/* CHECKING */}
+          {/* STATE: CHECKING */}
           {status === "checking" && (
             <p style={{ color: "var(--text-dim)" }}>Connecting to GitHub...</p>
           )}
 
-          {/* UP TO DATE */}
+          {/* STATE: UP TO DATE */}
           {status === "uptodate" && (
             <div style={{ color: "#42b883" }}>
               <CheckCircle size={48} style={{ marginBottom: 15 }} />
               <h3>Up to Date</h3>
               <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                v{currentVersion} is the latest version.
+                Version {currentVersion} is the latest version.
               </p>
               <button
                 className="secondary-btn"
@@ -185,10 +188,10 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
             </div>
           )}
 
-          {/* AVAILABLE */}
+          {/* STATE: AVAILABLE */}
           {status === "available" && updateInfo && (
             <div>
-              <h3 style={{ margin: "0 0 10px 0" }}>Update Available</h3>
+              <h3 style={{ margin: "0 0 10px 0" }}>New Version Available</h3>
               <div
                 style={{
                   background: "var(--highlight)",
@@ -203,15 +206,15 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
                 v{updateInfo.version}
               </div>
 
-              <div
+              <p
                 style={{
-                  marginBottom: 20,
-                  fontSize: "0.85rem",
                   color: "var(--text-dim)",
+                  fontSize: "0.85rem",
+                  marginBottom: 20,
                 }}
               >
                 Current: v{currentVersion}
-              </div>
+              </p>
 
               <button
                 className="auth-btn"
@@ -228,12 +231,12 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
                   marginTop: 10,
                 }}
               >
-                You will be redirected to the browser to download the APK.
+                External browser will open to download the file.
               </p>
             </div>
           )}
 
-          {/* ERROR */}
+          {/* STATE: ERROR */}
           {status === "error" && (
             <div style={{ color: "var(--btn-danger)" }}>
               <AlertTriangle size={48} style={{ marginBottom: 15 }} />

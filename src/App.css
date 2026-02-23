@@ -16,7 +16,7 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-      color-scheme: light;
+    color-scheme: light;
     --bg-color: #ffffff;
     --panel-bg: #f3f3f3;
     --card-bg: #ffffff;
@@ -39,7 +39,7 @@ body[data-theme="dark"] {
 }
 
 body[data-theme="light"] {
-   color-scheme: light;
+  color-scheme: light;
   --bg-color: #ffffff;
   --panel-bg: #f3f3f3;
   --card-bg: #ffffff;
@@ -115,17 +115,19 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto; /* ENABLE SCROLLING */
+  overflow-x: hidden;
   position: relative;
+  /* Add padding for mobile bottom bar */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* Mobile Responsive Layout */
+/* Mobile Specific Adjustments */
 @media (max-width: 600px) {
-  .app-container {
-    flex-direction: column;
-  }
   .content-area {
-    order: 1;
+    /* Ensure content doesn't get hidden behind the bottom sidebar */
+    /* 80px matches the sidebar height + padding */
+    padding-bottom: 90px;
   }
 }
 /* --- HOME VIEW --- */

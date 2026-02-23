@@ -37,6 +37,7 @@ pub fn run() {
         .manage(SessionState {
             master_key: Arc::new(Mutex::new(None)),
         })
+        .plugin(tauri_plugin_http::init()) // <--- ADDED HTTP PLUGIN HERE
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -116,8 +117,8 @@ pub fn run() {
             // System Cleaner
             commands::tools::scan_system_junk,
             commands::tools::clean_system_junk,
-            commands::tools::dry_run_clean, // Ensure these exist in tools.rs
-            commands::tools::cancel_system_clean, // Ensure these exist in tools.rs
+            commands::tools::dry_run_clean,
+            commands::tools::cancel_system_clean,
             // File Analyzer
             commands::tools::scan_directory_targets,
             // Metadata Cleaner

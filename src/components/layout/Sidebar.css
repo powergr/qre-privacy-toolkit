@@ -1,4 +1,3 @@
-/* --- DESKTOP / LANDSCAPE DEFAULT --- */
 .sidebar {
   width: 220px;
   background-color: var(--panel-bg);
@@ -7,21 +6,18 @@
   flex-direction: column;
   padding: 20px;
   height: 100vh;
-  overflow: visible; /* Parent allows overflow so popups can escape */
+  overflow: visible;
 }
 
-/* Zone 1: Tool Icons (Scrollable) */
 .sidebar-scroll-area {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   margin-bottom: 20px;
-  /* Scrollbar Styling */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
 
-/* Zone 2: Bottom Actions (Fixed) */
 .sidebar-bottom {
   display: flex;
   flex-direction: column;
@@ -61,10 +57,10 @@
   border-color: var(--accent);
 }
 
-/* MENU POPUPS (Desktop) */
+/* MENUS */
 .help-menu {
   position: absolute;
-  left: 100%; /* Right of button */
+  left: 100%;
   bottom: 0;
   margin-left: 15px;
   width: 220px;
@@ -78,7 +74,6 @@
   transform: translateX(-10px) scale(0.95);
   animation: menuEnter 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
-
 .help-menu::before {
   content: "";
   position: absolute;
@@ -91,7 +86,6 @@
   border-bottom: 1px solid var(--border);
   transform: rotate(45deg);
 }
-
 @keyframes menuEnter {
   to {
     opacity: 1;
@@ -120,8 +114,6 @@
   margin: 6px 0;
   opacity: 0.5;
 }
-
-/* Inner Wrappers for text hiding */
 .btn-inner {
   display: flex;
   gap: 15px;
@@ -135,67 +127,77 @@
 /* --- MOBILE LAYOUT (BOTTOM BAR) --- */
 @media (max-width: 600px) {
   .sidebar {
-    position: fixed; /* Force fixed at bottom */
+    position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
     width: 100%;
     height: auto;
-    min-height: 65px;
-    padding: 8px;
+    /* Increase height to accommodate safe area + buttons */
+    min-height: 80px;
 
-    /* Layout: Horizontal Row */
+    /* CRITICAL: Add padding for Android Gesture Bar / iOS Home Bar */
+    padding: 10px 10px calc(15px + env(safe-area-inset-bottom)) 10px;
+
     flex-direction: row;
-    align-items: center;
+    align-items: center; /* Vertically center items */
+    justify-content: space-between;
 
     border-right: none;
     border-top: 1px solid var(--border);
-    background-color: var(--bg-card); /* Slightly lighter than panel-bg */
+    background-color: var(--bg-card);
     z-index: 1000;
 
-    /* Scroll Behavior */
-    overflow-x: auto;
+    overflow-x: hidden; /* Prevent body scroll */
     overflow-y: hidden;
-    white-space: nowrap;
-    gap: 5px;
+    gap: 0;
   }
 
-  /* Reset the inner scroll area to flow horizontally */
-  .nav-links {
+  /* Scrollable Tools Area */
+  .sidebar-scroll-area {
     display: flex;
     flex-direction: row;
-    gap: 5px;
-    width: auto;
-    flex: 1;
-    overflow: visible;
-    padding: 0;
-  }
+    align-items: center;
+    overflow-x: auto; /* Horizontal Scroll */
+    overflow-y: hidden;
+    gap: 8px;
+    padding-right: 10px; /* Gap before separator */
+    margin-bottom: 0;
 
-  /* Each group becomes a horizontal list */
-  .nav-links > div {
-    display: flex;
-    flex-direction: row;
-    gap: 5px;
+    /* Hide Scrollbar */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
-
-  /* Remove separators on mobile to save space */
-  .nav-links > div > div {
+  .sidebar-scroll-area::-webkit-scrollbar {
     display: none;
   }
 
-  /* Bottom Actions (Settings/Help) move to the right */
+  .nav-links {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .nav-links > div {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+  }
+
+  /* Fixed Right Section (Help/Settings) */
   .sidebar-bottom {
     display: flex;
     flex-direction: row;
+    align-items: center;
     border-top: none;
+    /* Vertical line separator */
     border-left: 1px solid var(--border);
-    margin-top: 0;
-    padding-top: 0;
-    padding-left: 8px;
-    margin-left: 5px;
+    margin: 0;
+    padding-left: 10px;
+    gap: 8px;
+    background-color: var(--bg-card); /* Cover scroll */
   }
 
-  /* --- ICON-ONLY BUTTONS --- */
+  /* Mobile Button Styles */
   .nav-btn {
     width: 48px;
     height: 48px;
@@ -203,42 +205,36 @@
     justify-content: center;
     align-items: center;
     border-radius: 12px;
+    flex-shrink: 0;
   }
 
-  /* HIDE LABELS */
-  .nav-btn span {
-    display: none;
-  }
-  .btn-inner span {
+  .nav-btn span,
+  .btn-inner span,
+  .chevron {
     display: none;
   }
 
-  /* Reset Split Buttons */
   .btn-split {
     margin-bottom: 0;
   }
+
   .btn-inner {
     justify-content: center;
     width: auto;
     gap: 0;
   }
 
-  .chevron {
-    display: none;
-  }
-
-  /* --- MENU FIXES FOR MOBILE --- */
+  /* Fix Menu Position */
   .help-menu {
     position: fixed;
-    bottom: 80px; /* Above the bar */
+    /* Position above the sidebar height */
+    bottom: 90px;
     left: 10px;
     right: 10px;
     width: auto;
     margin: 0;
-    max-height: 60vh;
-    overflow-y: auto;
-    box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.5);
     border: 1px solid var(--border);
+    box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.5);
   }
   .help-menu::before {
     display: none;
