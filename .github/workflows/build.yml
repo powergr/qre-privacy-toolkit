@@ -317,24 +317,33 @@ jobs:
           # Build specifically for aarch64 (most common Android target)
           npm run tauri android build -- --apk --target aarch64
 
-      # FIX: Broader search for the APK
+      # FIX: Robust APK Search
       - name: Rename APK
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          echo "Searching for built APK..."
-          # Find any file ending in release.apk inside the android gen folder
-          apkPath=$(find src-tauri/gen/android -type f -name "*release.apk" | head -n 1)
+          echo "🔎 Scanning for built APKs..."
+          find src-tauri -name "*.apk"
 
-          if [ -n "$apkPath" ]; then
-            echo "Found APK at: $apkPath"
+          # 1. Try to find the official release APK
+          apkPath=$(find src-tauri -type f -name "*release.apk" | head -n 1)
+
+          # 2. Fallback: If no "release" named file, grab ANY apk
+          if [ -z "$apkPath" ]; then
+             echo "⚠️ 'release.apk' not found. Falling back to any APK..."
+             apkPath=$(find src-tauri -type f -name "*.apk" | head -n 1)
+          fi
+
+          if [ -f "$apkPath" ]; then
+            echo "✅ Found APK at: $apkPath"
             safeName="QRE-Privacy-Toolkit_Android_${version}.apk"
             mv "$apkPath" "./$safeName"
-            echo "Renamed to $safeName"
+            echo "🚀 Renamed to $safeName"
           else
-             echo "❌ APK not found! Listing directory structure for debugging:"
-             ls -R src-tauri/gen/android
+             echo "❌ CRITICAL: No APK found after build!"
+             # Print build dir structure to debug where files went
+             ls -R src-tauri/gen/android/app/build/outputs/ || true
              exit 1
           fi
 
