@@ -7,9 +7,43 @@ use crate::state::SessionState;
 use crate::vault::PasswordVault;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 pub type CommandResult<T> = Result<T, String>;
+
+// --- LOGIN RATE LIMITING ---
+//
+// FIX: Track failed login attempts in-memory using atomics. After
+// MAX_ATTEMPTS_BEFORE_LOCKOUT failures the login command enforces an
+// exponentially growing delay, doubling every extra failed attempt up to ~8
+// minutes. The counter resets to zero on a successful login.
+//
+// Note: This is an in-memory guard — it resets when the app restarts. That is
+// an intentional tradeoff: a persistent counter could permanently lock out a
+// legitimate user who forgot their password without access to the app. The
+// primary offline brute-force protection is provided by the Argon2id KDF in
+// keychain.rs, which makes each password guess computationally expensive
+// regardless of rate limiting.
+static LOGIN_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
+static LOGIN_LAST_FAIL_SECS: AtomicU64 = AtomicU64::new(0);
+
+const MAX_ATTEMPTS_BEFORE_LOCKOUT: u32 = 5;
+
+/// Returns how many seconds to wait after `fail_count` total failures.
+/// 5 failures → 30 s, 6 → 60 s, 7 → 120 s, 8 → 240 s, 9+ → 480 s (8 min cap).
+fn lockout_duration_secs(fail_count: u32) -> u64 {
+    let extra = fail_count.saturating_sub(MAX_ATTEMPTS_BEFORE_LOCKOUT);
+    30u64 * (1u64 << extra.min(4))
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 // --- HELPER: Resolve Keychain Path ---
 fn resolve_keychain_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -86,17 +120,48 @@ pub fn init_vault(
     Ok(recovery_code)
 }
 
+/// Attempts to authenticate with the provided password.
+///
+/// FIX: Enforces an exponential-backoff lockout after 5 consecutive failures.
+/// On a successful login the failure counter is reset to zero.
 #[tauri::command]
 pub fn login(
     app: AppHandle,
     password: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
+    // --- Check lockout ---
+    let fail_count = LOGIN_FAIL_COUNT.load(Ordering::SeqCst);
+    if fail_count >= MAX_ATTEMPTS_BEFORE_LOCKOUT {
+        let last_fail = LOGIN_LAST_FAIL_SECS.load(Ordering::SeqCst);
+        let wait = lockout_duration_secs(fail_count);
+        let elapsed = now_secs().saturating_sub(last_fail);
+        if elapsed < wait {
+            return Err(format!(
+                "Too many failed attempts. Please wait {} more second(s) before trying again.",
+                wait - elapsed
+            ));
+        }
+    }
+
+    // --- Attempt authentication ---
     let path = resolve_keychain_path(&app)?;
-    let master_key = keychain::unlock_keychain(&path, &password).map_err(|e| e.to_string())?;
-    let mut guard = state.master_key.lock().unwrap();
-    *guard = Some(master_key);
-    Ok("Logged in".to_string())
+    match keychain::unlock_keychain(&path, &password) {
+        Ok(master_key) => {
+            // FIX: Reset failure counter on success so a legitimate user who
+            // mistyped their password isn't permanently throttled.
+            LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
+            let mut guard = state.master_key.lock().unwrap();
+            *guard = Some(master_key);
+            Ok("Logged in".to_string())
+        }
+        Err(e) => {
+            // FIX: Increment failure counter and record the timestamp.
+            LOGIN_FAIL_COUNT.fetch_add(1, Ordering::SeqCst);
+            LOGIN_LAST_FAIL_SECS.store(now_secs(), Ordering::SeqCst);
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -132,6 +197,8 @@ pub fn recover_vault(
     let path = resolve_keychain_path(&app)?;
     let master_key = keychain::recover_with_code(&path, &recovery_code, &new_password)
         .map_err(|e| e.to_string())?;
+    // Reset any outstanding login lockout after a successful recovery.
+    LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
     let mut guard = state.master_key.lock().unwrap();
     *guard = Some(master_key);
     Ok("Recovery successful. Password updated.".to_string())
@@ -377,8 +444,7 @@ pub fn import_browser_bookmarks(
     // 2. Load existing Vault
     let mut vault = load_bookmarks_vault(app.clone(), state.clone())?;
 
-    // 3. Append (avoid duplicates based on URL?)
-    // For now, just append.
+    // 3. Append
     vault.entries.extend(new_bookmarks);
 
     // 4. Save
@@ -427,12 +493,10 @@ pub fn load_clipboard_vault(
         .unwrap_or_default()
         .as_millis() as i64;
 
-    // FIX: Using seconds for created_at now, so convert ttl to seconds
     let ttl_seconds = retention_hours * 60 * 60;
 
     let initial_count = vault.entries.len();
     vault.entries.retain(|e| {
-        // Detect if entry is old (ms) or new (seconds) and normalize
         let entry_time_sec = if e.created_at > 9999999999 {
             e.created_at / 1000
         } else {
@@ -467,7 +531,6 @@ pub fn save_clipboard_vault(
     state: tauri::State<SessionState>,
     vault: ClipboardVault,
 ) -> CommandResult<()> {
-    // FIX: Validate before saving (Fixes unused warning)
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {

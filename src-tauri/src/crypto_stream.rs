@@ -8,7 +8,7 @@ use rand::{rngs::OsRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use zeroize::Zeroizing;
 
@@ -71,6 +71,19 @@ fn decompress_chunk(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Secure constant-time comparison to prevent timing attacks.
+/// FIX: Used for all MAC/hash comparisons in this file instead of `!=`.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
 // --- STREAM ENCRYPTOR ---
 
 pub fn encrypt_file_stream(
@@ -82,7 +95,6 @@ pub fn encrypt_file_stream(
     compression_level: i32,
     callback: impl Fn(u64, u64),
 ) -> Result<()> {
-    let mut input_file = BufReader::new(File::open(input_path)?);
     let total_size = std::fs::metadata(input_path)?.len();
     let original_filename = std::path::Path::new(input_path)
         .file_name()
@@ -90,6 +102,28 @@ pub fn encrypt_file_stream(
         .to_string_lossy()
         .to_string();
 
+    // FIX: Pre-compute the SHA-256 hash of the entire input file before
+    // encryption begins. This hash is stored in the header and verified after
+    // decryption to detect truncation attacks (e.g. an attacker removing
+    // trailing chunks). Per-chunk AES-GCM tags alone cannot detect truncation
+    // of whole trailing chunks.
+    let original_hash = {
+        let mut pre_reader = BufReader::new(
+            File::open(input_path).context("Failed to open input file for pre-hash")?,
+        );
+        let mut hasher = Sha256::new();
+        let mut hash_buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = pre_reader.read(&mut hash_buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&hash_buf[..n]);
+        }
+        hasher.finalize().to_vec()
+    };
+
+    let mut input_file = BufReader::new(File::open(input_path)?);
     let mut output_file = BufWriter::new(File::create(output_path)?);
 
     // 1. Write Version
@@ -129,6 +163,8 @@ pub fn encrypt_file_stream(
     let mut base_nonce = [0u8; AES_NONCE_LEN];
     rng.fill_bytes(&mut base_nonce);
 
+    // FIX: Store the pre-computed whole-file hash in the header so the
+    // decryptor can verify it after reassembling all chunks.
     let header = StreamHeader {
         validation_nonce: val_nonce.to_vec(),
         encrypted_validation_tag: encrypted_validation,
@@ -136,7 +172,7 @@ pub fn encrypt_file_stream(
         encrypted_file_key,
         base_nonce: base_nonce.to_vec(),
         original_filename: original_filename.clone(),
-        original_hash: None,
+        original_hash: Some(original_hash),
     };
 
     bincode::serialize_into(&mut output_file, &header)?;
@@ -162,7 +198,7 @@ pub fn encrypt_file_stream(
             chunk_nonce[4 + i] ^= index_bytes[i];
         }
 
-        // SECURITY UPGRADE: Add Associated Data (AAD)
+        // SECURITY: Add Associated Data (AAD).
         // We bind the Chunk Index and Filename to the encryption.
         // If an attacker swaps chunks, the index won't match, and decryption fails.
         let aad_tag = format!("{}:{}", original_filename, chunk_index);
@@ -213,15 +249,24 @@ pub fn decrypt_file_stream(
     let wrapping_key = derive_wrapping_key(master_key, keyfile_bytes);
     let cipher_wrap = Aes256Gcm::new_from_slice(&*wrapping_key).map_err(|e| anyhow!(e))?;
 
-    // Verify Password
+    // FIX: Use constant-time comparison for the validation tag check.
+    // The previous `bytes != VALIDATION_MAGIC` used a standard equality check
+    // which is not guaranteed to run in constant time and could leak timing
+    // information about the wrapping key to an attacker with precise measurement.
     let val_nonce = Nonce::from_slice(&header.validation_nonce);
     match cipher_wrap.decrypt(val_nonce, header.encrypted_validation_tag.as_ref()) {
         Ok(bytes) => {
-            if bytes != VALIDATION_MAGIC {
-                return Err(anyhow!("Validation tag mismatch"));
+            if !constant_time_eq(&bytes, VALIDATION_MAGIC) {
+                return Err(anyhow!(
+                    "Decryption Denied. Password or Keyfile is incorrect."
+                ));
             }
         }
-        Err(_) => return Err(anyhow!("Decryption Denied")),
+        Err(_) => {
+            return Err(anyhow!(
+                "Decryption Denied. Password or Keyfile is incorrect."
+            ))
+        }
     }
 
     // Unwrap File Key
@@ -234,7 +279,8 @@ pub fn decrypt_file_stream(
 
     // Zeroizing wrapper for File Key
     let file_key = Zeroizing::new(file_key_vec);
-    let cipher_file = Aes256Gcm::new_from_slice(&*file_key).unwrap();
+    let cipher_file =
+        Aes256Gcm::new_from_slice(&*file_key).map_err(|_| anyhow!("Invalid file key length"))?;
 
     // 4. Prepare Output
     let output_filename = header.original_filename.clone();
@@ -247,6 +293,12 @@ pub fn decrypt_file_stream(
         .to_string();
 
     let mut output_file = BufWriter::new(File::create(&final_output_path)?);
+
+    // FIX: Accumulate a SHA-256 hash of all decrypted plaintext output.
+    // After the loop, this is compared against the hash stored in the header
+    // to detect truncation attacks. If an attacker strips trailing chunks from
+    // the file, per-chunk AES-GCM tags will pass but the final hash will fail.
+    let mut output_hasher = Sha256::new();
 
     // 5. Decrypt Loop
     let mut chunk_index: u64 = 0;
@@ -289,6 +341,9 @@ pub fn decrypt_file_stream(
             .map_err(|_| anyhow!("Chunk {} integrity check failed", chunk_index))?;
 
         let plaintext = decompress_chunk(&compressed)?;
+
+        // FIX: Feed each decrypted chunk into the running hash before writing.
+        output_hasher.update(&plaintext);
         output_file.write_all(&plaintext)?;
 
         processed += chunk_len as u64;
@@ -300,5 +355,21 @@ pub fn decrypt_file_stream(
     }
 
     output_file.flush()?;
+
+    // FIX: Verify the whole-file hash now that all chunks have been decrypted.
+    // This catches truncation attacks where trailing chunks were removed — such
+    // attacks would pass all per-chunk AES-GCM checks but alter the final output.
+    // On failure, delete the partial output so the user doesn't see a corrupt file.
+    if let Some(expected_hash) = &header.original_hash {
+        let actual_hash = output_hasher.finalize().to_vec();
+        if !constant_time_eq(&actual_hash, expected_hash) {
+            let _ = fs::remove_file(&final_output_path);
+            return Err(anyhow!(
+                "INTEGRITY ERROR: File hash mismatch. The output has been removed. \
+                 The encrypted file may be truncated or corrupt."
+            ));
+        }
+    }
+
     Ok(final_filename)
 }

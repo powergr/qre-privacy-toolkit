@@ -9,7 +9,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 // Size of the cryptographic nonce used for AES-GCM (12 bytes is standard)
 const NONCE_LEN: usize = 12;
@@ -74,19 +74,33 @@ pub struct KeychainStore {
 
 /// Derives a Key Encryption Key (KEK) from a secret (password) using Argon2id.
 /// This turns a weak human password into a strong cryptographic key.
-fn derive_kek(secret: &str, salt_str: &str, mem: u32, iter: u32, par: u32) -> [u8; 32] {
-    let params = Params::new(mem, iter, par, Some(32)).unwrap();
+///
+/// SECURITY: Returns a `Zeroizing` wrapper so the KEK is automatically wiped
+/// from RAM when it goes out of scope. Returns `Result` instead of panicking
+/// on corrupted keychain data.
+fn derive_kek(
+    secret: &str,
+    salt_str: &str,
+    mem: u32,
+    iter: u32,
+    par: u32,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let params = Params::new(mem, iter, par, Some(32))
+        .map_err(|e| anyhow!("Invalid KDF parameters: {}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let salt = SaltString::from_b64(salt_str).expect("Invalid salt");
+    let salt =
+        SaltString::from_b64(salt_str).map_err(|e| anyhow!("Invalid salt in keychain: {}", e))?;
 
     let hash = argon2
         .hash_password(secret.as_bytes(), &salt)
-        .expect("Hashing failed");
-    
+        .map_err(|e| anyhow!("KDF failed: {}", e))?;
+
+    let hash_bytes = hash.hash.ok_or_else(|| anyhow!("KDF produced no output"))?;
+
     let mut key = [0u8; 32];
-    // Copy hash bytes to fixed size array
-    key.copy_from_slice(hash.hash.unwrap().as_bytes());
-    key
+    key.copy_from_slice(hash_bytes.as_bytes());
+    // Zeroizing ensures this key is wiped from RAM when the caller drops it
+    Ok(Zeroizing::new(key))
 }
 
 // --- Public API ---
@@ -114,8 +128,10 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
 
     // 3. Prepare Password Slot
     let pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
-    let pass_kek = derive_kek(password, &pass_salt, mem, iter, par);
-    let cipher_pass = Aes256Gcm::new_from_slice(&pass_kek).unwrap();
+    // FIX: KEK is now auto-zeroized when it drops (Zeroizing wrapper)
+    let pass_kek = derive_kek(password, &pass_salt, mem, iter, par)?;
+    let cipher_pass =
+        Aes256Gcm::new_from_slice(&*pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut pass_nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut pass_nonce_bytes);
@@ -127,7 +143,9 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     // 4. Prepare Recovery Slot
     let raw_recovery: String = (0..4)
         .map(|_| {
-            let n: u16 = rand::random();
+            let mut buf = [0u8; 2];
+            OsRng.fill_bytes(&mut buf);
+            let n = u16::from_le_bytes(buf);
             format!("{:04X}", n)
         })
         .collect::<Vec<String>>()
@@ -135,8 +153,10 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     let recovery_code = format!("QRE-{}", raw_recovery);
 
     let rec_salt = SaltString::generate(&mut OsRng).as_str().to_string();
-    let rec_kek = derive_kek(&recovery_code, &rec_salt, mem, iter, par);
-    let cipher_rec = Aes256Gcm::new_from_slice(&rec_kek).unwrap();
+    // FIX: KEK is now auto-zeroized when it drops (Zeroizing wrapper)
+    let rec_kek = derive_kek(&recovery_code, &rec_salt, mem, iter, par)?;
+    let cipher_rec =
+        Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut rec_nonce_bytes);
@@ -175,22 +195,31 @@ pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     let file = fs::File::open(path)?;
     let store: KeychainStore = serde_json::from_reader(file).context("Corrupted keychain file")?;
 
-    // Re-derive the key using the SAME parameters stored in the file
+    // Re-derive the key using the SAME parameters stored in the file.
+    // FIX: kek is now auto-zeroized when it drops.
     let kek = derive_kek(
         password,
         &store.password_salt,
         store.kdf_memory,
         store.kdf_iterations,
         store.kdf_parallelism,
-    );
+    )?;
 
-    let cipher = Aes256Gcm::new_from_slice(&kek).unwrap();
+    let cipher = Aes256Gcm::new_from_slice(&*kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
     let nonce = Nonce::from_slice(&store.password_nonce);
 
-    // Attempt Decryption
-    let mk_bytes = cipher
-        .decrypt(nonce, store.encrypted_master_key_pass.as_ref())
-        .map_err(|_| anyhow!("Incorrect Password"))?;
+    // Attempt Decryption.
+    // FIX: Wrap mk_bytes in Zeroizing so it's wiped from RAM after we copy
+    // it into the fixed-size MasterKey array.
+    let mk_bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+        cipher
+            .decrypt(nonce, store.encrypted_master_key_pass.as_ref())
+            .map_err(|_| anyhow!("Incorrect Password"))?,
+    );
+
+    if mk_bytes.len() != 32 {
+        return Err(anyhow!("Keychain is corrupt: invalid master key length"));
+    }
 
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&mk_bytes);
@@ -209,24 +238,37 @@ pub fn recover_with_code(
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
-    // 1. Decrypt Master Key using Recovery Code
+    // 1. Decrypt Master Key using Recovery Code.
+    // FIX: rec_kek is auto-zeroized when it drops.
     let rec_kek = derive_kek(
         recovery_code,
         &store.recovery_salt,
         store.kdf_memory,
         store.kdf_iterations,
         store.kdf_parallelism,
-    );
-    let cipher_rec = Aes256Gcm::new_from_slice(&rec_kek).unwrap();
+    )?;
+    let cipher_rec =
+        Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
     let nonce_rec = Nonce::from_slice(&store.recovery_nonce);
 
-    let mk_bytes = cipher_rec
-        .decrypt(nonce_rec, store.encrypted_master_key_recovery.as_ref())
-        .map_err(|_| anyhow!("Invalid Recovery Code"))?;
+    // FIX: Wrap in Zeroizing — no clone, no panicking unwrap.
+    let mk_bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+        cipher_rec
+            .decrypt(nonce_rec, store.encrypted_master_key_recovery.as_ref())
+            .map_err(|_| anyhow!("Invalid Recovery Code"))?,
+    );
 
-    let master_key = MasterKey(mk_bytes.clone().try_into().unwrap());
+    if mk_bytes.len() != 32 {
+        return Err(anyhow!("Keychain is corrupt: invalid master key length"));
+    }
 
-    // 2. Re-encrypt Master Key with NEW Password (Slot 1)
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&mk_bytes);
+    let master_key = MasterKey(arr);
+    // mk_bytes is dropped (and zeroized) here.
+
+    // 2. Re-encrypt Master Key with NEW Password (Slot 1).
+    // FIX: new_pass_kek is auto-zeroized when it drops.
     let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
     let new_pass_kek = derive_kek(
         new_password,
@@ -234,8 +276,9 @@ pub fn recover_with_code(
         store.kdf_memory,
         store.kdf_iterations,
         store.kdf_parallelism,
-    );
-    let cipher_pass = Aes256Gcm::new_from_slice(&new_pass_kek).unwrap();
+    )?;
+    let cipher_pass =
+        Aes256Gcm::new_from_slice(&*new_pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut new_pass_nonce_bytes);
@@ -264,17 +307,20 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
-    // 1. Generate NEW Recovery Code string
+    // 1. Generate NEW Recovery Code string using OsRng for consistency
     let raw_recovery: String = (0..4)
         .map(|_| {
-            let n: u16 = rand::random();
+            let mut buf = [0u8; 2];
+            OsRng.fill_bytes(&mut buf);
+            let n = u16::from_le_bytes(buf);
             format!("{:04X}", n)
         })
         .collect::<Vec<String>>()
         .join("-");
     let recovery_code = format!("QRE-{}", raw_recovery);
 
-    // 2. Encrypt Master Key with new code
+    // 2. Encrypt Master Key with new code.
+    // FIX: rec_kek is auto-zeroized when it drops.
     let rec_salt = SaltString::generate(&mut OsRng).as_str().to_string();
     let rec_kek = derive_kek(
         &recovery_code,
@@ -282,8 +328,9 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
         store.kdf_memory,
         store.kdf_iterations,
         store.kdf_parallelism,
-    );
-    let cipher_rec = Aes256Gcm::new_from_slice(&rec_kek).unwrap();
+    )?;
+    let cipher_rec =
+        Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut rec_nonce_bytes);
@@ -312,15 +359,17 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     // 1. Generate new Salt
     let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
 
-    // 2. Derive new Key Encryption Key (KEK)
+    // 2. Derive new Key Encryption Key (KEK).
+    // FIX: new_pass_kek is auto-zeroized when it drops.
     let new_pass_kek = derive_kek(
         new_password,
         &new_pass_salt,
         store.kdf_memory,
         store.kdf_iterations,
         store.kdf_parallelism,
-    );
-    let cipher_pass = Aes256Gcm::new_from_slice(&new_pass_kek).unwrap();
+    )?;
+    let cipher_pass =
+        Aes256Gcm::new_from_slice(&*new_pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     // 3. Encrypt existing Master Key with new KEK
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];

@@ -6,7 +6,7 @@ use crate::utils;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Component, Path};
 use tauri::AppHandle;
 
 #[cfg(not(target_os = "android"))]
@@ -58,6 +58,16 @@ fn is_already_compressed(filename: &str) -> bool {
     )
 }
 
+// --- HELPER: Path Traversal Check ---
+/// Returns an error if the path contains any `..` (parent directory) components.
+/// Used to prevent directory traversal in commands that accept user-supplied paths.
+fn reject_path_traversal(path: &Path) -> Result<(), String> {
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err("Path traversal not allowed: path must not contain '..'".to_string());
+    }
+    Ok(())
+}
+
 // --- CRYPTO LOGIC ---
 
 #[tauri::command]
@@ -86,20 +96,18 @@ pub async fn lock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
-    let entropy_seed = if let Some(bytes) = extra_entropy {
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        Some(hasher.finalize().into())
-    } else {
-        None
-    };
+    // FIX: Keep the raw entropy bytes here. We will derive a *unique* seed per
+    // file inside the loop by mixing in the file index. Previously, the same
+    // hashed seed was passed to every file in the batch, causing every file to
+    // receive the same file-encryption key and nonces — a critical reuse bug.
+    let raw_entropy: Option<Vec<u8>> = extra_entropy;
 
     let mode_str = compression_mode.unwrap_or("auto".to_string());
 
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
-        for file_path in file_paths {
+        for (file_index, file_path) in file_paths.into_iter().enumerate() {
             let path = Path::new(&file_path);
             let filename = path
                 .file_name()
@@ -146,14 +154,25 @@ pub async fn lock_file(
             let final_path = utils::get_unique_path(Path::new(&raw_output));
             let final_path_str = final_path.to_string_lossy().to_string();
 
+            // FIX: Derive a unique per-file entropy seed by hashing the raw
+            // entropy together with the file's index in the batch. This ensures
+            // every file gets a distinct RNG state even in paranoid-mode batch
+            // operations, preventing file-key and nonce reuse across the batch.
+            let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
+                let mut hasher = Sha256::new();
+                hasher.update(bytes);
+                hasher.update(&(file_index as u64).to_le_bytes());
+                hasher.finalize().into()
+            });
+
             let app_handle = app.clone();
             let f_name_clone = filename.to_string();
 
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
-                    let pct = (processed as f64 / total as f64 * 100.0) as u8;
+                    let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
                     let display_pct = if is_temp {
-                        20 + (pct as f64 * 0.8) as u8
+                        20u8.saturating_add((pct as f64 * 0.8) as u8).min(100)
                     } else {
                         pct
                     };
@@ -322,7 +341,7 @@ pub async fn unlock_file(
 
                 let progress_cb = move |processed: u64, total: u64| {
                     if total > 0 {
-                        let pct = (processed as f64 / total as f64 * 100.0) as u8;
+                        let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
                         utils::emit_progress(&app_handle, &format!("Decrypting: {}", f_name), pct);
                     }
                 };
@@ -489,11 +508,28 @@ pub fn create_dir(path: String) -> CommandResult<()> {
     Ok(())
 }
 
+/// Renames a file or directory to a new name within the same parent directory.
+///
+/// FIX: `new_name` is validated to reject path separators and parent-directory
+/// references. Without this check a caller could supply e.g. `../../etc/passwd`
+/// as the new name and rename the target outside the intended directory.
 #[tauri::command]
 pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
+    // FIX: Reject names that contain path separators or are parent-directory references.
+    if new_name.is_empty()
+        || new_name == "."
+        || new_name == ".."
+        || new_name.contains('/')
+        || new_name.contains('\\')
+    {
+        return Err(
+            "Invalid name: must not be empty, '.', '..', or contain path separators".to_string(),
+        );
+    }
+
     let old_path = Path::new(&path);
     let parent = old_path.parent().ok_or("Invalid path")?;
-    let new_path = parent.join(new_name);
+    let new_path = parent.join(&new_name);
     fs::rename(old_path, new_path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -532,14 +568,26 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
 
 // --- HELPER COMMANDS FOR IMPORT/EXPORT ---
 
+/// Reads the full text content of a file at the given path.
+///
+/// FIX: Rejects paths containing `..` (parent-directory) components to prevent
+/// a malicious or buggy caller from reading arbitrary files on the system
+/// (e.g. `../../etc/passwd` or sensitive app-data files outside the vault).
 #[tauri::command]
 pub fn read_text_file_content(path: String) -> CommandResult<String> {
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    reject_path_traversal(Path::new(&path))?;
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Writes text content to a file at the given path.
+///
+/// FIX: Rejects paths containing `..` (parent-directory) components to prevent
+/// a malicious or buggy caller from overwriting arbitrary files outside the
+/// intended directory (e.g. overwriting a system config file).
 #[tauri::command]
 pub fn write_text_file_content(path: String, content: String) -> CommandResult<()> {
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    reject_path_traversal(Path::new(&path))?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
 // --- SHREDDER COMMANDS ---

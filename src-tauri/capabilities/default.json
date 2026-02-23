@@ -37,13 +37,9 @@
         "$APP_CONFIG/**",
         "$DOCUMENT/**",
         "$DOWNLOAD/**",
-        "$DESKTOP/**",
-        "**"
+        "$DESKTOP/**"
       ]
     },
-
-    "process:allow-exit",
-    "process:allow-restart",
 
     "updater:default",
     "updater:allow-check",

@@ -122,20 +122,32 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
 ///
 /// Note: The ZIP itself is stored without compression (`CompressionMethod::Stored`) because
 /// the QRE engine applies Zstd compression to the entire stream later.
+///
+/// SECURITY: Symlinks inside the source directory are skipped. Following symlinks
+/// could allow a maliciously crafted directory to include files outside the intended
+/// source tree (directory traversal via symlink).
 pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<(), String> {
     let file = fs::File::create(output_zip_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
 
     let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored) 
+        .compression_method(zip::CompressionMethod::Stored)
         .unix_permissions(0o755);
 
     let prefix = dir_path.parent().unwrap_or(Path::new(""));
 
-    // Walk through the directory recursively
-    for entry in WalkDir::new(dir_path) {
+    // Walk through the directory recursively.
+    // FIX: follow_links(false) is the walkdir default, but we make it explicit
+    // and additionally skip any symlinks encountered during the walk to prevent
+    // a crafted directory from pulling in files outside the intended source tree.
+    for entry in WalkDir::new(dir_path).follow_links(false) {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
+
+        // FIX: Skip symlinks entirely — do not archive or follow them.
+        if path.is_symlink() {
+            continue;
+        }
 
         // Calculate relative path for the zip structure
         let name = path
@@ -151,7 +163,8 @@ pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<
             let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
             std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
         } else if path.is_dir() && !name.is_empty() {
-            zip.add_directory(name, options).map_err(|e| e.to_string())?;
+            zip.add_directory(name, options)
+                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -185,7 +198,7 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
         let chunk_size = 16 * 1024 * 1024; // 16MB Buffer
         let mut buffer = vec![0u8; chunk_size];
         let mut written = 0u64;
-        let mut last_percent = 0;
+        let mut last_percent: u8 = 0;
 
         while written < len {
             let bytes_to_write = std::cmp::min(chunk_size as u64, len - written);
@@ -194,9 +207,9 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
             file.write_all(slice)?;
             written += bytes_to_write;
 
-            // Report progress to UI
-            let percent = ((written as f64 / len as f64) * 100.0) as u8;
-            if percent >= last_percent + 5 {
+            // Report progress to UI — clamp to 100 to avoid u8 overflow
+            let percent = ((written as f64 / len as f64) * 100.0).min(100.0) as u8;
+            if percent >= last_percent.saturating_add(5) {
                 let filename = path.file_name().unwrap_or_default().to_string_lossy();
                 emit_progress(app, &format!("Shredding {}", filename), percent);
                 last_percent = percent;

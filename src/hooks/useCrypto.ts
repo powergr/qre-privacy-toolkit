@@ -68,7 +68,17 @@ export function useCrypto(reloadDir: () => void) {
     }
   }
 
+  /**
+   * FIX: Zero the keyfile byte array before releasing it.
+   *
+   * JavaScript's GC doesn't guarantee when memory is collected or wiped, so
+   * filling the buffer with zeros before clearing the reference is the best
+   * defence against the bytes lingering in a heap inspection or memory dump.
+   */
   function clearKeyFile() {
+    if (keyFileBytes) {
+      keyFileBytes.fill(0);
+    }
     setKeyFilePath(null);
     setKeyFileBytes(null);
   }
@@ -98,9 +108,19 @@ export function useCrypto(reloadDir: () => void) {
 
       if (cmd === "lock_file") {
         if (explicitEntropy) {
-          finalEntropy = explicitEntropy;
+          // FIX: Clamp all entropy values to the valid u8 range [0, 255].
+          // The Rust backend deserialises this as Vec<u8>; values outside this
+          // range would cause a Tauri serialisation error with a confusing
+          // message. Clamping here is cheap and makes the contract explicit.
+          finalEntropy = explicitEntropy.map((v) =>
+            Math.max(0, Math.min(255, Math.floor(v))),
+          );
         } else if (isParanoid) {
-          finalEntropy = generateBrowserEntropy(true);
+          const raw = generateBrowserEntropy(true);
+          // Apply the same clamp to auto-generated entropy for consistency.
+          finalEntropy = raw.map((v) =>
+            Math.max(0, Math.min(255, Math.floor(v))),
+          );
         }
       }
 

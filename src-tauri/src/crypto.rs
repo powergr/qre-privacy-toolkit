@@ -9,7 +9,7 @@ use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing}; // Added Zeroizing
 
 const AES_NONCE_LEN: usize = 12;
 const VALIDATION_MAGIC: &[u8] = b"QRE_VALID";
@@ -42,7 +42,6 @@ pub struct EncryptedFileContainer {
 }
 
 impl EncryptedFileContainer {
-    // Restored: Needed to save the Password Vault
     pub fn save(&self, path: &str) -> Result<()> {
         let file = std::fs::File::create(path).context("Failed to create output file")?;
         let writer = std::io::BufWriter::new(file);
@@ -54,14 +53,16 @@ impl EncryptedFileContainer {
         let mut file = std::fs::File::open(path).context("Failed to open encrypted file")?;
 
         let mut ver_buf = [0u8; 4];
-        file.read_exact(&mut ver_buf).context("Failed to read version")?;
+        file.read_exact(&mut ver_buf)
+            .context("Failed to read version")?;
         let version = u32::from_le_bytes(ver_buf);
 
         file.seek(SeekFrom::Start(0))?;
         let reader = std::io::BufReader::new(file);
 
         if version == 4 {
-            let container: Self = bincode::deserialize_from(reader).context("Failed to parse V4 file")?;
+            let container: Self =
+                bincode::deserialize_from(reader).context("Failed to parse V4 file")?;
             Ok(container)
         } else {
             Err(anyhow!("Unsupported or legacy file version: {}.", version))
@@ -71,7 +72,11 @@ impl EncryptedFileContainer {
 
 // --- Helper Functions ---
 
-fn derive_wrapping_key(master_key: &MasterKey, keyfile_bytes: Option<&[u8]>) -> [u8; 32] {
+// Returns a Zeroizing wrapper to ensure the key is wiped from RAM
+fn derive_wrapping_key(
+    master_key: &MasterKey,
+    keyfile_bytes: Option<&[u8]>,
+) -> Zeroizing<[u8; 32]> {
     let mut hasher = Sha256::new();
     hasher.update(&master_key.0);
 
@@ -85,19 +90,31 @@ fn derive_wrapping_key(master_key: &MasterKey, keyfile_bytes: Option<&[u8]>) -> 
     let result = hasher.finalize();
     let mut key = [0u8; 32];
     key.copy_from_slice(&result);
-    key
+    Zeroizing::new(key)
 }
 
-// Restored: Needed for encryption
 fn compress_data(data: &[u8], level: i32) -> Result<Vec<u8>> {
-    zstd::stream::encode_all(Cursor::new(data), level).map_err(|e| anyhow!("Compression failed: {}", e))
+    zstd::stream::encode_all(Cursor::new(data), level)
+        .map_err(|e| anyhow!("Compression failed: {}", e))
 }
 
 fn decompress_data(data: &[u8]) -> Result<Vec<u8>> {
     zstd::stream::decode_all(Cursor::new(data)).map_err(|e| anyhow!("Decompression failed: {}", e))
 }
 
-// --- ENCRYPTION (Restored for Password Vault & Folders) ---
+// Secure constant-time comparison to prevent timing attacks
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
+// --- ENCRYPTION ---
 
 pub fn encrypt_file_with_master_key(
     master_key: &MasterKey,
@@ -107,7 +124,6 @@ pub fn encrypt_file_with_master_key(
     entropy_seed: Option<[u8; 32]>,
     compression_level: i32,
 ) -> Result<EncryptedFileContainer> {
-    
     // 1. Calculate Integrity Hash
     let original_hash = Sha256::digest(file_bytes).to_vec();
 
@@ -125,10 +141,11 @@ pub fn encrypt_file_with_master_key(
         None => Box::new(OsRng),
     };
 
-    // 4. Generate File Key
-    let mut file_key = [0u8; 32];
-    rng.fill_bytes(&mut file_key);
-    let cipher_file = Aes256Gcm::new_from_slice(&file_key).unwrap();
+    // 4. Generate File Key (Automatically Zeroized)
+    let mut file_key = Zeroizing::new([0u8; 32]);
+    rng.fill_bytes(&mut *file_key);
+    let cipher_file =
+        Aes256Gcm::new_from_slice(&*file_key).map_err(|e| anyhow!("Cipher error: {}", e))?;
 
     // 5. Encrypt Body
     let mut body_nonce = [0u8; AES_NONCE_LEN];
@@ -137,9 +154,10 @@ pub fn encrypt_file_with_master_key(
         .encrypt(Nonce::from_slice(&body_nonce), plaintext_blob.as_ref())
         .map_err(|_| anyhow!("Body encryption failed"))?;
 
-    // 6. Wrap File Key
-    let mut wrapping_key = derive_wrapping_key(master_key, keyfile_bytes);
-    let cipher_wrap = Aes256Gcm::new_from_slice(&wrapping_key).unwrap();
+    // 6. Wrap File Key (Automatically Zeroized)
+    let wrapping_key = derive_wrapping_key(master_key, keyfile_bytes);
+    let cipher_wrap =
+        Aes256Gcm::new_from_slice(&*wrapping_key).map_err(|e| anyhow!("Cipher error: {}", e))?;
 
     let mut key_wrapping_nonce = [0u8; AES_NONCE_LEN];
     rng.fill_bytes(&mut key_wrapping_nonce);
@@ -154,9 +172,7 @@ pub fn encrypt_file_with_master_key(
         .encrypt(Nonce::from_slice(&validation_nonce), VALIDATION_MAGIC)
         .map_err(|_| anyhow!("Validation creation failed"))?;
 
-    // Cleanup
-    file_key.zeroize();
-    wrapping_key.zeroize();
+    // No need to manually zeroize file_key or wrapping_key! They drop automatically.
 
     Ok(EncryptedFileContainer {
         version: 4,
@@ -186,32 +202,41 @@ pub fn decrypt_file_with_master_key(
         return Err(anyhow!("This file requires a Keyfile. Please select it."));
     }
 
-    let mut wrapping_key = derive_wrapping_key(master_key, keyfile_bytes);
-    let cipher_wrap = Aes256Gcm::new_from_slice(&wrapping_key).unwrap();
+    let wrapping_key = derive_wrapping_key(master_key, keyfile_bytes);
+    let cipher_wrap =
+        Aes256Gcm::new_from_slice(&*wrapping_key).map_err(|e| anyhow!("Cipher error: {}", e))?;
 
     let val_nonce = Nonce::from_slice(&h.validation_nonce);
     match cipher_wrap.decrypt(val_nonce, h.encrypted_validation_tag.as_ref()) {
         Ok(bytes) => {
-            if bytes != VALIDATION_MAGIC {
-                wrapping_key.zeroize();
+            if !constant_time_eq(&bytes, VALIDATION_MAGIC) {
                 return Err(anyhow!("Validation tag mismatch."));
             }
         }
         Err(_) => {
-            wrapping_key.zeroize();
-            return Err(anyhow!("Decryption Denied. Password or Keyfile is incorrect."));
+            return Err(anyhow!(
+                "Decryption Denied. Password or Keyfile is incorrect."
+            ));
         }
     }
 
     let file_key_vec = cipher_wrap
-        .decrypt(Nonce::from_slice(&h.key_wrapping_nonce), h.encrypted_file_key.as_ref())
+        .decrypt(
+            Nonce::from_slice(&h.key_wrapping_nonce),
+            h.encrypted_file_key.as_ref(),
+        )
         .map_err(|_| anyhow!("Failed to unwrap file key"))?;
-    
-    wrapping_key.zeroize();
 
-    let cipher_file = Aes256Gcm::new_from_slice(&file_key_vec).map_err(|_| anyhow!("Invalid file key length"))?;
+    // Wrap the file key immediately
+    let file_key = Zeroizing::new(file_key_vec);
+
+    let cipher_file =
+        Aes256Gcm::new_from_slice(&*file_key).map_err(|_| anyhow!("Invalid file key length"))?;
     let decrypted_blob = cipher_file
-        .decrypt(Nonce::from_slice(&h.body_nonce), container.ciphertext.as_ref())
+        .decrypt(
+            Nonce::from_slice(&h.body_nonce),
+            container.ciphertext.as_ref(),
+        )
         .map_err(|_| anyhow!("Body decryption failed."))?;
 
     let mut payload: InnerPayload = bincode::deserialize(&decrypted_blob)?;
@@ -220,7 +245,9 @@ pub fn decrypt_file_with_master_key(
     if let Some(expected_hash) = &h.original_hash {
         let actual_hash = Sha256::digest(&payload.content).to_vec();
         if &actual_hash != expected_hash {
-            return Err(anyhow!("INTEGRITY ERROR: Hash mismatch. File is corrupted."));
+            return Err(anyhow!(
+                "INTEGRITY ERROR: Hash mismatch. File is corrupted."
+            ));
         }
     }
 
