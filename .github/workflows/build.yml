@@ -300,6 +300,7 @@ jobs:
         uses: android-actions/setup-android@v3
       - name: Install dependencies
         run: npm install
+
       - name: Build Android APK
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -313,22 +314,27 @@ jobs:
           echo "keyAlias=$ANDROID_ALIAS" >> src-tauri/gen/android/key.properties
           echo "storeFile=../qre-release.jks" >> src-tauri/gen/android/key.properties
 
+          # Build specifically for aarch64 (most common Android target)
           npm run tauri android build -- --apk --target aarch64
 
-      # FIX: Rename Android APK to safe name
+      # FIX: Broader search for the APK
       - name: Rename APK
         run: |
           version="${{ github.ref_name }}"
           version="${version#v}"
 
-          apkPath=$(find src-tauri/gen/android/app/build/outputs/apk -name "*-release.apk" | head -n 1)
+          echo "Searching for built APK..."
+          # Find any file ending in release.apk inside the android gen folder
+          apkPath=$(find src-tauri/gen/android -type f -name "*release.apk" | head -n 1)
 
-          if [ -f "$apkPath" ]; then
+          if [ -n "$apkPath" ]; then
+            echo "Found APK at: $apkPath"
             safeName="QRE-Privacy-Toolkit_Android_${version}.apk"
             mv "$apkPath" "./$safeName"
-            echo "Renamed APK to $safeName"
+            echo "Renamed to $safeName"
           else
-             echo "APK not found!"
+             echo "❌ APK not found! Listing directory structure for debugging:"
+             ls -R src-tauri/gen/android
              exit 1
           fi
 
