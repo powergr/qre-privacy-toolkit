@@ -1,6 +1,3 @@
-// AndroidUpdateChecker.tsx
-// This component checks for Android APK updates from GitHub releases
-
 import { useState, useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
@@ -44,50 +41,64 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
   }, []);
 
   async function checkPlatformAndUpdate() {
-    const currentPlatform = platform();
+    try {
+      const currentPlatform = platform();
+      if (currentPlatform !== "android") {
+        setStatus("error");
+        setErrorMsg("This update checker is only for Android");
+        return;
+      }
 
-    // Only run on Android
-    if (currentPlatform !== "android") {
+      const version = await getVersion();
+      setCurrentVersion(version);
+      checkForUpdates(version);
+    } catch (e) {
       setStatus("error");
-      setErrorMsg("This update checker is only for Android");
-      return;
+      setErrorMsg("Failed to initialize: " + String(e));
     }
-
-    const version = await getVersion();
-    setCurrentVersion(version);
-    checkForUpdates(version);
   }
 
   async function checkForUpdates(currentVersion: string) {
     try {
-      // Fetch latest release from GitHub
+      // 1. Fetch release data directly from GitHub API
+      // This bypasses latest.json which might not have Android data
       const response = await fetch(
         "https://api.github.com/repos/powergr/qre-privacy-toolkit/releases/latest",
+        {
+          headers: {
+            "User-Agent": "QRE-Privacy-Toolkit-Android", // Good practice
+          },
+        },
       );
 
       if (!response.ok) {
-        throw new Error("Failed to fetch release information");
+        throw new Error(`GitHub API Error: ${response.status}`);
       }
 
       const release: GitHubRelease = await response.json();
 
-      // Extract version from tag (remove 'v' prefix if present)
+      // 2. Normalize Version Strings
+      // Removes 'v' prefix if present
       const latestVersion = release.tag_name.replace(/^v/, "");
 
-      // Find APK asset
+      console.log(
+        `Checking update: Current=${currentVersion}, Latest=${latestVersion}`,
+      );
+
+      // 3. Find APK Asset
       const apkAsset = release.assets.find((asset) =>
-        asset.name.endsWith(".apk"),
+        asset.name.toLowerCase().endsWith(".apk"),
       );
 
       if (!apkAsset) {
-        throw new Error("No APK found in the latest release");
+        throw new Error("Release found, but no APK file is attached.");
       }
 
-      // Compare versions
+      // 4. Compare
       if (isNewerVersion(latestVersion, currentVersion)) {
         setUpdateInfo({
           version: latestVersion,
-          notes: release.body || "See release notes for details",
+          notes: release.body || "See GitHub for release notes.",
           downloadUrl: apkAsset.browser_download_url,
         });
         setStatus("available");
@@ -101,7 +112,10 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
     }
   }
 
+  // Semantic Versioning Helper
   function isNewerVersion(latest: string, current: string): boolean {
+    if (latest === current) return false;
+
     const latestParts = latest.split(".").map(Number);
     const currentParts = current.split(".").map(Number);
 
@@ -110,37 +124,22 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
       i < Math.max(latestParts.length, currentParts.length);
       i++
     ) {
-      const latestPart = latestParts[i] || 0;
-      const currentPart = currentParts[i] || 0;
-
-      if (latestPart > currentPart) return true;
-      if (latestPart < currentPart) return false;
+      const l = latestParts[i] || 0;
+      const c = currentParts[i] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
     }
-
     return false;
   }
 
   async function downloadUpdate() {
     if (!updateInfo) return;
-
     try {
-      // Open the download URL in the browser
-      // Android will prompt to download the APK
       await openUrl(updateInfo.downloadUrl);
-
-      // Show instructions
-      alert(
-        "Download started!\n\n" +
-          "1. Wait for the download to complete\n" +
-          "2. Open the downloaded APK\n" +
-          "3. Allow installation from unknown sources if prompted\n" +
-          "4. Install the update",
-      );
-
       onClose();
     } catch (e) {
       setStatus("error");
-      setErrorMsg("Failed to open download: " + String(e));
+      setErrorMsg("Failed to open browser: " + String(e));
     }
   }
 
@@ -154,7 +153,7 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
             className={status === "checking" ? "spinner" : ""}
             color="var(--accent)"
           />
-          <h2>App Update</h2>
+          <h2>Android Update</h2>
           <div style={{ flex: 1 }}></div>
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
@@ -163,18 +162,18 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
           className="modal-body"
           style={{ textAlign: "center", padding: "20px 0" }}
         >
-          {/* STATE: CHECKING */}
+          {/* CHECKING */}
           {status === "checking" && (
-            <p style={{ color: "var(--text-dim)" }}>Checking for updates...</p>
+            <p style={{ color: "var(--text-dim)" }}>Connecting to GitHub...</p>
           )}
 
-          {/* STATE: UP TO DATE */}
+          {/* UP TO DATE */}
           {status === "uptodate" && (
             <div style={{ color: "#42b883" }}>
               <CheckCircle size={48} style={{ marginBottom: 15 }} />
-              <h3>You are up to date!</h3>
+              <h3>Up to Date</h3>
               <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                Version {currentVersion} is the latest version.
+                v{currentVersion} is the latest version.
               </p>
               <button
                 className="secondary-btn"
@@ -186,10 +185,10 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
             </div>
           )}
 
-          {/* STATE: AVAILABLE */}
+          {/* AVAILABLE */}
           {status === "available" && updateInfo && (
             <div>
-              <h3 style={{ margin: "0 0 10px 0" }}>New Version Available</h3>
+              <h3 style={{ margin: "0 0 10px 0" }}>Update Available</h3>
               <div
                 style={{
                   background: "var(--highlight)",
@@ -204,33 +203,15 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
                 v{updateInfo.version}
               </div>
 
-              <p
+              <div
                 style={{
-                  color: "var(--text-dim)",
-                  fontSize: "0.85rem",
                   marginBottom: 20,
+                  fontSize: "0.85rem",
+                  color: "var(--text-dim)",
                 }}
               >
                 Current: v{currentVersion}
-              </p>
-
-              {updateInfo.notes && (
-                <div
-                  style={{
-                    textAlign: "left",
-                    background: "rgba(0,0,0,0.2)",
-                    padding: "10px",
-                    borderRadius: "6px",
-                    fontSize: "0.85rem",
-                    color: "var(--text-dim)",
-                    maxHeight: "100px",
-                    overflowY: "auto",
-                    marginBottom: 20,
-                  }}
-                >
-                  {updateInfo.notes}
-                </div>
-              )}
+              </div>
 
               <button
                 className="auth-btn"
@@ -247,16 +228,16 @@ export function AndroidUpdateChecker({ onClose }: AndroidUpdateCheckerProps) {
                   marginTop: 10,
                 }}
               >
-                You may need to enable "Install from Unknown Sources"
+                You will be redirected to the browser to download the APK.
               </p>
             </div>
           )}
 
-          {/* STATE: ERROR */}
+          {/* ERROR */}
           {status === "error" && (
             <div style={{ color: "var(--btn-danger)" }}>
               <AlertTriangle size={48} style={{ marginBottom: 15 }} />
-              <h3>Update Check Failed</h3>
+              <h3>Check Failed</h3>
               <p style={{ fontSize: "0.9rem", margin: "10px 0" }}>{errorMsg}</p>
               <button className="secondary-btn" onClick={onClose}>
                 Close

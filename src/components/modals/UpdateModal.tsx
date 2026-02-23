@@ -22,24 +22,36 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
   const [updateInfo, setUpdateInfo] = useState<{
     version: string;
     body?: string;
+    date?: string;
   } | null>(null);
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentVersion, setCurrentVersion] = useState<string>("");
 
   useEffect(() => {
-    // Get current version on mount
-    getVersion().then(setCurrentVersion);
-    checkForUpdates();
+    initialize();
   }, []);
+
+  async function initialize() {
+    try {
+      const v = await getVersion();
+      setCurrentVersion(v);
+      checkForUpdates();
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   async function checkForUpdates() {
     try {
+      setStatus("checking");
       const update = await check();
+
       if (update && update.available) {
         setUpdateInfo({
           version: update.version,
           body: update.body,
+          date: update.date,
         });
         setStatus("available");
       } else {
@@ -69,7 +81,8 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
           case "Progress":
             downloaded += event.data.chunkLength;
             if (contentLength > 0) {
-              setProgress(Math.round((downloaded / contentLength) * 100));
+              const pct = Math.round((downloaded / contentLength) * 100);
+              setProgress(pct);
             }
             break;
           case "Finished":
@@ -78,16 +91,24 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
         }
       });
 
-      // Once finished loop breaks, it is installed
+      // Just in case the event loop finishes without setting ready
       setStatus("ready");
     } catch (e) {
       setStatus("error");
-      setErrorMsg("Update failed: " + String(e));
+      // Clean up error message for common issues
+      let msg = String(e);
+      if (msg.includes("Signature")) msg = "Signature verification failed.";
+      if (msg.includes("404")) msg = "Update file not found on server.";
+      setErrorMsg(msg);
     }
   }
 
   async function restartApp() {
-    await relaunch();
+    try {
+      await relaunch();
+    } catch (e) {
+      setErrorMsg("Failed to restart: " + String(e));
+    }
   }
 
   return (
@@ -154,15 +175,20 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                 v{updateInfo.version}
               </div>
 
-              <p
+              <div
                 style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "0.8rem",
                   color: "var(--text-dim)",
-                  fontSize: "0.85rem",
-                  marginBottom: 20,
+                  marginBottom: 15,
                 }}
               >
-                Current: v{currentVersion}
-              </p>
+                <span>Current: v{currentVersion}</span>
+                {updateInfo.date && (
+                  <span>{updateInfo.date.split(" ")[0]}</span>
+                )}
+              </div>
 
               {updateInfo.body && (
                 <div
@@ -176,6 +202,7 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                     maxHeight: "100px",
                     overflowY: "auto",
                     marginBottom: 20,
+                    whiteSpace: "pre-wrap",
                   }}
                 >
                   {updateInfo.body}
@@ -216,7 +243,9 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                   }}
                 />
               </div>
-              <p style={{ fontFamily: "monospace" }}>{progress}%</p>
+              <p style={{ fontFamily: "monospace", color: "var(--accent)" }}>
+                {progress}%
+              </p>
             </div>
           )}
 
@@ -247,7 +276,15 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
             <div style={{ color: "var(--btn-danger)" }}>
               <AlertTriangle size={48} style={{ marginBottom: 15 }} />
               <h3>Update Failed</h3>
-              <p style={{ fontSize: "0.9rem", margin: "10px 0" }}>{errorMsg}</p>
+              <p
+                style={{
+                  fontSize: "0.9rem",
+                  margin: "10px 0",
+                  wordBreak: "break-word",
+                }}
+              >
+                {errorMsg}
+              </p>
               <button className="secondary-btn" onClick={onClose}>
                 Close
               </button>
