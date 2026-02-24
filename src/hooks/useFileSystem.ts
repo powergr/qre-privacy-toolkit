@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { readDir, stat, watch } from "@tauri-apps/plugin-fs";
 import { homeDir } from "@tauri-apps/api/path";
+import { platform } from "@tauri-apps/plugin-os";
 import { FileEntry } from "../types";
 
 export type SortField = "name" | "size" | "modified";
@@ -12,11 +13,7 @@ export function useFileSystem(view: string) {
   const [rawEntries, setRawEntries] = useState<FileEntry[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [statusMsg, setStatusMsg] = useState("Ready");
-  const [pendingFile, setPendingFile] = useState<string | null>(null);
-
-  // Track last clicked index for Shift+Click range selection
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
-
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
@@ -49,7 +46,7 @@ export function useFileSystem(view: string) {
     return sorted;
   }, [rawEntries, sortField, sortDirection]);
 
-  // --- SELECTION LOGIC (New) ---
+  // --- SELECTION LOGIC ---
   const handleSelection = (
     path: string,
     index: number,
@@ -57,23 +54,18 @@ export function useFileSystem(view: string) {
     range: boolean,
   ) => {
     if (range && lastSelectedIndex !== -1) {
-      // Shift+Click: Select Range
       const start = Math.min(lastSelectedIndex, index);
       const end = Math.max(lastSelectedIndex, index);
       const rangePaths = entries.slice(start, end + 1).map((e) => e.path);
-
-      // Merge with existing if Ctrl is also held, otherwise replace
       setSelectedPaths((prev) =>
         multi ? [...new Set([...prev, ...rangePaths])] : rangePaths,
       );
     } else if (multi) {
-      // Ctrl+Click: Toggle
       setSelectedPaths((prev) =>
         prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path],
       );
       setLastSelectedIndex(index);
     } else {
-      // Single Click
       setSelectedPaths([path]);
       setLastSelectedIndex(index);
     }
@@ -103,11 +95,14 @@ export function useFileSystem(view: string) {
       .reduce((acc, e) => acc + (e.size || 0), 0);
   }, [rawEntries, selectedPaths]);
 
-  // --- LOADING LOGIC (Same as before) ---
+  // --- LOADING LOGIC ---
   const loadDir = useCallback(
     async (path: string, preserveSelection = false) => {
-      if (path === null) return;
+      // FIX: Null check to prevent crashes
+      if (path === null || path === undefined) return;
+
       try {
+        // Handle Root/Drives
         if (path === "") {
           const drives = await invoke<string[]>("get_drives");
           setRawEntries(
@@ -127,7 +122,10 @@ export function useFileSystem(view: string) {
         }
 
         const contents = await readDir(path);
-        const separator = navigator.userAgent.includes("Windows") ? "\\" : "/";
+        // FIX: Better Separator Detection
+        const isWin = platform() === "windows";
+        const separator = isWin ? "\\" : "/";
+
         const mapped = await Promise.all(
           contents.map(async (entry) => {
             const cleanPath = path.endsWith(separator)
@@ -169,7 +167,7 @@ export function useFileSystem(view: string) {
     [],
   );
 
-  // --- WATCHER & STARTUP (Same as before) ---
+  // --- WATCHER ---
   useEffect(() => {
     let unlistenFn: (() => void) | null = null;
     let debounceTimer: number | null = null;
@@ -193,7 +191,11 @@ export function useFileSystem(view: string) {
         else unlisten();
       } catch (e) {}
     }
-    startWatcher();
+    // Only watch on Desktop to save battery on Android
+    if (platform() !== "android") {
+      startWatcher();
+    }
+
     return () => {
       isActive = false;
       if (unlistenFn) unlistenFn();
@@ -201,60 +203,55 @@ export function useFileSystem(view: string) {
     };
   }, [currentPath, loadDir]);
 
-  useEffect(() => {
-    invoke<string | null>("get_startup_file").then((file) => {
-      if (file) setPendingFile(file);
-    });
-  }, []);
-
+  // --- STARTUP ---
   useEffect(() => {
     if (view === "dashboard") {
-      if (pendingFile) handleStartupNavigation(pendingFile);
-      else loadInitialPath();
+      loadInitialPath();
     }
-  }, [view, pendingFile]);
-
-  async function handleStartupNavigation(path: string) {
-    const sep = navigator.userAgent.includes("Windows") ? "\\" : "/";
-    const parts = path.split(sep);
-    parts.pop();
-    let parent = parts.join(sep);
-    if (!navigator.userAgent.includes("Windows") && !parent.startsWith("/"))
-      parent = "/" + parent;
-    if (navigator.userAgent.includes("Windows") && parent.endsWith(":"))
-      parent += sep;
-    if (parent === "")
-      parent = navigator.userAgent.includes("Windows") ? "" : "/";
-    await loadDir(parent);
-    setSelectedPaths([path]);
-    setPendingFile(null);
-  }
+  }, [view]);
 
   async function loadInitialPath() {
     try {
-      loadDir(await homeDir());
-    } catch {
+      if (platform() === "android") {
+        // FIX: On Android, start at /storage/emulated/0 (External Storage Root)
+        // or Document Dir if restricted.
+        loadDir("/storage/emulated/0");
+      } else {
+        // Desktop behavior
+        loadDir(await homeDir());
+      }
+    } catch (e) {
+      console.error("Home dir failed", e);
       loadDir("");
     }
   }
 
   function goUp() {
     if (currentPath === "") return;
-    const isWindows = navigator.userAgent.includes("Windows");
+    const isWindows = platform() === "windows";
     const separator = isWindows ? "\\" : "/";
+
+    // Check root conditions
     if (
       currentPath === "/" ||
-      (isWindows && currentPath.length <= 3 && currentPath.includes(":"))
+      (isWindows && currentPath.length <= 3 && currentPath.includes(":")) ||
+      (platform() === "android" && currentPath === "/storage/emulated/0")
     ) {
+      // On Android, don't go higher than internal storage root to avoid permission errors
+      if (platform() === "android") return;
+
       loadDir("");
       return;
     }
+
     const parts = currentPath.split(separator).filter((p) => p);
     parts.pop();
     let parent = parts.join(separator);
+
     if (!isWindows) parent = "/" + parent;
     if (isWindows && parent.length === 2 && parent.endsWith(":"))
       parent += separator;
+
     loadDir(parts.length === 0 ? (isWindows ? "" : "/") : parent);
   }
 
@@ -271,8 +268,6 @@ export function useFileSystem(view: string) {
     sortDirection,
     handleSort,
     selectionSize,
-
-    // New Actions
     selectAll,
     clearSelection,
     handleSelection,

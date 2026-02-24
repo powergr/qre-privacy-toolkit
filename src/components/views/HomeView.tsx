@@ -28,20 +28,22 @@ export function HomeView({ setTab }: HomeViewProps) {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center", // Vertically center the content
-        overflow: "hidden", // Prevent scrolling if possible
+        justifyContent: "flex-start", // Changed from center to allow top alignment on scroll
+        overflowY: "auto", // FIX: Allow scrolling for tools that don't fit
+        overflowX: "hidden",
       }}
     >
       {/* COMPACT HEADER */}
       <div
         style={{
-          marginBottom: 20, // Reduced margin
+          marginTop: 20,
+          marginBottom: 30,
           textAlign: "center",
           display: "flex",
           alignItems: "center",
           gap: 15,
           justifyContent: "center",
-          flexShrink: 0, // Don't shrink header
+          flexShrink: 0,
         }}
       >
         <div
@@ -68,20 +70,17 @@ export function HomeView({ setTab }: HomeViewProps) {
         </div>
       </div>
 
-      {/* 4-COLUMN GRID LAYOUT */}
+      {/* RESPONSIVE GRID LAYOUT */}
       <div
         className="home-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          // Calculate row height dynamically or set fixed to fit nicely
-          gridTemplateRows: "repeat(3, 1fr)",
+          // Auto-fit ensures items wrap. Min width 150px works well for mobile.
+          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
           gap: "15px",
           width: "100%",
           maxWidth: "1100px",
-          flex: 1, // Take available height
-          maxHeight: "600px", // Prevent stretching too tall on large screens
-          alignContent: "center",
+          paddingBottom: "40px", // Extra space at bottom
         }}
       >
         <ToolCard
@@ -187,26 +186,47 @@ function ToolCard({ title, desc, icon, bg, onClick }: any) {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center", // Center content vertically
+        justifyContent: "center",
         textAlign: "center",
         cursor: "pointer",
-        height: "100%", // Fill the grid cell
+        height: "100%",
         minHeight: "120px",
+        background: "var(--panel-bg)",
+        border: "1px solid var(--border)",
+        borderRadius: "12px",
       }}
     >
       <div
         className="card-icon"
-        style={{ background: bg, marginBottom: 12, width: 48, height: 48 }}
+        style={{
+          background: bg,
+          marginBottom: 12,
+          width: 48,
+          height: 48,
+          borderRadius: 12,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
       >
         {icon}
       </div>
-      <h3 style={{ fontSize: "1rem", margin: "0 0 5px 0" }}>{title}</h3>
+      <h3
+        style={{
+          fontSize: "1rem",
+          margin: "0 0 5px 0",
+          color: "var(--text-main)",
+        }}
+      >
+        {title}
+      </h3>
       <p
         style={{
           fontSize: "0.75rem",
           margin: 0,
           lineHeight: 1.3,
           opacity: 0.8,
+          color: "var(--text-dim)",
         }}
       >
         {desc}
