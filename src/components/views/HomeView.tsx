@@ -27,10 +27,11 @@ export function HomeView({ setTab }: HomeViewProps) {
         padding: "20px",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
+        alignItems: "stretch",
         justifyContent: "flex-start",
         overflowY: "auto",
         overflowX: "hidden",
+        boxSizing: "border-box",
       }}
     >
       {/* HEADER */}
@@ -70,7 +71,7 @@ export function HomeView({ setTab }: HomeViewProps) {
         </div>
       </div>
 
-      {/* GRID LAYOUT */}
+      {/* GRID LAYOUT — styles moved out of <style> tag for Tauri production build compatibility */}
       <div className="tool-grid">
         <ToolCard
           title="Encrypt Files"
@@ -159,24 +160,6 @@ export function HomeView({ setTab }: HomeViewProps) {
           onClick={() => setTab("qr")}
         />
       </div>
-
-      <style>{`
-        .tool-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr); /* Force 4 columns on Desktop */
-          gap: 15px;
-          width: 100%;
-          max-width: 1100px;
-          padding-bottom: 40px;
-        }
-        
-        /* Mobile Breakpoint */
-        @media (max-width: 900px) {
-          .tool-grid {
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-          }
-        }
-      `}</style>
     </div>
   );
 }

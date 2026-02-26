@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.6.6"
+version = "2.6.7"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
 edition = "2021"

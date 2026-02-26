@@ -113,11 +113,20 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
 
 .content-area {
   flex: 1;
+  min-width: 0; /* Prevents flex child from overflowing */
   display: flex;
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
+}
+
+/* Ensure every direct view child fills the content area width */
+.content-area > * {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 /* Mobile Specific Adjustments */
@@ -150,37 +159,33 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
     /* Space for fixed bottom navbar */
     padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important;
   }
-
-  /* Force all direct view wrapper children to fill width */
-  .content-area > * {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box;
-  }
-
-  /* Home grid: 2 columns on mobile */
-  .home-grid {
-    grid-template-columns: 1fr 1fr !important;
-    max-width: 100% !important;
-    padding: 12px !important;
-    gap: 10px !important;
-  }
-
-  .home-card {
-    min-height: 130px !important;
-    padding: 15px !important;
-  }
 }
 /* --- HOME VIEW --- */
-.home-grid {
+.tool-grid {
   display: grid;
-  /* Reduced min-width to ensure 3 columns fit on smaller screens */
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 15px; /* Tighter gap (was 25px) */
+  grid-template-columns: repeat(4, 1fr);
+  gap: 15px;
   width: 100%;
-  max-width: 850px;
-  padding-bottom: 20px;
+  max-width: 1100px;
+  padding-bottom: 40px;
+  box-sizing: border-box;
+}
+
+/* Tablet: 3 columns */
+@media (max-width: 900px) and (min-width: 601px) {
+  .tool-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Mobile: 2 columns */
+@media (max-width: 600px) {
+  .tool-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    max-width: 100% !important;
+    gap: 10px !important;
+    padding-bottom: 20px !important;
+  }
 }
 
 .home-card {
@@ -240,13 +245,10 @@ select option {
 }
 
 /* =========================================
-   MOBILE: VIEW WRAPPER CATCH-ALL
-   Targets common patterns used in view
-   components to center content on desktop
-   (max-width containers, centered wrappers)
+   MOBILE: VIEW WRAPPER FIX
    ========================================= */
 @media (max-width: 600px) {
-  /* Any element directly inside content-area that acts as a view wrapper */
+  /* Any element directly inside content-area fills full width */
   .content-area > div,
   .content-area > section,
   .content-area > main {
@@ -256,24 +258,5 @@ select option {
     margin-left: 0 !important;
     margin-right: 0 !important;
     box-sizing: border-box !important;
-  }
-
-  /* Common view-level padding containers */
-  [class*="-view"],
-  [class*="-container"],
-  [class*="-wrapper"],
-  [class*="-panel"] {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    box-sizing: border-box !important;
-  }
-
-  /* Inline padding for view content — not too tight, not too wide */
-  .content-area
-    > div
-    > *:not(.toolbar):not(.address-bar):not(.status-bar):not(.file-view) {
-    padding-left: 12px;
-    padding-right: 12px;
   }
 }

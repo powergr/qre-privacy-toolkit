@@ -183,6 +183,7 @@ export function Sidebar({
       <div className="nav-links sidebar-scroll-area">
         {groups.map((group, index) => (
           <div key={index} className="nav-group-wrapper">
+            {index > 0 && <div className="sidebar-group-divider" />}
             <div className="nav-group">
               {group.items.map((t) => (
                 <button
