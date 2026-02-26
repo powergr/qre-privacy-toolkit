@@ -266,3 +266,61 @@
   align-items: center;
   gap: 20px;
 }
+
+/* =========================================
+   MOBILE OVERRIDES
+   ========================================= */
+@media (max-width: 600px) {
+  /* Toolbar: allow wrapping and smaller buttons */
+  .toolbar {
+    height: auto !important;
+    min-height: 52px !important;
+    padding: 6px 8px !important;
+    gap: 4px !important;
+    flex-wrap: wrap;
+    overflow-x: auto;
+  }
+
+  .tool-btn {
+    width: 48px !important;
+    height: 44px !important;
+    font-size: 0.65rem !important;
+    gap: 1px !important;
+    flex-shrink: 0;
+  }
+
+  /* Address bar: tighter on mobile */
+  .address-bar {
+    height: auto !important;
+    min-height: 40px !important;
+    padding: 4px 8px !important;
+    gap: 6px !important;
+    flex-wrap: wrap;
+  }
+
+  .breadcrumbs {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .crumb {
+    font-size: 0.8rem !important;
+  }
+
+  /* File grid: make it scrollable and full width */
+  .file-view {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto;
+  }
+
+  /* Status bar: smaller on mobile */
+  .status-bar {
+    height: auto !important;
+    min-height: 26px !important;
+    padding: 4px 8px !important;
+    font-size: 0.75rem !important;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

@@ -12,23 +12,23 @@ import {
   Monitor,
   Download,
   RotateCcw,
+  RefreshCw,
   StickyNote,
   Radar,
   Eraser,
   ClipboardList,
   QrCode,
   Bookmark,
-  RefreshCw,
   FileCheck,
   ChevronRight,
   Brush,
   FileSearch,
 } from "lucide-react";
-import { UniversalUpdateModal } from "../modals/UniversalUpdateModal";
 
 interface SidebarProps {
   activeTab: string;
   setTab: (t: string) => void;
+  // Kept for desktop popup menus (still work fine on desktop)
   onOpenHelpModal: () => void;
   onOpenAboutModal: () => void;
   onLogout: () => void;
@@ -36,6 +36,7 @@ interface SidebarProps {
   onBackup: () => void;
   onChangePassword: () => void;
   onReset2FA: () => void;
+  onUpdate: () => void;
 }
 
 export function Sidebar({
@@ -48,13 +49,40 @@ export function Sidebar({
   onBackup,
   onChangePassword,
   onReset2FA,
+  onUpdate,
 }: SidebarProps) {
-  const [showHelpMenu, setShowHelpMenu] = useState(false);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-
+  const [menuState, setMenuState] = useState<"none" | "help" | "settings">(
+    "none",
+  );
   const helpRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+
+  // Close menus when tab changes
+  useEffect(() => {
+    setMenuState("none");
+  }, [activeTab]);
+
+  // Click outside to close desktop menus
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        menuState === "help" &&
+        helpRef.current &&
+        !helpRef.current.contains(event.target as Node)
+      ) {
+        setMenuState("none");
+      }
+      if (
+        menuState === "settings" &&
+        settingsRef.current &&
+        !settingsRef.current.contains(event.target as Node)
+      ) {
+        setMenuState("none");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuState]);
 
   // Grouped Tabs
   const groups = [
@@ -64,7 +92,7 @@ export function Sidebar({
           id: "home",
           label: "Home",
           icon: <Home size={20} strokeWidth={2.5} />,
-          desc: "Dashboard overview",
+          desc: "Dashboard",
         },
         {
           id: "files",
@@ -86,7 +114,7 @@ export function Sidebar({
           id: "vault",
           label: "Passwords",
           icon: <Key size={20} strokeWidth={2.5} />,
-          desc: "Password manager",
+          desc: "Credentials",
         },
         {
           id: "bookmarks",
@@ -126,13 +154,13 @@ export function Sidebar({
           id: "cleaner",
           label: "Meta",
           icon: <Eraser size={20} strokeWidth={2.5} />,
-          desc: "Metadata wiper",
+          desc: "Meta wiper",
         },
         {
           id: "shred",
           label: "Shred",
           icon: <Trash2 size={20} strokeWidth={2.5} />,
-          desc: "Delete forever",
+          desc: "Delete",
         },
         {
           id: "analyzer",
@@ -150,32 +178,12 @@ export function Sidebar({
     },
   ];
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (helpRef.current && !helpRef.current.contains(event.target as Node)) {
-        setShowHelpMenu(false);
-      }
-      if (
-        settingsRef.current &&
-        !settingsRef.current.contains(event.target as Node)
-      ) {
-        setShowSettingsMenu(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   return (
-    <>
-      <div className="sidebar">
-        {/* SCROLL AREA */}
-        <div className="nav-links sidebar-scroll-area">
-          {groups.map((group, index) => (
-            <div key={index}>
-              {/* Divider (Desktop Only - handled by CSS) */}
-              {index > 0 && <div className="group-divider"></div>}
-
+    <div className="sidebar">
+      <div className="nav-links sidebar-scroll-area">
+        {groups.map((group, index) => (
+          <div key={index} className="nav-group-wrapper">
+            <div className="nav-group">
               {group.items.map((t) => (
                 <button
                   key={t.id}
@@ -188,137 +196,145 @@ export function Sidebar({
                 </button>
               ))}
             </div>
-          ))}
-        </div>
-
-        {/* BOTTOM SECTION */}
-        <div className="sidebar-bottom">
-          {/* HELP MENU */}
-          <div style={{ position: "relative", width: "100%" }} ref={helpRef}>
-            {showHelpMenu && (
-              <div className="help-menu">
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowHelpMenu(false);
-                    onOpenHelpModal();
-                  }}
-                >
-                  <BookOpen size={16} /> Help Topics
-                </div>
-                <div className="dropdown-divider"></div>
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowHelpMenu(false);
-                    onOpenAboutModal();
-                  }}
-                >
-                  <Info size={16} /> About
-                </div>
-              </div>
-            )}
-            <button
-              className={`nav-btn btn-split ${showHelpMenu ? "menu-open" : ""}`}
-              onClick={() => {
-                setShowHelpMenu(!showHelpMenu);
-                setShowSettingsMenu(false);
-              }}
-            >
-              <div className="btn-inner">
-                <CircleHelp size={20} strokeWidth={2.5} />
-                <span>Help</span>
-              </div>
-              {showHelpMenu && <ChevronRight size={16} className="chevron" />}
-            </button>
           </div>
-
-          {/* SETTINGS MENU */}
-          <div
-            style={{ position: "relative", width: "100%" }}
-            ref={settingsRef}
-          >
-            {showSettingsMenu && (
-              <div className="help-menu">
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    onTheme();
-                  }}
-                >
-                  <Monitor size={16} /> Theme
-                </div>
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    onBackup();
-                  }}
-                >
-                  <Download size={16} /> Backup Keychain
-                </div>
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    onChangePassword();
-                  }}
-                >
-                  <Key size={16} /> Change Password
-                </div>
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    onReset2FA();
-                  }}
-                >
-                  <RotateCcw size={16} color="var(--warning)" /> Reset 2FA
-                </div>
-                <div className="dropdown-divider"></div>
-                <div
-                  className="dropdown-item"
-                  onClick={() => {
-                    setShowSettingsMenu(false);
-                    setShowUpdateModal(true);
-                  }}
-                >
-                  <RefreshCw size={16} /> Check for Updates
-                </div>
-                <div className="dropdown-divider"></div>
-                <div
-                  className="dropdown-item"
-                  onClick={onLogout}
-                  style={{ color: "var(--btn-danger)" }}
-                >
-                  <LogOut size={16} /> Log Out
-                </div>
-              </div>
-            )}
-            <button
-              className={`nav-btn btn-split ${showSettingsMenu ? "menu-open" : ""}`}
-              onClick={() => {
-                setShowSettingsMenu(!showSettingsMenu);
-                setShowHelpMenu(false);
-              }}
-            >
-              <div className="btn-inner">
-                <Settings size={20} strokeWidth={2.5} />
-                <span>Settings</span>
-              </div>
-              {showSettingsMenu && (
-                <ChevronRight size={16} className="chevron" />
-              )}
-            </button>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* UPDATE MODAL (Universal) */}
-      {showUpdateModal && (
-        <UniversalUpdateModal onClose={() => setShowUpdateModal(false)} />
-      )}
-    </>
+      <div className="sidebar-bottom">
+        {/* HELP — desktop: popup menu | mobile: navigate to help tab */}
+        <div style={{ position: "relative" }} ref={helpRef}>
+          {menuState === "help" && (
+            <div className="desktop-popup-menu">
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onOpenHelpModal();
+                }}
+              >
+                <BookOpen size={16} /> Help Topics
+              </button>
+              <div className="dropdown-divider" />
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onOpenAboutModal();
+                }}
+              >
+                <Info size={16} /> About
+              </button>
+            </div>
+          )}
+          <button
+            className={`nav-btn btn-split ${
+              activeTab === "help" || menuState === "help" ? "menu-open" : ""
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Mobile: go to help tab. Desktop (has hover): open popup.
+              if (window.matchMedia("(max-width: 600px)").matches) {
+                setTab("help");
+              } else {
+                setMenuState(menuState === "help" ? "none" : "help");
+              }
+            }}
+          >
+            <div className="btn-inner">
+              <CircleHelp size={20} strokeWidth={2.5} />
+              <span>Help</span>
+            </div>
+            <ChevronRight size={16} className="chevron" />
+          </button>
+        </div>
+
+        {/* SETTINGS — desktop: popup menu | mobile: navigate to settings tab */}
+        <div style={{ position: "relative" }} ref={settingsRef}>
+          {menuState === "settings" && (
+            <div className="desktop-popup-menu">
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onTheme();
+                }}
+              >
+                <Monitor size={16} /> Theme
+              </button>
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onBackup();
+                }}
+              >
+                <Download size={16} /> Backup
+              </button>
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onChangePassword();
+                }}
+              >
+                <Key size={16} /> Password
+              </button>
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onReset2FA();
+                }}
+              >
+                <RotateCcw size={16} color="var(--warning)" /> Reset 2FA
+              </button>
+              <div className="dropdown-divider" />
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onUpdate();
+                }}
+              >
+                <RefreshCw size={16} /> Updates
+              </button>
+              <div className="dropdown-divider" />
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setMenuState("none");
+                  onLogout();
+                }}
+                style={{ color: "var(--btn-danger)" }}
+              >
+                <LogOut size={16} /> Log Out
+              </button>
+            </div>
+          )}
+          <button
+            className={`nav-btn btn-split ${
+              activeTab === "settings" || menuState === "settings"
+                ? "menu-open"
+                : ""
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Mobile: go to settings tab. Desktop: open popup.
+              if (window.matchMedia("(max-width: 600px)").matches) {
+                setTab("settings");
+              } else {
+                setMenuState(menuState === "settings" ? "none" : "settings");
+              }
+            }}
+          >
+            <div className="btn-inner">
+              <Settings size={20} strokeWidth={2.5} />
+              <span>Settings</span>
+            </div>
+            <ChevronRight size={16} className="chevron" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

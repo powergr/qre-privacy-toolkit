@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, ShieldAlert } from "lucide-react"; // Import ShieldAlert
 import { formatSize } from "../../utils/formatting";
 
 // Hooks
@@ -342,6 +342,60 @@ export function FilesView(props: FilesViewProps) {
           onClose={() => crypto.setErrorMsg(null)}
         />
       )}
+
+      {/* ACCESS DENIED MODAL */}
+      {fs.accessDenied && (
+        <div className="modal-overlay" style={{ zIndex: 99999 }}>
+          <div
+            className="auth-card"
+            style={{ borderColor: "var(--btn-danger)" }}
+          >
+            <div
+              className="modal-header"
+              style={{ borderBottomColor: "var(--btn-danger)" }}
+            >
+              <ShieldAlert size={24} color="var(--btn-danger)" />
+              <h2 style={{ color: "var(--btn-danger)" }}>Access Denied</h2>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center" }}>
+              <p
+                style={{
+                  fontSize: "1.1rem",
+                  marginBottom: 10,
+                  fontWeight: "bold",
+                }}
+              >
+                System Protection Active
+              </p>
+              <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
+                For your security, QRE Privacy Toolkit blocks access to critical
+                operating system folders.
+              </p>
+              <div
+                style={{
+                  background: "rgba(217, 64, 64, 0.1)",
+                  padding: 10,
+                  borderRadius: 6,
+                  margin: "15px 0",
+                  fontFamily: "monospace",
+                  fontSize: "0.85rem",
+                  wordBreak: "break-all",
+                }}
+              >
+                {fs.accessDenied}
+              </div>
+              <button
+                className="auth-btn danger-btn"
+                style={{ width: "100%" }}
+                onClick={() => fs.setAccessDenied(null)}
+              >
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!showEntropyModal && crypto.progress && (
         <ProcessingModal
           status={crypto.progress.status}

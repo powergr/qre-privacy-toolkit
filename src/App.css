@@ -115,19 +115,61 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto; /* ENABLE SCROLLING */
+  overflow-y: auto;
   overflow-x: hidden;
   position: relative;
-  /* Add padding for mobile bottom bar */
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Mobile Specific Adjustments */
 @media (max-width: 600px) {
+  /* Allow body to scroll on mobile (fixed navbar handles nav) */
+  body {
+    overflow: auto;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  /* App container stacks vertically; sidebar is position:fixed so out of flow */
+  .app-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    width: 100%;
+  }
+
+  /* Content area fills full width and scrolls independently */
   .content-area {
-    /* Ensure content doesn't get hidden behind the bottom sidebar */
-    /* 80px matches the sidebar height + padding */
-    padding-bottom: 90px;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Space for fixed bottom navbar */
+    padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Force all direct view wrapper children to fill width */
+  .content-area > * {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+  }
+
+  /* Home grid: 2 columns on mobile */
+  .home-grid {
+    grid-template-columns: 1fr 1fr !important;
+    max-width: 100% !important;
+    padding: 12px !important;
+    gap: 10px !important;
+  }
+
+  .home-card {
+    min-height: 130px !important;
+    padding: 15px !important;
   }
 }
 /* --- HOME VIEW --- */
@@ -195,4 +237,43 @@ select {
 select option {
   background-color: var(--bg-card);
   color: var(--text-main);
+}
+
+/* =========================================
+   MOBILE: VIEW WRAPPER CATCH-ALL
+   Targets common patterns used in view
+   components to center content on desktop
+   (max-width containers, centered wrappers)
+   ========================================= */
+@media (max-width: 600px) {
+  /* Any element directly inside content-area that acts as a view wrapper */
+  .content-area > div,
+  .content-area > section,
+  .content-area > main {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Common view-level padding containers */
+  [class*="-view"],
+  [class*="-container"],
+  [class*="-wrapper"],
+  [class*="-panel"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Inline padding for view content — not too tight, not too wide */
+  .content-area
+    > div
+    > *:not(.toolbar):not(.address-bar):not(.status-bar):not(.file-view) {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
 }

@@ -1,10 +1,12 @@
 use anyhow::Result;
-use directories::UserDirs;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
 use walkdir::{DirEntry, WalkDir};
+
+#[cfg(not(target_os = "android"))]
+use directories::UserDirs;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalysisResult {
@@ -134,7 +136,7 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
             } else if mime.starts_with("text") {
                 // Safe
             }
-            // FIX: Cross-Image format mismatches are common and usually safe (e.g. .webp named .png)
+            // Cross-image format mismatches are common and usually safe (e.g. .webp named .png)
             else if image_formats.contains(&real_ext) && image_formats.contains(&ext.as_str()) {
                 // Safe
             } else {
@@ -165,6 +167,8 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
     })
 }
 
+// ── Desktop (Windows / macOS / Linux) ────────────────────────────────────────
+#[cfg(not(target_os = "android"))]
 pub fn get_user_dirs() -> Vec<String> {
     let mut paths = Vec::new();
     if let Some(user_dirs) = UserDirs::new() {
@@ -179,4 +183,28 @@ pub fn get_user_dirs() -> Vec<String> {
         }
     }
     paths
+}
+
+// ── Android ───────────────────────────────────────────────────────────────────
+// The `directories` crate resolves to the app's private sandbox on Android,
+// which is always empty. Instead we target the real public storage folders
+// that are accessible with READ_EXTERNAL_STORAGE / MANAGE_EXTERNAL_STORAGE.
+#[cfg(target_os = "android")]
+pub fn get_user_dirs() -> Vec<String> {
+    let candidates = vec![
+        "/sdcard/Download",
+        "/sdcard/Documents",
+        "/sdcard/DCIM",
+        "/sdcard/Pictures",
+        "/storage/emulated/0/Download",
+        "/storage/emulated/0/Documents",
+        "/storage/emulated/0/DCIM",
+        "/storage/emulated/0/Pictures",
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|p| std::path::Path::new(p).exists())
+        .map(|p| p.to_string())
+        .collect()
 }

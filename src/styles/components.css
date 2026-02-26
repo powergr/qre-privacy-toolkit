@@ -291,3 +291,25 @@ input::-ms-clear {
   user-select: text;
   cursor: text;
 }
+
+/* =========================================
+   MOBILE MODAL FIX
+   ========================================= */
+@media (max-width: 600px) {
+  /* Keep modals centered, but pad away from gesture bar */
+  .modal-overlay {
+    align-items: center !important;
+    /* Safe area padding so nothing hides under gesture bar */
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom)) 16px !important;
+    box-sizing: border-box;
+  }
+
+  /* Card fills width, scrollable if content is tall */
+  .modal-overlay .auth-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: calc(100vh - 120px - env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    border-radius: 12px !important;
+  }
+}

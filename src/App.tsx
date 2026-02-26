@@ -31,6 +31,9 @@ import { BookmarksView } from "./components/views/BookmarksView";
 import { HashView } from "./components/views/HashView";
 import { SystemCleanerView } from "./components/views/SystemCleanerView";
 import { FileAnalyzerView } from "./components/views/FileAnalyzerView";
+import { HelpView } from "./components/views/HelpView";
+import { SettingsView } from "./components/views/SettingsView";
+import { UniversalUpdateModal } from "./components/modals/UniversalUpdateModal";
 
 // Auth & Modals
 import { AuthOverlay } from "./components/auth/AuthOverlay";
@@ -60,6 +63,7 @@ function App() {
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
 
   // NEW: Backup Reminder State
   const [showBackupReminder, setShowBackupReminder] = useState(false);
@@ -157,6 +161,7 @@ function App() {
         onBackup={() => setShowBackupModal(true)}
         onChangePassword={() => setShowChangePass(true)}
         onReset2FA={() => setShowResetConfirm(true)}
+        onUpdate={() => setShowUpdateModal(true)}
       />
 
       <div className="content-area">
@@ -185,6 +190,22 @@ function App() {
         {activeTab === "hash" && <HashView />}
         {activeTab === "sysclean" && <SystemCleanerView />}
         {activeTab === "analyzer" && <FileAnalyzerView />}
+        {activeTab === "help" && (
+          <HelpView
+            onOpenHelpModal={() => setShowHelpModal(true)}
+            onOpenAboutModal={() => setShowAbout(true)}
+          />
+        )}
+        {activeTab === "settings" && (
+          <SettingsView
+            onTheme={() => setShowThemeModal(true)}
+            onBackup={() => setShowBackupModal(true)}
+            onChangePassword={() => setShowChangePass(true)}
+            onReset2FA={() => setShowResetConfirm(true)}
+            onUpdate={() => setShowUpdateModal(true)}
+            onLogout={auth.logout}
+          />
+        )}
       </div>
 
       {/* --- GLOBAL MODALS --- */}
@@ -231,6 +252,10 @@ function App() {
           }}
           onCancel={() => setShowResetConfirm(false)}
         />
+      )}
+
+      {showUpdateModal && (
+        <UniversalUpdateModal onClose={() => setShowUpdateModal(false)} />
       )}
 
       {showChangePass && (

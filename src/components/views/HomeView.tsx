@@ -28,12 +28,12 @@ export function HomeView({ setTab }: HomeViewProps) {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "flex-start", // Changed from center to allow top alignment on scroll
-        overflowY: "auto", // FIX: Allow scrolling for tools that don't fit
+        justifyContent: "flex-start",
+        overflowY: "auto",
         overflowX: "hidden",
       }}
     >
-      {/* COMPACT HEADER */}
+      {/* HEADER */}
       <div
         style={{
           marginTop: 20,
@@ -70,19 +70,8 @@ export function HomeView({ setTab }: HomeViewProps) {
         </div>
       </div>
 
-      {/* RESPONSIVE GRID LAYOUT */}
-      <div
-        className="home-grid"
-        style={{
-          display: "grid",
-          // Auto-fit ensures items wrap. Min width 150px works well for mobile.
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: "15px",
-          width: "100%",
-          maxWidth: "1100px",
-          paddingBottom: "40px", // Extra space at bottom
-        }}
-      >
+      {/* GRID LAYOUT */}
+      <div className="tool-grid">
         <ToolCard
           title="Encrypt Files"
           desc="AES-256-GCM encryption."
@@ -112,7 +101,6 @@ export function HomeView({ setTab }: HomeViewProps) {
           onClick={() => setTab("bookmarks")}
         />
 
-        {/* Row 2 */}
         <ToolCard
           title="Clipboard"
           desc="Secure copy & history."
@@ -134,8 +122,6 @@ export function HomeView({ setTab }: HomeViewProps) {
           bg="rgba(234, 179, 8, 0.1)"
           onClick={() => setTab("hash")}
         />
-
-        {/* Row 3 */}
         <ToolCard
           title="System Clean"
           desc="Clear temp & cache."
@@ -143,6 +129,7 @@ export function HomeView({ setTab }: HomeViewProps) {
           bg="rgba(59, 130, 246, 0.1)"
           onClick={() => setTab("sysclean")}
         />
+
         <ToolCard
           title="Meta Cleaner"
           desc="Remove Exif/GPS data."
@@ -172,6 +159,24 @@ export function HomeView({ setTab }: HomeViewProps) {
           onClick={() => setTab("qr")}
         />
       </div>
+
+      <style>{`
+        .tool-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr); /* Force 4 columns on Desktop */
+          gap: 15px;
+          width: 100%;
+          max-width: 1100px;
+          padding-bottom: 40px;
+        }
+        
+        /* Mobile Breakpoint */
+        @media (max-width: 900px) {
+          .tool-grid {
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          }
+        }
+      `}</style>
     </div>
   );
 }

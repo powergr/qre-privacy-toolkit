@@ -8,6 +8,33 @@ import { FileEntry } from "../types";
 export type SortField = "name" | "size" | "modified";
 export type SortDirection = "asc" | "desc";
 
+// --- SECURITY BLACKLIST ---
+const BLOCKED_PATHS = [
+  "C:\\Windows",
+  "C:\\Program Files",
+  "C:\\Program Files (x86)",
+  "/bin",
+  "/sbin",
+  "/usr/bin",
+  "/usr/sbin",
+  "/etc",
+  "/var",
+  "/boot",
+  "/proc",
+  "/sys",
+  "/dev",
+];
+
+const isDangerousPath = (path: string) => {
+  if (!path) return false;
+  const normalized = path.replace(/\//g, "\\");
+  return BLOCKED_PATHS.some(
+    (blocked) =>
+      path.toLowerCase().startsWith(blocked.toLowerCase()) ||
+      normalized.toLowerCase().startsWith(blocked.toLowerCase()),
+  );
+};
+
 export function useFileSystem(view: string) {
   const [currentPath, setCurrentPath] = useState("");
   const [rawEntries, setRawEntries] = useState<FileEntry[]>([]);
@@ -16,6 +43,9 @@ export function useFileSystem(view: string) {
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  // NEW: Access Denied State for Modal
+  const [accessDenied, setAccessDenied] = useState<string | null>(null);
 
   const currentPathRef = useRef(currentPath);
   useEffect(() => {
@@ -98,8 +128,13 @@ export function useFileSystem(view: string) {
   // --- LOADING LOGIC ---
   const loadDir = useCallback(
     async (path: string, preserveSelection = false) => {
-      // FIX: Null check to prevent crashes
       if (path === null || path === undefined) return;
+
+      // SECURITY CHECK
+      if (isDangerousPath(path)) {
+        setAccessDenied(path);
+        return;
+      }
 
       try {
         // Handle Root/Drives
@@ -122,16 +157,17 @@ export function useFileSystem(view: string) {
         }
 
         const contents = await readDir(path);
-        // FIX: Better Separator Detection
-        const isWin = platform() === "windows";
+        const isWin = platform() === "windows" || path.includes("\\");
         const separator = isWin ? "\\" : "/";
 
         const mapped = await Promise.all(
           contents.map(async (entry) => {
-            const cleanPath = path.endsWith(separator)
-              ? path
-              : path + separator;
-            const fullPath = `${cleanPath}${entry.name}`;
+            let fullPath = path;
+            if (!fullPath.endsWith(separator)) {
+              fullPath += separator;
+            }
+            fullPath += entry.name;
+
             let size = null,
               modified = null;
             try {
@@ -191,7 +227,7 @@ export function useFileSystem(view: string) {
         else unlisten();
       } catch (e) {}
     }
-    // Only watch on Desktop to save battery on Android
+
     if (platform() !== "android") {
       startWatcher();
     }
@@ -213,11 +249,8 @@ export function useFileSystem(view: string) {
   async function loadInitialPath() {
     try {
       if (platform() === "android") {
-        // FIX: On Android, start at /storage/emulated/0 (External Storage Root)
-        // or Document Dir if restricted.
         loadDir("/storage/emulated/0");
       } else {
-        // Desktop behavior
         loadDir(await homeDir());
       }
     } catch (e) {
@@ -228,18 +261,16 @@ export function useFileSystem(view: string) {
 
   function goUp() {
     if (currentPath === "") return;
-    const isWindows = platform() === "windows";
-    const separator = isWindows ? "\\" : "/";
 
-    // Check root conditions
-    if (
-      currentPath === "/" ||
-      (isWindows && currentPath.length <= 3 && currentPath.includes(":")) ||
-      (platform() === "android" && currentPath === "/storage/emulated/0")
-    ) {
-      // On Android, don't go higher than internal storage root to avoid permission errors
+    const isWin = platform() === "windows" || currentPath.includes("\\");
+    const separator = isWin ? "\\" : "/";
+
+    if (isWin && currentPath.length <= 3 && currentPath.includes(":")) {
+      loadDir("");
+      return;
+    }
+    if (currentPath === "/" || currentPath === "/storage/emulated/0") {
       if (platform() === "android") return;
-
       loadDir("");
       return;
     }
@@ -248,11 +279,11 @@ export function useFileSystem(view: string) {
     parts.pop();
     let parent = parts.join(separator);
 
-    if (!isWindows) parent = "/" + parent;
-    if (isWindows && parent.length === 2 && parent.endsWith(":"))
+    if (!isWin) parent = "/" + parent;
+    if (isWin && parent.length === 2 && parent.endsWith(":"))
       parent += separator;
 
-    loadDir(parts.length === 0 ? (isWindows ? "" : "/") : parent);
+    loadDir(parts.length === 0 ? (isWin ? "" : "/") : parent);
   }
 
   return {
@@ -271,5 +302,7 @@ export function useFileSystem(view: string) {
     selectAll,
     clearSelection,
     handleSelection,
+    accessDenied, // Exported for UI
+    setAccessDenied, // Exported for UI
   };
 }

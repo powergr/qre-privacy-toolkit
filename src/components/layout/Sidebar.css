@@ -1,3 +1,7 @@
+/* =========================================
+   1. DESKTOP LAYOUT (Default)
+   ========================================= */
+
 .sidebar {
   width: 220px;
   background-color: var(--panel-bg);
@@ -6,9 +10,11 @@
   flex-direction: column;
   padding: 20px;
   height: 100vh;
-  overflow: visible;
+  z-index: 10;
+  position: relative;
 }
 
+/* Scroll Area */
 .sidebar-scroll-area {
   flex: 1;
   overflow-y: auto;
@@ -18,20 +24,37 @@
   scrollbar-color: var(--border) transparent;
 }
 
+/* Group wrapper: invisible to layout */
+.nav-group-wrapper {
+  display: contents;
+}
+
+/* Groups Stack Vertically on Desktop */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Divider - kept for potential future use but hidden in nav groups */
+.sidebar-group-divider {
+  display: none;
+}
+
+/* Bottom Section */
 .sidebar-bottom {
   display: flex;
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
-  overflow: visible;
 }
 
-/* BUTTON STYLES */
+/* Button Styles */
 .nav-btn {
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 12px 15px;
+  gap: 12px;
+  padding: 9px 12px;
   justify-content: flex-start;
   text-align: left;
   border: 1px solid transparent;
@@ -39,16 +62,21 @@
   color: var(--text-dim);
   border-radius: 8px;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   font-weight: 600;
   transition: all 0.2s;
   width: 100%;
   flex-shrink: 0;
 }
-.nav-btn:hover {
-  background-color: var(--highlight);
-  color: var(--text-main);
+
+/* Hover only on Desktop */
+@media (hover: hover) {
+  .nav-btn:hover {
+    background-color: var(--highlight);
+    color: var(--text-main);
+  }
 }
+
 .nav-btn.active,
 .nav-btn.menu-open {
   background-color: var(--accent);
@@ -57,39 +85,38 @@
   border-color: var(--accent);
 }
 
-/* MENUS */
-.help-menu {
+.btn-inner {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  width: 100%;
+}
+
+.btn-split {
+  justify-content: space-between;
+}
+
+/* Desktop Menus */
+.desktop-popup-menu {
   position: absolute;
   left: 100%;
   bottom: 0;
-  margin-left: 15px;
-  width: 220px;
+  margin-left: 10px;
+  width: 200px;
   background-color: var(--panel-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-  z-index: 2000;
-  opacity: 0;
-  transform: translateX(-10px) scale(0.95);
-  animation: menuEnter 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+  animation: fade 0.1s ease-out;
 }
-.help-menu::before {
-  content: "";
-  position: absolute;
-  left: -6px;
-  bottom: 20px;
-  width: 12px;
-  height: 12px;
-  background-color: var(--panel-bg);
-  border-left: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  transform: rotate(45deg);
-}
-@keyframes menuEnter {
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
   to {
     opacity: 1;
-    transform: translateX(0) scale(1);
   }
 }
 
@@ -97,72 +124,80 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  font-size: 0.9rem;
+  padding: 12px;
+  font-size: 1rem;
   color: var(--text-main);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.2s;
+  /* Reset so <button> looks same as <div> */
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
 }
 .dropdown-item:hover {
   background-color: var(--highlight);
-  color: white;
 }
 .dropdown-divider {
   height: 1px;
-  background-color: var(--border);
-  margin: 6px 0;
+  background: var(--border);
+  margin: 5px 0;
   opacity: 0.5;
 }
-.btn-inner {
-  display: flex;
-  gap: 15px;
-  align-items: center;
-  width: 100%;
-}
-.btn-split {
-  justify-content: space-between;
+
+.mobile-menu-overlay {
+  display: none;
 }
 
-/* --- MOBILE LAYOUT (BOTTOM BAR) --- */
+/* =========================================
+   2. MOBILE LAYOUT (Strict Overrides)
+   ========================================= */
+
 @media (max-width: 600px) {
   .sidebar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    height: auto;
-    /* Increase height to accommodate safe area + buttons */
-    min-height: 80px;
+    /* Force Fixed Bottom Bar */
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 70px !important;
 
-    /* CRITICAL: Add padding for Android Gesture Bar / iOS Home Bar */
-    padding: 10px 10px calc(15px + env(safe-area-inset-bottom)) 10px;
+    /* Layout: Horizontal Row */
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
 
-    flex-direction: row;
-    align-items: center; /* Vertically center items */
-    justify-content: space-between;
+    /* Padding for Gestures */
+    padding: 10px 10px calc(15px + env(safe-area-inset-bottom)) 10px !important;
 
-    border-right: none;
-    border-top: 1px solid var(--border);
-    background-color: var(--bg-card);
-    z-index: 1000;
+    /* Visuals */
+    background-color: var(--panel-bg) !important;
+    border-right: none !important;
+    border-top: 1px solid var(--border) !important;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5) !important;
+    z-index: 2000 !important;
 
-    overflow-x: hidden; /* Prevent body scroll */
-    overflow-y: hidden;
-    gap: 0;
+    overflow: hidden !important;
+    gap: 0 !important;
   }
 
-  /* Scrollable Tools Area */
+  /* Scroll Area: Force Horizontal Flow */
   .sidebar-scroll-area {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto; /* Horizontal Scroll */
-    overflow-y: hidden;
-    gap: 8px;
-    padding-right: 10px; /* Gap before separator */
-    margin-bottom: 0;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+
+    gap: 10px !important;
+    padding-right: 10px !important;
+    margin-bottom: 0 !important;
+    flex: 1 !important;
 
     /* Hide Scrollbar */
     -ms-overflow-style: none;
@@ -172,71 +207,96 @@
     display: none;
   }
 
-  .nav-links {
-    display: flex;
-    flex-direction: row;
-    gap: 8px;
-  }
-  .nav-links > div {
-    display: flex;
-    flex-direction: row;
-    gap: 8px;
+  /* nav-group-wrapper stays transparent on mobile */
+  .nav-group-wrapper {
+    display: contents !important;
   }
 
-  /* Fixed Right Section (Help/Settings) */
+  /* nav-group: horizontal row on mobile */
+  .nav-group {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 5px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Hide Dividers on Mobile */
+  .sidebar-group-divider {
+    display: none !important;
+  }
+
+  /* Bottom Actions (Right Side) */
   .sidebar-bottom {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    border-top: none;
-    /* Vertical line separator */
-    border-left: 1px solid var(--border);
-    margin: 0;
-    padding-left: 10px;
-    gap: 8px;
-    background-color: var(--bg-card); /* Cover scroll */
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    border-left: 1px solid var(--border) !important;
+    padding-left: 10px !important;
+    margin-left: 5px !important;
+    gap: 5px !important;
+    background-color: transparent !important;
   }
 
-  /* Mobile Button Styles */
+  /* Icons Only */
   .nav-btn {
-    width: 48px;
-    height: 48px;
-    padding: 0;
-    justify-content: center;
-    align-items: center;
-    border-radius: 12px;
-    flex-shrink: 0;
+    width: 48px !important;
+    height: 48px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    align-items: center !important;
+    border-radius: 12px !important;
+    flex-shrink: 0 !important;
   }
 
+  /* Hide Text */
   .nav-btn span,
   .btn-inner span,
   .chevron {
-    display: none;
+    display: none !important;
   }
 
   .btn-split {
-    margin-bottom: 0;
+    margin-bottom: 0 !important;
   }
-
   .btn-inner {
-    justify-content: center;
-    width: auto;
-    gap: 0;
+    justify-content: center !important;
+    width: auto !important;
+    gap: 0 !important;
   }
 
-  /* Fix Menu Position */
-  .help-menu {
-    position: fixed;
-    /* Position above the sidebar height */
-    bottom: 90px;
-    left: 10px;
-    right: 10px;
-    width: auto;
-    margin: 0;
-    border: 1px solid var(--border);
-    box-shadow: 0 -5px 25px rgba(0, 0, 0, 0.5);
+  /* Hide Desktop Popups */
+  .desktop-popup-menu {
+    display: none !important;
   }
-  .help-menu::before {
-    display: none;
+
+  /* Mobile Bottom Sheet */
+  .mobile-menu-overlay {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .mobile-menu-content {
+    width: 100%;
+    background: var(--panel-bg);
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    padding: 20px;
+    padding-bottom: 40px;
+    animation: slideUp 0.2s ease-out;
+    border-top: 1px solid var(--border);
+  }
+
+  @keyframes slideUp {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
   }
 }

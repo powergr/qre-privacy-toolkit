@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.6.5"
+version = "2.6.6"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
 edition = "2021"
@@ -21,6 +21,7 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-http = "2.0.0"
+tauri-plugin-os = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -41,7 +42,6 @@ sysinfo = "0.32"
 uuid = { version = "1.8", features = ["v4"] }
 directories = "5.0"
 argon2 = "0.5"
-tauri-plugin-os = "2"
 tauri-plugin-opener = "2"
 qrcodegen = "1.8"
 infer = "0.16"

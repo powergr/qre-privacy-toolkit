@@ -58,9 +58,57 @@ fn is_already_compressed(filename: &str) -> bool {
     )
 }
 
-// --- HELPER: Path Traversal Check ---
-/// Returns an error if the path contains any `..` (parent directory) components.
-/// Used to prevent directory traversal in commands that accept user-supplied paths.
+// --- HELPER: Path Security Checks ---
+
+/// Checks if a path is a critical system directory.
+fn is_system_critical(path: &Path) -> bool {
+    let path_str = path.to_string_lossy().to_lowercase();
+
+    // Windows Critical Paths
+    if cfg!(target_os = "windows") {
+        if path_str.starts_with("c:\\windows")
+            || path_str.starts_with("c:\\program files")
+            || path_str.starts_with("c:\\program files (x86)")
+            || path_str == "c:\\"
+        {
+            // Block root C: lock
+            return true;
+        }
+    }
+    // Linux/macOS Critical Paths
+    else {
+        let critical = [
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/etc",
+            "/var",
+            "/boot",
+            "/proc",
+            "/sys",
+            "/dev",
+        ];
+        if critical.iter().any(|c| path_str.starts_with(c)) || path_str == "/" {
+            return true;
+        }
+    }
+    false
+}
+
+fn reject_critical_path(path: &Path) -> Result<(), String> {
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err("Path traversal not allowed: path must not contain '..'".to_string());
+    }
+    if is_system_critical(path) {
+        return Err(format!(
+            "Access Denied: '{}' is a protected system path.",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn reject_path_traversal(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
@@ -96,12 +144,7 @@ pub async fn lock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
-    // FIX: Keep the raw entropy bytes here. We will derive a *unique* seed per
-    // file inside the loop by mixing in the file index. Previously, the same
-    // hashed seed was passed to every file in the batch, causing every file to
-    // receive the same file-encryption key and nonces — a critical reuse bug.
     let raw_entropy: Option<Vec<u8>> = extra_entropy;
-
     let mode_str = compression_mode.unwrap_or("auto".to_string());
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -109,6 +152,17 @@ pub async fn lock_file(
 
         for (file_index, file_path) in file_paths.into_iter().enumerate() {
             let path = Path::new(&file_path);
+
+            // SECURITY CHECK
+            if let Err(e) = reject_critical_path(path) {
+                results.push(BatchItemResult {
+                    name: path.to_string_lossy().to_string(),
+                    success: false,
+                    message: e,
+                });
+                continue;
+            }
+
             let filename = path
                 .file_name()
                 .unwrap_or_default()
@@ -154,10 +208,6 @@ pub async fn lock_file(
             let final_path = utils::get_unique_path(Path::new(&raw_output));
             let final_path_str = final_path.to_string_lossy().to_string();
 
-            // FIX: Derive a unique per-file entropy seed by hashing the raw
-            // entropy together with the file's index in the batch. This ensures
-            // every file gets a distinct RNG state even in paranoid-mode batch
-            // operations, preventing file-key and nonce reuse across the batch.
             let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
                 let mut hasher = Sha256::new();
                 hasher.update(bytes);
@@ -390,6 +440,17 @@ pub async fn delete_items(
 
         for path in paths {
             let p = Path::new(&path);
+
+            // SECURITY CHECK
+            if let Err(e) = reject_critical_path(p) {
+                results.push(BatchItemResult {
+                    name: p.to_string_lossy().to_string(),
+                    success: false,
+                    message: e,
+                });
+                continue;
+            }
+
             let filename = p
                 .file_name()
                 .unwrap_or_default()
@@ -451,6 +512,17 @@ pub async fn trash_items(
 
         for path in paths {
             let p = Path::new(&path);
+
+            // SECURITY CHECK
+            if let Err(e) = reject_critical_path(p) {
+                results.push(BatchItemResult {
+                    name: p.to_string_lossy().to_string(),
+                    success: false,
+                    message: e,
+                });
+                continue;
+            }
+
             let filename = p
                 .file_name()
                 .unwrap_or_default()
@@ -508,14 +580,8 @@ pub fn create_dir(path: String) -> CommandResult<()> {
     Ok(())
 }
 
-/// Renames a file or directory to a new name within the same parent directory.
-///
-/// FIX: `new_name` is validated to reject path separators and parent-directory
-/// references. Without this check a caller could supply e.g. `../../etc/passwd`
-/// as the new name and rename the target outside the intended directory.
 #[tauri::command]
 pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
-    // FIX: Reject names that contain path separators or are parent-directory references.
     if new_name.is_empty()
         || new_name == "."
         || new_name == ".."
@@ -568,22 +634,12 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
 
 // --- HELPER COMMANDS FOR IMPORT/EXPORT ---
 
-/// Reads the full text content of a file at the given path.
-///
-/// FIX: Rejects paths containing `..` (parent-directory) components to prevent
-/// a malicious or buggy caller from reading arbitrary files on the system
-/// (e.g. `../../etc/passwd` or sensitive app-data files outside the vault).
 #[tauri::command]
 pub fn read_text_file_content(path: String) -> CommandResult<String> {
     reject_path_traversal(Path::new(&path))?;
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
-/// Writes text content to a file at the given path.
-///
-/// FIX: Rejects paths containing `..` (parent-directory) components to prevent
-/// a malicious or buggy caller from overwriting arbitrary files outside the
-/// intended directory (e.g. overwriting a system config file).
 #[tauri::command]
 pub fn write_text_file_content(path: String, content: String) -> CommandResult<()> {
     reject_path_traversal(Path::new(&path))?;
@@ -603,6 +659,13 @@ pub async fn batch_shred_files(
     method: shredder::ShredMethod,
     app_handle: tauri::AppHandle,
 ) -> CommandResult<shredder::ShredResult> {
+    // SECURITY CHECK: Loop through and verify first
+    for path in &paths {
+        if let Err(e) = reject_critical_path(Path::new(path)) {
+            return Err(e);
+        }
+    }
+
     shredder::batch_shred(paths, method, &app_handle).map_err(|e| e.to_string())
 }
 

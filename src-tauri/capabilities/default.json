@@ -20,6 +20,16 @@
     "clipboard-manager:allow-write-text",
     "clipboard-manager:allow-read-text",
 
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.github.com/repos/powergr/qre-privacy-toolkit/releases/latest"
+        }
+      ],
+      "deny": []
+    },
+
     "fs:allow-read-dir",
     "fs:allow-read-file",
     "fs:allow-write-file",
@@ -37,7 +47,15 @@
         "$APP_CONFIG/**",
         "$DOCUMENT/**",
         "$DOWNLOAD/**",
-        "$DESKTOP/**"
+        "$DESKTOP/**",
+        "$PICTURE/**",
+        "$VIDEO/**",
+        "$AUDIO/**",
+        "/storage/emulated/0",
+        "/storage/emulated/0/**",
+        "/sdcard",
+        "/sdcard/**",
+        "**"
       ]
     },
 

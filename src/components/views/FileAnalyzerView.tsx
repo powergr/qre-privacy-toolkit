@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { platform } from "@tauri-apps/plugin-os";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -32,13 +33,19 @@ export function FileAnalyzerView() {
   const [scanPath, setScanPath] = useState<string | null>(null);
   const [scanLog, setScanLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const isCancelled = useRef(false);
 
-  // Integrate Drag & Drop hook (matches Integrity Checker)
+  useEffect(() => {
+    const p = platform();
+    setIsMobile(p === "android" || p === "ios");
+  }, []);
+
+  // Integrate Drag & Drop hook — only meaningful on desktop, but safe to keep
   const { isDragging } = useDragDrop(async (paths) => {
     if (paths.length > 0 && !loading && !hasScanned) {
-      runScan(paths[0]); // Scan the first dropped item (file or folder)
+      runScan(paths[0]);
     }
   });
 
@@ -96,6 +103,11 @@ export function FileAnalyzerView() {
   };
 
   async function handleBrowse() {
+    // Folder picker is not available on Android/iOS — fall back to smart scan
+    if (isMobile) {
+      runScan(null);
+      return;
+    }
     try {
       const selected = await open({
         directory: true,
@@ -136,7 +148,7 @@ export function FileAnalyzerView() {
           justifyContent: !hasScanned ? "center" : "flex-start",
         }}
       >
-        {/* Header matching Integrity Checker style */}
+        {/* Header */}
         <div
           style={{ textAlign: "center", marginBottom: hasScanned ? 30 : 40 }}
         >
@@ -180,11 +192,12 @@ export function FileAnalyzerView() {
           </div>
         )}
 
-        {/* DROP ZONE (Replaces the 2-card layout) */}
+        {/* DROP ZONE */}
         {!hasScanned && (
           <>
             <div
-              className={`shred-zone ${isDragging ? "active" : ""}`}
+              // Only make the whole zone clickable on desktop
+              className={`shred-zone ${isDragging && !isMobile ? "active" : ""}`}
               style={{
                 borderColor: loading ? "var(--text-dim)" : "var(--accent)",
                 width: "100%",
@@ -196,8 +209,9 @@ export function FileAnalyzerView() {
                 alignItems: "center",
                 justifyContent: "center",
                 position: "relative",
+                cursor: !loading && !isMobile ? "pointer" : "default",
               }}
-              onClick={!loading ? handleBrowse : undefined}
+              onClick={!loading && !isMobile ? handleBrowse : undefined}
             >
               {loading ? (
                 <div
@@ -214,7 +228,7 @@ export function FileAnalyzerView() {
                     {scanPath?.split(/[/\\]/).pop() || "Directory"}
                   </p>
 
-                  {/* Terminal Log Box restricted inside the drop zone */}
+                  {/* Terminal Log Box */}
                   <div
                     style={{
                       background: "#0a0a0a",
@@ -271,28 +285,52 @@ export function FileAnalyzerView() {
                   >
                     <FolderSearch size={48} color="var(--accent)" />
                   </div>
-                  <h3>Drag & Drop a File or Folder</h3>
-                  <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
-                    Supports single files and deep directory traversal
-                  </p>
 
-                  <button
-                    className="secondary-btn"
-                    style={{ marginTop: 10 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleBrowse();
-                    }}
-                  >
-                    <Upload size={16} style={{ marginRight: 8 }} /> Select
-                    Target
-                  </button>
+                  {isMobile ? (
+                    // --- MOBILE: no drag & drop, no folder picker ---
+                    <>
+                      <h3>Scan Your Device</h3>
+                      <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
+                        Scans Downloads, Documents, and common folders
+                      </p>
+                      <button
+                        className="secondary-btn"
+                        style={{ marginTop: 10 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          runScan(null);
+                        }}
+                      >
+                        <Search size={16} style={{ marginRight: 8 }} /> Start
+                        Smart Scan
+                      </button>
+                    </>
+                  ) : (
+                    // --- DESKTOP: drag & drop + folder picker ---
+                    <>
+                      <h3>Drag & Drop a File or Folder</h3>
+                      <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
+                        Supports single files and deep directory traversal
+                      </p>
+                      <button
+                        className="secondary-btn"
+                        style={{ marginTop: 10 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleBrowse();
+                        }}
+                      >
+                        <Upload size={16} style={{ marginRight: 8 }} /> Select
+                        Target
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Smart Scan Alternate Option */}
-            {!loading && (
+            {/* Smart Scan link — desktop only, mobile already shows Smart Scan as primary */}
+            {!loading && !isMobile && (
               <div style={{ textAlign: "center", marginTop: 25 }}>
                 <button
                   className="icon-btn-ghost"
