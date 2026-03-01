@@ -8,6 +8,8 @@ export interface NoteEntry {
   created_at: number; // Seconds
   updated_at: number; // Seconds
   is_pinned?: boolean;
+  // User-defined labels. Optional for backwards compatibility with older vaults.
+  tags?: string[];
 }
 
 export interface NotesVault {

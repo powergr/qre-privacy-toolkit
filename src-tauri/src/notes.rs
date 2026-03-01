@@ -24,6 +24,12 @@ pub struct NoteEntry {
     // Allows users to pin important notes (like an Emergency contact list) to the top of the UI
     #[serde(default)]
     pub is_pinned: bool,
+
+    // User-defined labels for organizing notes into categories (e.g. "crypto", "work", "2fa").
+    // Stored as a flat Vec<String> for simplicity. Max recommended: 10 tags per note.
+    // Older vaults without this field will deserialize as an empty Vec via `default`.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// The root container for all Secure Notes.
@@ -77,6 +83,15 @@ impl NotesVault {
             // React rendering bugs and accidental data overwrites on the frontend.
             if !seen_ids.insert(&note.id) {
                 return Err(format!("Duplicate ID: {}", note.id));
+            }
+            // Validate tags: no empty strings, max 10 tags per note
+            if note.tags.len() > 10 {
+                return Err(format!("Note '{}' has too many tags (max 10)", note.id));
+            }
+            for tag in &note.tags {
+                if tag.trim().is_empty() {
+                    return Err(format!("Note '{}' has an empty tag", note.id));
+                }
             }
         }
 
