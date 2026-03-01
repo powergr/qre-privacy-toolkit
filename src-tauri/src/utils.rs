@@ -1,3 +1,5 @@
+// --- START OF FILE utils.rs ---
+
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -8,10 +10,13 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 
+// ==========================================
 // --- EVENT HELPERS ---
+// ==========================================
 
-/// Sends a progress update event to the Frontend (React).
-/// This allows the UI to show a progress bar during long operations like encryption or shredding.
+/// Emits a progress update event over the Tauri IPC bridge to the React frontend.
+/// This allows the UI to display live progress bars during long I/O bound operations
+/// (like encryption, decryption, or shredding) so the app doesn't appear "frozen".
 pub fn emit_progress(app: &AppHandle, label: &str, percentage: u8) {
     let _ = app.emit(
         "qre:progress",
@@ -22,20 +27,25 @@ pub fn emit_progress(app: &AppHandle, label: &str, percentage: u8) {
     );
 }
 
+// ==========================================
 // --- FILE HELPERS ---
+// ==========================================
 
-/// Reads a Keyfile from disk and computes its SHA-256 hash.
+/// Reads a "Keyfile" from disk and computes its SHA-256 hash.
 ///
-/// This is used primarily on Desktop where the app has direct file access.
-/// On Android, the frontend reads the bytes and passes them directly to the command
-/// to avoid permission issues with Content URIs.
+/// A Keyfile is an advanced cryptographic feature where a user selects a random file
+/// (e.g., an image or mp3) to act as an extension of their password.
 ///
-/// Returns: The SHA-256 hash of the file content (used as part of the encryption key).
+/// * **Desktop:** The app reads the file path directly from the OS file system.
+/// * **Android:** Direct paths don't work due to Scoped Storage (Content URIs).
+///   The frontend handles reading the bytes into memory and passes them to the command directly.
+///
+/// Returns: An optional SHA-256 hash vector that will be mixed with the master key.
 pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, String> {
     match path_opt {
         Some(p) => {
             if p.trim().is_empty() {
-                return Ok(None);
+                return Ok(None); // Empty path string means no keyfile
             }
             let path = Path::new(&p);
 
@@ -45,16 +55,19 @@ pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, Stri
 
             let mut file =
                 fs::File::open(path).map_err(|e| format!("Failed to open keyfile: {}", e))?;
+
+            // Hash the file contents
             let mut hasher = Sha256::new();
+            // Read in 4KB chunks. This is CRITICAL. If a user selects a 4GB movie
+            // as their keyfile, reading the whole file at once would crash the app with an OOM error.
             let mut buffer = [0u8; 4096];
 
-            // Read the file in small chunks to avoid loading large keyfiles into RAM.
             loop {
                 let count = file
                     .read(&mut buffer)
                     .map_err(|e| format!("Error reading keyfile: {}", e))?;
                 if count == 0 {
-                    break;
+                    break; // End of file
                 }
                 hasher.update(&buffer[..count]);
             }
@@ -65,14 +78,18 @@ pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, Stri
     }
 }
 
-/// Generates a unique filename to prevent overwriting existing files.
+/// Generates a unique, non-colliding filename to prevent accidentally overwriting existing files.
 ///
-/// Example: If `file.txt` exists, it returns `file (1).txt`.
-/// If `file (1).txt` exists, it returns `file (2).txt`, and so on.
+/// Example:
+/// If `document.txt` exists, it returns `document (1).txt`.
+/// If `document (1).txt` exists, it returns `document (2).txt`, etc.
 pub fn get_unique_path(original_path: &Path) -> PathBuf {
+    // If the path doesn't exist yet, it's safe to use
     if !original_path.exists() {
         return original_path.to_path_buf();
     }
+
+    // Deconstruct the original path
     let file_stem = original_path
         .file_stem()
         .unwrap_or_default()
@@ -82,28 +99,34 @@ pub fn get_unique_path(original_path: &Path) -> PathBuf {
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
     let parent = original_path.parent().unwrap_or(Path::new("."));
+
+    // Loop until we find an unused number suffix
     let mut counter = 1;
     loop {
         let new_name = format!("{} ({}){}", file_stem, counter, extension);
         let new_path = parent.join(new_name);
         if !new_path.exists() {
-            return new_path;
+            return new_path; // Found a safe path!
         }
         counter += 1;
     }
 }
 
+// ==========================================
 // --- TRASH LOGIC ---
+// ==========================================
 
-/// Moves a file to the System Trash / Recycle Bin.
+/// Attempts to move a file/folder to the Operating System's native Trash / Recycle Bin.
+/// This acts as a softer alternative to immediate secure shredding.
 ///
-/// - **Desktop:** Uses the `trash` crate to interact with the OS Recycle Bin.
-/// - **Android:** Returns an error because Android does not have a standardized Trash API for external files.
+/// - **Desktop:** Uses the `trash` crate to interact with the OS APIs natively.
+/// - **Android:** Returns an error because Android lacks a standardized cross-vendor
+///   Trash API accessible to standard applications via native code.
 #[allow(dead_code)]
 pub fn move_to_trash(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        let _ = path;
+        let _ = path; // Suppress unused variable warning on Android
         Err("Trash is not supported on Android".to_string())
     }
 
@@ -113,53 +136,55 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
     }
 }
 
+// ==========================================
 // --- ZIP LOGIC ---
+// ==========================================
 
-/// Compresses a directory into a ZIP file stored on the disk.
+/// Packages an entire directory (and its contents) into a `.zip` file stored on disk.
+/// This allows the encryption engine to process complex folder structures as a single file.
 ///
-/// This uses a **temporary file** strategy instead of zipping to memory.
-/// This ensures that archiving large folders (e.g., 10GB) does not crash the application due to RAM exhaustion.
+/// PERFORMANCE: We stream the files directly to a temporary `.zip` on the disk rather than
+/// building the ZIP in RAM. This prevents the app from crashing if the user tries to lock
+/// a massive 50GB folder.
 ///
-/// Note: The ZIP itself is stored without compression (`CompressionMethod::Stored`) because
-/// the QRE engine applies Zstd compression to the entire stream later.
-///
-/// SECURITY: Symlinks inside the source directory are skipped. Following symlinks
-/// could allow a maliciously crafted directory to include files outside the intended
-/// source tree (directory traversal via symlink).
+/// COMPRESSION: We use `CompressionMethod::Stored` (0% compression) here because the
+/// QRE encryption engine applies its own highly efficient Zstd compression later in the pipeline.
+/// Zipping first and compressing later is faster and yields smaller encrypted files.
 pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<(), String> {
     let file = fs::File::create(output_zip_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
 
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored)
-        .unix_permissions(0o755);
+        .unix_permissions(0o755); // Standardize permissions to avoid cross-OS extraction issues
 
     let prefix = dir_path.parent().unwrap_or(Path::new(""));
 
-    // Walk through the directory recursively.
-    // FIX: follow_links(false) is the walkdir default, but we make it explicit
-    // and additionally skip any symlinks encountered during the walk to prevent
-    // a crafted directory from pulling in files outside the intended source tree.
+    // SECURITY FIX: Explicitly disable following symlinks.
+    // If we followed symlinks, a malicious symlink inside the folder pointing to `C:\Windows`
+    // or `/etc` could cause the application to ZIP and expose arbitrary system files
+    // (a form of Directory Traversal attack).
     for entry in WalkDir::new(dir_path).follow_links(false) {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
 
-        // FIX: Skip symlinks entirely — do not archive or follow them.
+        // Extra defense-in-depth: Skip symlink objects entirely so they don't even end up in the ZIP metadata
         if path.is_symlink() {
             continue;
         }
 
-        // Calculate relative path for the zip structure
+        // Calculate the internal relative path for the ZIP structure
         let name = path
             .strip_prefix(prefix)
             .map_err(|_| "Path error")?
             .to_str()
             .ok_or("Non-UTF8 path")?
-            .replace("\\", "/"); // Normalize Windows paths
+            .replace("\\", "/"); // ZIP specification requires forward slashes, even on Windows
 
         if path.is_file() {
             zip.start_file(name, options).map_err(|e| e.to_string())?;
-            // Stream file content directly to the zip file
+
+            // Stream the file content directly into the zip archive chunk by chunk
             let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
             std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
         } else if path.is_dir() && !name.is_empty() {
@@ -172,16 +197,22 @@ pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<
     Ok(())
 }
 
-// --- SHREDDING LOGIC ---
+// ==========================================
+// --- SHREDDING LOGIC (INTERNAL/LEGACY) ---
+// ==========================================
 
-/// Securely deletes a single file by overwriting it with random data.
+/// Securely deletes a single file by overwriting its physical disk sectors with random data.
+/// This function is primarily used by the app internally (e.g., when deleting a file normally)
+/// rather than the advanced dedicated "File Shredder" tool.
 ///
-/// **WARNING:** On Flash storage (SSDs, USB drives, Mobile phones), hardware "wear leveling"
-/// may prevent the data from being physically overwritten in the same location.
-/// This feature is disabled on Android to prevent unnecessary battery/chip wear.
+/// **WARNING:** On Flash storage (SSDs, USB drives, Mobile phones), hardware "Wear Leveling"
+/// algorithms intercept write commands. The SSD controller may write this "random data" to a
+/// completely different physical sector, leaving the original data fully intact!
+/// Because of this, shredding is completely disabled on Android builds to prevent
+/// destroying the phone's NAND chip lifespan for no actual security gain.
 #[allow(dead_code)]
 fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
-    // 1. Remove Read-Only attribute (if present) to allow writing
+    // 1. Un-lock the file: Remove the OS Read-Only attribute if it's set
     let mut perms = fs::metadata(path)?.permissions();
     if perms.readonly() {
         perms.set_readonly(false);
@@ -191,34 +222,46 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     let metadata = fs::metadata(path)?;
     let len = metadata.len();
 
-    // 2. Overwrite the file content with random garbage data
+    // 2. Overwrite the file content with random garbage data (One pass)
     if len > 0 {
         let mut file = fs::OpenOptions::new().write(true).open(path)?;
         let mut rng = rand::thread_rng();
-        let chunk_size = 16 * 1024 * 1024; // 16MB Buffer
+
+        // Write in 16MB chunks. This is faster than 1MB chunks on modern NVMe drives.
+        let chunk_size = 16 * 1024 * 1024;
         let mut buffer = vec![0u8; chunk_size];
         let mut written = 0u64;
         let mut last_percent: u8 = 0;
 
         while written < len {
+            // Determine how much to write without overshooting the file size
             let bytes_to_write = std::cmp::min(chunk_size as u64, len - written);
             let slice = &mut buffer[0..bytes_to_write as usize];
-            rng.fill_bytes(slice); // Generate random noise
+
+            // Fill buffer with cryptographically secure noise
+            rng.fill_bytes(slice);
             file.write_all(slice)?;
             written += bytes_to_write;
 
-            // Report progress to UI — clamp to 100 to avoid u8 overflow
+            // Report progress to the UI, clamped at 100% to avoid overflow crashes
             let percent = ((written as f64 / len as f64) * 100.0).min(100.0) as u8;
+
+            // Throttle UI events to only trigger every 5% progress
             if percent >= last_percent.saturating_add(5) {
                 let filename = path.file_name().unwrap_or_default().to_string_lossy();
                 emit_progress(app, &format!("Shredding {}", filename), percent);
                 last_percent = percent;
             }
         }
-        file.sync_all()?; // Force OS to flush changes to disk
+
+        // Force the OS to bypass write caches and physically commit the garbage to the drive plates
+        file.sync_all()?;
     }
 
-    // 3. Rename the file to a random UUID to obscure the original filename/metadata
+    // 3. Metadata Obfuscation
+    // The OS file table (MFT on Windows) stores the filename. Overwriting the file contents
+    // doesn't delete the filename. We rename the file to a random UUID before deleting it
+    // so forensic recovery tools just see a deleted UUID instead of "Tax_Returns_2023.pdf".
     let parent = path.parent().unwrap_or(Path::new("/"));
     let new_name = Uuid::new_v4().to_string();
     let new_path = parent.join(new_name);
@@ -226,26 +269,31 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     if fs::rename(path, &new_path).is_ok() {
         let _ = fs::remove_file(new_path);
     } else {
-        // Fallback if rename fails
+        // Fallback: If renaming fails (e.g., due to permissions/locks), delete the original path
         let _ = fs::remove_file(path);
     }
 
     Ok(())
 }
 
-/// Recursively shreds a directory and its contents.
-/// Walks the tree, shreds files individually, then removes the directory structure.
+/// Helper function to walk a directory tree and execute `shred_file_internal` on every nested file.
+/// Used when the user clicks "Delete" on a folder within the app UI.
 #[allow(dead_code)]
 pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
     if path.is_dir() {
         for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
+            // Recursive call for nested folders
             shred_recursive(app, &entry.path())?;
         }
+        // Once all internal files are destroyed, remove the empty folder wrapper
         fs::remove_dir(path).map_err(|e| e.to_string())?;
     } else {
+        // Target is a single file, shred it
         shred_file_internal(app, path)
             .map_err(|e| format!("Failed to shred {}: {}", path.display(), e))?;
     }
     Ok(())
 }
+
+// --- END OF FILE utils.rs ---

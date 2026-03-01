@@ -1,3 +1,5 @@
+// --- START OF FILE files.rs ---
+
 use crate::crypto;
 use crate::crypto_stream;
 use crate::shredder;
@@ -9,14 +11,17 @@ use std::io::Read;
 use std::path::{Component, Path};
 use tauri::AppHandle;
 
+// Platform-specific imports for desktop platforms (Windows, macOS, Linux)
 #[cfg(not(target_os = "android"))]
 use std::process::Command;
 
 #[cfg(not(target_os = "android"))]
 use sysinfo::Disks;
 
+/// Standardized result type for Tauri commands in this module, mapping errors to Strings.
 pub type CommandResult<T> = Result<T, String>;
 
+/// Represents the outcome of processing a single file during a batch operation (e.g., lock, unlock, delete).
 #[derive(serde::Serialize)]
 pub struct BatchItemResult {
     pub name: String,
@@ -25,6 +30,10 @@ pub struct BatchItemResult {
 }
 
 // --- HELPER: Smart Compression Detection ---
+
+/// Checks if a file is likely already compressed based on its extension.
+/// This prevents wasting CPU cycles trying to compress formats that are already highly compressed
+/// (like archives, images, and videos) before encrypting them.
 fn is_already_compressed(filename: &str) -> bool {
     let ext = Path::new(filename)
         .extension()
@@ -60,7 +69,9 @@ fn is_already_compressed(filename: &str) -> bool {
 
 // --- HELPER: Path Security Checks ---
 
-/// Checks if a path is a critical system directory.
+/// Checks if a path is a critical OS directory.
+/// Acts as a safety net to prevent users (or malicious payloads) from accidentally
+/// encrypting, deleting, or shredding files essential to the operating system.
 fn is_system_critical(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
 
@@ -71,7 +82,7 @@ fn is_system_critical(path: &Path) -> bool {
             || path_str.starts_with("c:\\program files (x86)")
             || path_str == "c:\\"
         {
-            // Block root C: lock
+            // Block root C: lock to avoid crippling the drive
             return true;
         }
     }
@@ -96,6 +107,7 @@ fn is_system_critical(path: &Path) -> bool {
     false
 }
 
+/// Comprehensive path security check: blocks path traversal ('..') and system critical paths.
 fn reject_critical_path(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
@@ -109,6 +121,7 @@ fn reject_critical_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Basic path traversal check: ensures operations don't escape their intended directory using '..'.
 fn reject_path_traversal(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
@@ -118,6 +131,7 @@ fn reject_path_traversal(path: &Path) -> Result<(), String> {
 
 // --- CRYPTO LOGIC ---
 
+/// Tauri command to encrypt a batch of files/directories.
 #[tauri::command]
 pub async fn lock_file(
     app: AppHandle,
@@ -128,6 +142,7 @@ pub async fn lock_file(
     extra_entropy: Option<Vec<u8>>,
     compression_mode: Option<String>,
 ) -> CommandResult<Vec<BatchItemResult>> {
+    // 1. Retrieve the master key from the active session state.
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -136,6 +151,7 @@ pub async fn lock_file(
         }
     };
 
+    // 2. Process the keyfile (if provided) into a SHA-256 hash to combine with the master key.
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -147,13 +163,14 @@ pub async fn lock_file(
     let raw_entropy: Option<Vec<u8>> = extra_entropy;
     let mode_str = compression_mode.unwrap_or("auto".to_string());
 
+    // 3. Move the heavy lifting into a background blocking thread to prevent freezing the Tauri UI.
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
         for (file_index, file_path) in file_paths.into_iter().enumerate() {
             let path = Path::new(&file_path);
 
-            // SECURITY CHECK
+            // SECURITY CHECK: Ensure we aren't locking OS files.
             if let Err(e) = reject_critical_path(path) {
                 results.push(BatchItemResult {
                     name: path.to_string_lossy().to_string(),
@@ -171,18 +188,20 @@ pub async fn lock_file(
 
             utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
 
+            // 4. Determine Zstd compression level.
             let level = match mode_str.as_str() {
-                "store" => 0,
-                "extreme" => 19,
+                "store" => 0,    // No compression
+                "extreme" => 19, // Max compression (slow)
                 "auto" | _ => {
                     if is_already_compressed(&filename) {
-                        1
+                        1 // Minimal compression if the file format is already dense
                     } else {
-                        3
+                        3 // Default Zstd level
                     }
                 }
             };
 
+            // 5. If the target is a directory, zip it into a temporary archive first.
             let (input_path_str, is_temp) = if path.is_dir() {
                 let parent = path.parent().unwrap_or(Path::new("."));
                 let temp_zip_name = format!("{}.zip", filename);
@@ -196,7 +215,7 @@ pub async fn lock_file(
                         success: false,
                         message: format!("Zip failed: {}", e),
                     });
-                    continue;
+                    continue; // Skip to the next file if zipping fails
                 }
 
                 (temp_zip_path.to_string_lossy().to_string(), true)
@@ -204,23 +223,27 @@ pub async fn lock_file(
                 (file_path.clone(), false)
             };
 
+            // 6. Define output file path (*.qre)
             let raw_output = format!("{}.qre", file_path);
             let final_path = utils::get_unique_path(Path::new(&raw_output));
             let final_path_str = final_path.to_string_lossy().to_string();
 
+            // 7. Mix extra entropy with the file index to create a unique seed per file.
             let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
                 let mut hasher = Sha256::new();
                 hasher.update(bytes);
-                hasher.update(&(file_index as u64).to_le_bytes());
+                hasher.update(&(file_index as u64).to_le_bytes()); // Ensure different seed per file in batch
                 hasher.finalize().into()
             });
 
             let app_handle = app.clone();
             let f_name_clone = filename.to_string();
 
+            // 8. Progress callback for the frontend UI
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
                     let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
+                    // Adjust progress scale if we spent time zipping earlier
                     let display_pct = if is_temp {
                         20u8.saturating_add((pct as f64 * 0.8) as u8).min(100)
                     } else {
@@ -234,6 +257,7 @@ pub async fn lock_file(
                 }
             };
 
+            // 9. Execute Stream Encryption
             let encryption_result = crypto_stream::encrypt_file_stream(
                 &input_path_str,
                 &final_path_str,
@@ -244,6 +268,7 @@ pub async fn lock_file(
                 progress_cb,
             );
 
+            // Cleanup the temporary zip file if we created one
             if is_temp {
                 let _ = fs::remove_file(&input_path_str);
             }
@@ -257,6 +282,7 @@ pub async fn lock_file(
                     });
                 }
                 Err(e) => {
+                    // Cleanup the partially written output file if encryption fails
                     let _ = fs::remove_file(&final_path);
                     results.push(BatchItemResult {
                         name: filename.to_string(),
@@ -272,6 +298,7 @@ pub async fn lock_file(
     .map_err(|e| e.to_string())?
 }
 
+/// Tauri command to decrypt a batch of files.
 #[tauri::command]
 pub async fn unlock_file(
     app: AppHandle,
@@ -280,6 +307,7 @@ pub async fn unlock_file(
     keyfile_path: Option<String>,
     keyfile_bytes: Option<Vec<u8>>,
 ) -> CommandResult<Vec<BatchItemResult>> {
+    // 1. Retrieve the master key from the active session state.
     let master_key = {
         let guard = state.master_key.lock().unwrap();
         match &*guard {
@@ -288,6 +316,7 @@ pub async fn unlock_file(
         }
     };
 
+    // 2. Process the keyfile hash.
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -296,6 +325,7 @@ pub async fn unlock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
+    // 3. Move the heavy lifting into a background thread.
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
@@ -320,6 +350,7 @@ pub async fn unlock_file(
                 }
             };
 
+            // 4. Read the file's Magic Version Bytes to figure out how to decrypt it.
             let mut ver_buf = [0u8; 4];
             if let Err(_) = file.read_exact(&mut ver_buf) {
                 results.push(BatchItemResult {
@@ -331,6 +362,7 @@ pub async fn unlock_file(
             }
             let version = u32::from_le_bytes(ver_buf);
 
+            // Handle V4 (Legacy full-in-memory encryption)
             if version == 4 {
                 match crypto::EncryptedFileContainer::load(&file_path) {
                     Ok(container) => {
@@ -339,6 +371,7 @@ pub async fn unlock_file(
                             &format!("Decrypting (Legacy V4): {}", filename),
                             50,
                         );
+                        // Decrypt entirely in memory
                         match crypto::decrypt_file_with_master_key(
                             &master_key,
                             keyfile_hash.as_deref(),
@@ -354,6 +387,8 @@ pub async fn unlock_file(
                                     Path::new(&file_path).parent().unwrap_or(Path::new("."));
                                 let original_path = parent.join(&payload.filename);
                                 let final_path = utils::get_unique_path(&original_path);
+
+                                // Write decrypted payload to disk
                                 if let Err(e) = fs::write(&final_path, &payload.content) {
                                     let _ = fs::remove_file(&final_path);
                                     results.push(BatchItemResult {
@@ -382,7 +417,9 @@ pub async fn unlock_file(
                         message: e.to_string(),
                     }),
                 }
-            } else if version == 5 {
+            }
+            // Handle V5 (Current stream-based chunked encryption)
+            else if version == 5 {
                 let parent = Path::new(&file_path).parent().unwrap_or(Path::new("."));
                 let output_dir_str = parent.to_string_lossy().to_string();
 
@@ -396,6 +433,7 @@ pub async fn unlock_file(
                     }
                 };
 
+                // Decrypt file as a stream directly to disk (memory efficient)
                 match crypto_stream::decrypt_file_stream(
                     &file_path,
                     &output_dir_str,
@@ -415,6 +453,7 @@ pub async fn unlock_file(
                     }),
                 }
             } else {
+                // Unsupported version format
                 results.push(BatchItemResult {
                     name: filename,
                     success: false,
@@ -430,6 +469,7 @@ pub async fn unlock_file(
 
 // --- FILE OPERATIONS ---
 
+/// Irreversibly deletes (or shreds on desktop) a batch of files/folders.
 #[tauri::command]
 pub async fn delete_items(
     app: AppHandle,
@@ -441,7 +481,7 @@ pub async fn delete_items(
         for path in paths {
             let p = Path::new(&path);
 
-            // SECURITY CHECK
+            // SECURITY CHECK: Protect against deleting OS files
             if let Err(e) = reject_critical_path(p) {
                 results.push(BatchItemResult {
                     name: p.to_string_lossy().to_string(),
@@ -457,6 +497,7 @@ pub async fn delete_items(
                 .to_string_lossy()
                 .to_string();
 
+            // On Android, we do a standard hard deletion (shredding usually ineffective on Flash storage/Android limitations).
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
@@ -479,6 +520,7 @@ pub async fn delete_items(
                 }
             }
 
+            // On Desktop, trigger a recursive shred before deletion.
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Preparing to shred {}", filename), 0);
@@ -502,6 +544,7 @@ pub async fn delete_items(
     .map_err(|e| e.to_string())?
 }
 
+/// Moves a batch of files to the system recycle bin / trash (desktop only).
 #[tauri::command]
 pub async fn trash_items(
     app: AppHandle,
@@ -529,6 +572,7 @@ pub async fn trash_items(
                 .to_string_lossy()
                 .to_string();
 
+            // Android lacks a unified "Trash" system accessible via standard API, fallback to standard delete
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
@@ -551,6 +595,7 @@ pub async fn trash_items(
                 }
             }
 
+            // Move to system trash using the trash crate (or similar utility)
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Trashing {}", filename), 50);
@@ -574,14 +619,17 @@ pub async fn trash_items(
     .map_err(|e| e.to_string())?
 }
 
+/// Creates a new directory at the specified path (including parent directories).
 #[tauri::command]
 pub fn create_dir(path: String) -> CommandResult<()> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
+/// Renames a file or folder in place, ensuring the new name is valid.
 #[tauri::command]
 pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
+    // Validate the new name to prevent path traversal or moving files to unintended directories.
     if new_name.is_empty()
         || new_name == "."
         || new_name == ".."
@@ -600,6 +648,7 @@ pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
     Ok(())
 }
 
+/// Opens the system's native file explorer and selects the file.
 #[tauri::command]
 pub fn show_in_folder(path: String) -> CommandResult<()> {
     #[cfg(target_os = "android")]
@@ -609,37 +658,43 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
     }
     #[cfg(not(target_os = "android"))]
     {
+        // OS-specific commands to open the file explorer and select the item.
         #[cfg(target_os = "windows")]
         Command::new("explorer")
             .args(["/select,", &path])
             .spawn()
             .map_err(|e| e.to_string())?;
+
         #[cfg(target_os = "linux")]
         {
             let p = Path::new(&path);
             let parent = p.parent().unwrap_or(p);
             Command::new("xdg-open")
-                .arg(parent)
+                .arg(parent) // xdg-open doesn't select files natively, opens the directory instead
                 .spawn()
                 .map_err(|e| e.to_string())?;
         }
+
         #[cfg(target_os = "macos")]
         Command::new("open")
-            .args(["-R", &path])
+            .args(["-R", &path]) // The -R flag in macOS 'open' reveals the file in Finder
             .spawn()
             .map_err(|e| e.to_string())?;
+
         Ok(())
     }
 }
 
 // --- HELPER COMMANDS FOR IMPORT/EXPORT ---
 
+/// Reads the contents of a text file. Used mostly for importing configuration/keys.
 #[tauri::command]
 pub fn read_text_file_content(path: String) -> CommandResult<String> {
     reject_path_traversal(Path::new(&path))?;
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Writes string content to a text file. Used mostly for exporting configuration/keys.
 #[tauri::command]
 pub fn write_text_file_content(path: String, content: String) -> CommandResult<()> {
     reject_path_traversal(Path::new(&path))?;
@@ -648,18 +703,21 @@ pub fn write_text_file_content(path: String, content: String) -> CommandResult<(
 
 // --- SHREDDER COMMANDS ---
 
+/// Performs a dry run to calculate how many files/bytes will be shredded without actually altering data.
 #[tauri::command]
 pub async fn dry_run_shred(paths: Vec<String>) -> CommandResult<shredder::DryRunResult> {
     shredder::dry_run(paths).map_err(|e| e.to_string())
 }
 
+/// Securely overwrites (shreds) a batch of files/folders based on a specific algorithm (e.g., DOD 5220.22-M).
 #[tauri::command]
 pub async fn batch_shred_files(
     paths: Vec<String>,
     method: shredder::ShredMethod,
     app_handle: tauri::AppHandle,
 ) -> CommandResult<shredder::ShredResult> {
-    // SECURITY CHECK: Loop through and verify first
+    // SECURITY CHECK: Pre-verify all paths in the batch before starting the shred operation.
+    // We don't want to start shredding 3 valid files and accidentally shred C:\Windows on the 4th.
     for path in &paths {
         if let Err(e) = reject_critical_path(Path::new(path)) {
             return Err(e);
@@ -669,6 +727,7 @@ pub async fn batch_shred_files(
     shredder::batch_shred(paths, method, &app_handle).map_err(|e| e.to_string())
 }
 
+/// Signals the active shredding thread to abort its operation early.
 #[tauri::command]
 pub async fn cancel_shred() -> CommandResult<()> {
     shredder::cancel_shred();
@@ -677,10 +736,12 @@ pub async fn cancel_shred() -> CommandResult<()> {
 
 // --- SYSTEM UTILS ---
 
+/// Retrieves the available mount points/drives on the system to populate a file explorer UI.
 #[tauri::command]
 pub fn get_drives() -> Vec<String> {
     #[cfg(not(target_os = "android"))]
     {
+        // Query system disks dynamically (e.g. C:\, D:\ on Windows, / on Unix)
         let disks = Disks::new_with_refreshed_list();
         disks
             .list()
@@ -690,18 +751,23 @@ pub fn get_drives() -> Vec<String> {
     }
     #[cfg(target_os = "android")]
     {
+        // Hardcode standard Android user storage location
         vec!["/storage/emulated/0".to_string()]
     }
 }
 
+/// Grabs the file path passed via command-line arguments when the application was opened
+/// (e.g., "Open With..." from the OS context menu).
 #[tauri::command]
 pub fn get_startup_file() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         let path = args[1].clone();
+        // Ignore Tauri/Chromium CLI flags
         if !path.starts_with("--") {
             return Some(path);
         }
     }
     None
 }
+// --- END OF FILE files.rs ---

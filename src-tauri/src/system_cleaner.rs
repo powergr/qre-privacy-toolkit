@@ -1,9 +1,12 @@
+// --- START OF FILE system_cleaner.rs.txt ---
+
 use anyhow::Result;
 use directories::BaseDirs;
-use rayon::prelude::*;
+use rayon::prelude::*; // Parallel iterators for massive speedups when calculating directory sizes
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+// Atomics allow safe, fast state sharing across multiple threads (e.g., UI cancellation, progress counting)
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -13,28 +16,30 @@ use walkdir::WalkDir;
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MAX_TOTAL_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB max per operation
-const MAX_DEPTH: usize = 10; // Max directory depth to traverse
-const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // 10 GB warning
+const MAX_TOTAL_SIZE: u64 = 50 * 1024 * 1024 * 1024; // Security/Safety limit: 50 GB max deletion per operation
+const MAX_DEPTH: usize = 10; // Max directory depth to traverse (prevents infinite symlink loops or deep nesting DOS)
+const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // Warn the user if they are about to delete > 10 GB
 
-// Global cancellation flag
+// Global thread-safe cancellation flag. If true, running loops exit early.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Represents a specific cache folder or system command that the user can clean.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JunkItem {
     pub id: String,
     pub name: String,
-    pub path: String, // Can be a file path OR a special command identifier (::CMD::)
+    pub path: String, // Can be a standard file path OR a special command identifier (e.g., `::DNS_CACHE::`)
     pub category: String, // "System", "Browser", "Developer", "Logs", "Network"
     pub size: u64,
     pub description: String,
-    pub warning: Option<String>,
+    pub warning: Option<String>, // e.g., "Will require logging into websites again"
 }
 
+/// Progress event emitted continuously to the frontend during the deletion process.
 #[derive(Clone, Serialize)]
 pub struct CleanProgress {
     pub files_processed: u64,
@@ -44,6 +49,7 @@ pub struct CleanProgress {
     pub percentage: u8,
 }
 
+/// Final summary report generated when a cleaning operation finishes.
 #[derive(Serialize)]
 pub struct CleanResult {
     pub bytes_freed: u64,
@@ -51,6 +57,7 @@ pub struct CleanResult {
     pub errors: Vec<String>,
 }
 
+/// Simulation report generated when a user requests a "Dry Run".
 #[derive(Serialize)]
 pub struct DryRunResult {
     pub total_files: u64,
@@ -63,15 +70,16 @@ pub struct DryRunResult {
 // PATH VALIDATION (CRITICAL SECURITY)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Gets the list of whitelisted base directories that are safe to clean.
+/// Generates a strict whitelist of base directories that are universally considered "safe" to clean.
 ///
-/// SECURITY: Only directories in this whitelist can be cleaned.
-/// This prevents deletion of system files, user documents, etc.
+/// SECURITY IMPLEMENTATION:
+/// Even if a bug in the frontend requests the deletion of `C:\Windows\System32`,
+/// the backend will refuse to delete it because it is not inside one of these whitelisted paths.
 fn get_whitelist() -> Vec<PathBuf> {
     let mut whitelist = Vec::new();
 
     if let Some(base_dirs) = BaseDirs::new() {
-        // Temp directories
+        // General Temp directories
         #[cfg(target_os = "windows")]
         {
             if let Ok(temp) = std::env::var("TEMP") {
@@ -93,20 +101,20 @@ fn get_whitelist() -> Vec<PathBuf> {
             }
         }
 
-        // Cache directories (safe to clean)
+        // Standard OS application cache directories
         if let Ok(canonical) = fs::canonicalize(base_dirs.cache_dir()) {
             whitelist.push(canonical);
         }
 
         #[cfg(target_os = "windows")]
         {
-            // Windows local app data cache
+            // Windows local app data (often holds unneeded caches)
             if let Ok(canonical) = fs::canonicalize(base_dirs.data_local_dir()) {
                 whitelist.push(canonical);
             }
         }
 
-        // Developer caches (already in home, but specific subdirs)
+        // Developer caches (usually nested inside the Home directory)
         let home = base_dirs.home_dir();
         let dev_caches = vec![".npm", ".cache", ".cargo/registry"];
 
@@ -119,9 +127,10 @@ fn get_whitelist() -> Vec<PathBuf> {
             }
         }
 
+        // OS-Specific Privacy targets
         #[cfg(target_os = "windows")]
         {
-            // Windows Recent folder
+            // Windows Recent Files History
             let recent = base_dirs.data_dir().join("Microsoft/Windows/Recent");
             if recent.exists() {
                 if let Ok(canonical) = fs::canonicalize(&recent) {
@@ -132,7 +141,7 @@ fn get_whitelist() -> Vec<PathBuf> {
 
         #[cfg(target_os = "macos")]
         {
-            // macOS specific cache locations
+            // macOS System and App Logs
             let logs = home.join("Library/Logs");
             if logs.exists() {
                 if let Ok(canonical) = fs::canonicalize(&logs) {
@@ -145,23 +154,14 @@ fn get_whitelist() -> Vec<PathBuf> {
     whitelist
 }
 
-/// Validates that a path is safe to clean.
+/// Enforces the whitelist and checks for malicious filesystem tricks.
 ///
 /// SECURITY CHECKS:
-/// 1. Path must exist
-/// 2. Path must canonicalize successfully (no broken symlinks)
-/// 3. Canonical path must start with one of the whitelisted directories
-/// 4. Path cannot be a symlink itself
-///
-/// # Arguments
-/// * `path_str` - The path to validate
-/// * `whitelist` - List of allowed base directories
-///
-/// # Returns
-/// * `Ok(PathBuf)` - Canonical path if valid
-/// * `Err(String)` - Error message if invalid
+/// 1. Path must exist.
+/// 2. Path must not be a symlink itself.
+/// 3. Canonical path must start with one of the predefined whitelisted base directories.
 fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, String> {
-    // Skip virtual commands
+    // Immediately allow "Virtual Commands" (e.g. DNS Flush) to bypass filesystem checks.
     if path_str.starts_with("::") {
         return Ok(PathBuf::from(path_str));
     }
@@ -174,6 +174,7 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
     }
 
     // 2. Check if it's a symlink BEFORE canonicalizing
+    // Prevents an attacker from placing a symlink in a safe folder that points to an unsafe folder.
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
@@ -185,7 +186,7 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
         }
     }
 
-    // 3. Canonicalize (resolves .., ., symlinks in parent paths)
+    // 3. Canonicalize (Resolves relative markers like `..`, `.`, and nested symlinks)
     let canonical = match fs::canonicalize(path) {
         Ok(p) => p,
         Err(e) => {
@@ -193,7 +194,7 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
         }
     };
 
-    // 4. Verify canonical path starts with a whitelisted directory
+    // 4. Verify canonical path securely resides inside the whitelist sandbox
     let is_whitelisted = whitelist
         .iter()
         .any(|allowed| canonical.starts_with(allowed) || canonical == *allowed);
@@ -209,10 +210,11 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
 // SYSTEM TARGETS DETECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Scans the operating system to build a list of available cleanup targets for the UI.
 pub fn get_system_targets() -> Vec<JunkItem> {
     let mut targets = Vec::new();
 
-    // --- VIRTUAL TARGETS (Commands) ---
+    // --- VIRTUAL TARGETS (Commands executed, not files deleted) ---
     targets.push(JunkItem {
         id: uuid::Uuid::new_v4().to_string(),
         name: "DNS Cache".to_string(),
@@ -249,7 +251,6 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                 );
             }
 
-            // Windows Recent Documents
             let recent = base_dirs
                 .data_dir()
                 .join("Microsoft")
@@ -264,7 +265,7 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                 Some("Will clear jump list and recent file history.".to_string()),
             );
 
-            // Browser Caches
+            // Browser Caches (Hardcoded standard installation paths)
             let local_app_data = base_dirs.data_local_dir();
             let browsers = vec![
                 ("Google/Chrome/User Data/Default/Cache", "Chrome Cache"),
@@ -338,7 +339,7 @@ pub fn get_system_targets() -> Vec<JunkItem> {
         // --- DEVELOPER CACHES (Cross-Platform) ---
         let home = base_dirs.home_dir();
 
-        // NPM CACHE
+        // NPM CACHE (Checks multiple common locations depending on OS and Node configuration)
         let npm_locations = vec![
             home.join(".npm"),
             base_dirs.data_dir().join("npm-cache"),
@@ -357,7 +358,7 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                     "Node.js package cache",
                     Some("Will require re-downloading packages.".to_string()),
                 );
-                npm_found = true; // Only add once
+                npm_found = true;
             }
         }
 
@@ -406,6 +407,7 @@ pub fn get_system_targets() -> Vec<JunkItem> {
     targets
 }
 
+/// Helper function to build the Item and insert it into the targets vector if the path exists.
 fn add_target(
     list: &mut Vec<JunkItem>,
     name: &str,
@@ -415,13 +417,14 @@ fn add_target(
     warning: Option<String>,
 ) {
     if Path::new(path).exists() {
+        // Prevent duplicate entries
         if !list.iter().any(|x| x.path == path) {
             list.push(JunkItem {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: name.to_string(),
                 path: path.to_string(),
                 category: cat.to_string(),
-                size: 0,
+                size: 0, // Calculated dynamically later
                 description: desc.to_string(),
                 warning,
             });
@@ -433,10 +436,12 @@ fn add_target(
 // SCANNING
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Runs heavily multi-threaded calculations to determine the byte size of all found targets.
 pub fn scan_targets() -> Vec<JunkItem> {
     let mut items = get_system_targets();
 
-    // PARALLEL: Calculate sizes with symlink protection
+    // PARALLEL EXECUTION: Rayon `par_iter_mut` automatically distributes the I/O bound
+    // `calculate_dir_size` function across all available CPU cores.
     items.par_iter_mut().for_each(|item| {
         if item.path.starts_with("::") {
             item.size = 0;
@@ -446,14 +451,15 @@ pub fn scan_targets() -> Vec<JunkItem> {
         }
     });
 
-    // Filter: Keep items with size > 0 OR virtual commands
+    // Filter: Remove targets that are already empty to keep the UI clean
     items.retain(|i| i.size > 0 || i.path.starts_with("::"));
     items
 }
 
-/// Calculates directory size with symlink protection.
+/// Recursively calculates the total size of a directory.
 ///
-/// SECURITY: Never follows symlinks, max depth protection
+/// SECURITY: Strictly refuses to follow symlinks to prevent the scanner from
+/// escaping the sandboxed path and scanning `C:\` forever.
 fn calculate_dir_size(path: &Path) -> u64 {
     WalkDir::new(path)
         .follow_links(false) // CRITICAL: Never follow symlinks
@@ -462,11 +468,11 @@ fn calculate_dir_size(path: &Path) -> u64 {
         .into_iter()
         .filter_map(|e| e.ok())
         .filter_map(|e| {
-            // Use symlink_metadata to never follow symlinks
+            // Re-verify symlink status on every single file just to be absolutely sure
             match fs::symlink_metadata(e.path()) {
                 Ok(metadata) => {
                     if metadata.file_type().is_symlink() {
-                        None // Skip symlinks
+                        None // Skip
                     } else if metadata.is_file() {
                         Some(metadata.len())
                     } else {
@@ -483,6 +489,7 @@ fn calculate_dir_size(path: &Path) -> u64 {
 // DRY RUN (Preview Before Delete)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Simulates the deletion process, returning exactly what will be deleted and how much space it will free.
 pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     let whitelist = get_whitelist();
     let mut total_files = 0u64;
@@ -491,13 +498,13 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     let mut warnings = Vec::new();
 
     for path_str in paths {
-        // Virtual commands
+        // Virtual commands don't have files to list
         if path_str.starts_with("::") {
             file_list.push(format!("[ACTION] {}", path_str));
             continue;
         }
 
-        // Validate path
+        // Enforce the sandbox whitelist
         let canonical = match validate_path(&path_str, &whitelist) {
             Ok(p) => p,
             Err(e) => {
@@ -506,8 +513,8 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
             }
         };
 
-        // Collect files that would be deleted
         if canonical.is_dir() {
+            // Walk the directory and collect all nested files
             for entry in WalkDir::new(&canonical)
                 .follow_links(false)
                 .max_depth(MAX_DEPTH)
@@ -519,8 +526,8 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
                         total_files += 1;
                         total_size += metadata.len();
 
+                        // Prevent the UI from lagging by only sending the first 100 preview paths
                         if file_list.len() < 100 {
-                            // Only show first 100 files
                             file_list.push(entry.path().display().to_string());
                         }
                     }
@@ -560,17 +567,17 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
 // CLEANING (With Progress & Security)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Executes the actual deletion of the selected caches/targets.
 pub fn clean_paths<R: tauri::Runtime>(
     paths: Vec<String>,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<CleanResult> {
-    // Reset cancellation flag
     CANCEL_FLAG.store(false, Ordering::Relaxed);
 
     let whitelist = get_whitelist();
     let mut errors = Vec::new();
 
-    // Validate all paths first
+    // 1. Phase 1: Validations
     let mut validated_paths = Vec::new();
     let mut total_size = 0u64;
 
@@ -580,11 +587,9 @@ pub fn clean_paths<R: tauri::Runtime>(
         } else {
             match validate_path(&path_str, &whitelist) {
                 Ok(canonical) => {
-                    // Calculate size for hard limit check
                     let path = Path::new(&canonical);
                     let size = calculate_dir_size(path);
                     total_size += size;
-
                     validated_paths.push(canonical.display().to_string());
                 }
                 Err(e) => {
@@ -594,7 +599,7 @@ pub fn clean_paths<R: tauri::Runtime>(
         }
     }
 
-    // Hard limit check: Reject if total size exceeds MAX_TOTAL_SIZE
+    // Safety limit check
     if total_size > MAX_TOTAL_SIZE {
         return Err(anyhow::anyhow!(
             "Operation too large: {} exceeds maximum of {} (50 GB). Please select fewer items.",
@@ -603,12 +608,11 @@ pub fn clean_paths<R: tauri::Runtime>(
         ));
     }
 
-    // Count total files for progress
+    // 2. Pre-count all files so the progress bar is perfectly accurate
     let total_files = Arc::new(AtomicU64::new(0));
     let files_processed = Arc::new(AtomicU64::new(0));
     let bytes_freed = Arc::new(AtomicU64::new(0));
 
-    // Pre-count files
     for path_str in &validated_paths {
         if !path_str.starts_with("::") {
             let path = Path::new(path_str);
@@ -617,7 +621,7 @@ pub fn clean_paths<R: tauri::Runtime>(
         }
     }
 
-    // Process paths
+    // 3. Process the validated paths
     let results: Vec<_> = validated_paths
         .into_iter()
         .map(|path_str| {
@@ -625,7 +629,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 return (0, 0, vec!["Operation cancelled".to_string()]);
             }
 
-            // Virtual commands
+            // Route Virtual Commands
             if path_str == "::DNS_CACHE::" {
                 match flush_dns() {
                     Ok(_) => {
@@ -658,7 +662,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 }
             }
 
-            // File deletion with progress
+            // Standard File Deletion Route
             clean_single_path(
                 &path_str,
                 app_handle,
@@ -669,7 +673,7 @@ pub fn clean_paths<R: tauri::Runtime>(
         })
         .collect();
 
-    // Aggregate results
+    // 4. Aggregate all results from the various execution paths
     let mut total_bytes_freed = 0u64;
     let mut total_files_deleted = 0u64;
 
@@ -679,7 +683,7 @@ pub fn clean_paths<R: tauri::Runtime>(
         errors.extend(errs);
     }
 
-    // Final progress update
+    // Ensure progress bar hits exactly 100% on completion
     emit_progress(
         app_handle,
         files_processed.load(Ordering::Relaxed),
@@ -695,6 +699,7 @@ pub fn clean_paths<R: tauri::Runtime>(
     })
 }
 
+/// Helper function to count files for the progress bar calculation
 fn count_files(path: &Path) -> u64 {
     if path.is_file() {
         return 1;
@@ -715,6 +720,7 @@ fn count_files(path: &Path) -> u64 {
         .count() as u64
 }
 
+/// The core loop that deletes files while maintaining Atomic variables for thread-safe UI progress updates.
 fn clean_single_path<R: tauri::Runtime>(
     path_str: &str,
     app_handle: &tauri::AppHandle<R>,
@@ -729,7 +735,6 @@ fn clean_single_path<R: tauri::Runtime>(
     let path = Path::new(path_str);
 
     if path.is_dir() {
-        // Delete directory contents
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 if CANCEL_FLAG.load(Ordering::Relaxed) {
@@ -738,13 +743,11 @@ fn clean_single_path<R: tauri::Runtime>(
 
                 let p = entry.path();
 
-                // Skip symlinks
                 if let Ok(metadata) = fs::symlink_metadata(&p) {
                     if metadata.file_type().is_symlink() {
-                        continue;
+                        continue; // Safely skip over symlinks
                     }
 
-                    // Emit progress
                     emit_progress(
                         app_handle,
                         files_processed.load(Ordering::Relaxed),
@@ -754,9 +757,9 @@ fn clean_single_path<R: tauri::Runtime>(
                     );
 
                     if p.is_dir() {
-                        // Get size before deletion
                         let size = calculate_dir_size(&p);
 
+                        // Try to recursively wipe the directory
                         match fs::remove_dir_all(&p) {
                             Ok(_) => {
                                 local_freed += size;
@@ -775,6 +778,7 @@ fn clean_single_path<R: tauri::Runtime>(
                     } else if metadata.is_file() {
                         let size = metadata.len();
 
+                        // Delete the specific file
                         match fs::remove_file(&p) {
                             Ok(_) => {
                                 local_freed += size;
@@ -795,6 +799,7 @@ fn clean_single_path<R: tauri::Runtime>(
             }
         }
     } else if path.is_file() {
+        // Fallback for single file targets
         if let Ok(metadata) = fs::symlink_metadata(path) {
             if !metadata.file_type().is_symlink() {
                 let size = metadata.len();
@@ -853,6 +858,8 @@ pub fn cancel_cleaning() {
 // SYSTEM COMMANDS (With Error Handling)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Executes standard OS terminal commands to wipe the DNS cache.
+/// Because this is highly OS-specific, conditional compilation is required.
 fn flush_dns() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -878,13 +885,12 @@ fn flush_dns() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
-        // Try systemd-resolved first, fall back to legacy
+        // Try modern systemd-resolved first, if it fails, fall back to legacy systemctl
         if Command::new("resolvectl")
             .arg("flush-caches")
             .output()
             .is_err()
         {
-            // Fallback for older systems
             let _ = Command::new("systemctl")
                 .args(&["restart", "systemd-resolved"])
                 .output();
@@ -898,8 +904,9 @@ fn flush_dns() -> Result<(), String> {
     }
 }
 
+/// Overwrites the system clipboard by piping empty data/null into the OS clipboard buffer tool.
 fn clear_clipboard() -> Result<(), String> {
-    // Try using arboard crate if available (safer than shell commands)
+    // If the arboard cross-platform clipboard crate is configured via Cargo features, use it.
     #[cfg(feature = "clipboard")]
     {
         use arboard::Clipboard;
@@ -910,7 +917,7 @@ fn clear_clipboard() -> Result<(), String> {
         return Ok(());
     }
 
-    // Fallback to platform-specific shell commands
+    // Fallback logic using raw system commands
     #[cfg(not(feature = "clipboard"))]
     {
         #[cfg(target_os = "windows")]
@@ -936,7 +943,7 @@ fn clear_clipboard() -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
             use std::process::Command;
-            // Try xsel first, then xclip as fallback
+            // Try xsel first, then xclip as a fallback
             if Command::new("xsel").arg("-bc").output().is_err() {
                 Command::new("xclip")
                     .args(&["-selection", "clipboard", "-i"])
@@ -973,3 +980,5 @@ fn format_size(bytes: u64) -> String {
         format!("{} bytes", bytes)
     }
 }
+
+// --- END OF FILE system_cleaner.rs.txt ---

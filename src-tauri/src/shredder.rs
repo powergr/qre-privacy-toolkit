@@ -1,8 +1,11 @@
+// --- START OF FILE shredder.rs ---
+
 use anyhow::{anyhow, Result};
 use rand::Rng;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+// AtomicBool is used so the UI can cancel a 35-pass Gutmann shred mid-operation.
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
@@ -10,17 +13,19 @@ use tauri::Emitter;
 // CONSTANTS & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024 * 1024; // 10 GB per file
-const WARN_SIZE_THRESHOLD: u64 = 1 * 1024 * 1024 * 1024; // 1 GB warning
-const BUFFER_SIZE: usize = 1024 * 1024; // 1 MB buffer for writing
+// SECURITY LIMITS: Prevents the shredder from locking up the system or running out of memory.
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024 * 1024; // Limit to 10 GB per file
+const WARN_SIZE_THRESHOLD: u64 = 1 * 1024 * 1024 * 1024; // Warn the user if they try to shred > 1 GB
+const BUFFER_SIZE: usize = 1024 * 1024; // 1 MB buffer for efficient disk write operations
 
-// Global cancellation flag
+// Global thread-safe flag to allow the user to abort the operation.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Live progress data emitted to the frontend during shredding.
 #[derive(Clone, serde::Serialize)]
 pub struct ShredProgress {
     pub current_file: usize,
@@ -33,6 +38,7 @@ pub struct ShredProgress {
     pub total_bytes: u64,
 }
 
+/// The final report sent back to the frontend after a batch shred finishes.
 #[derive(serde::Serialize)]
 pub struct ShredResult {
     pub success: Vec<String>,
@@ -47,6 +53,7 @@ pub struct FailedFile {
     pub error: String,
 }
 
+/// A summary of a file generated during the "Dry Run" preview phase.
 #[derive(serde::Serialize)]
 pub struct FileInfo {
     pub path: String,
@@ -57,37 +64,36 @@ pub struct FileInfo {
     pub warning: Option<String>,
 }
 
+/// The result of a "Dry Run", showing the user exactly what will happen and how long it might take.
 #[derive(serde::Serialize)]
 pub struct DryRunResult {
     pub files: Vec<FileInfo>,
     pub total_size: u64,
     pub total_file_count: usize,
     pub warnings: Vec<String>,
-    pub blocked: Vec<String>,
+    pub blocked: Vec<String>, // Files rejected due to security rules (e.g., system files)
 }
 
+/// The specific data destruction algorithm the user selected.
 #[derive(serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ShredMethod {
-    Simple,   // 1 pass (zeros)
-    DoD3Pass, // 3 passes (DoD 5220.22-M)
+    Simple,   // 1 pass (Overwrites with 0x00)
+    DoD3Pass, // 3 passes (US Department of Defense 5220.22-M standard)
     DoD7Pass, // 7 passes (DoD 5220.22-M Extended)
-    Gutmann,  // 35 passes (Peter Gutmann method)
+    Gutmann,  // 35 passes (Peter Gutmann method - extreme theoretical security)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PATH VALIDATION & BLACKLIST (CRITICAL SECURITY)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Gets system directory blacklist - directories that should NEVER be deleted.
+/// Generates a list of critical OS directories that the shredder is strictly forbidden to touch.
+/// If a user accidentally selects `C:\Windows`, this stops them from destroying their OS.
 fn get_blacklist() -> Vec<PathBuf> {
-    // FIX: Explicit type annotation required because on Android none of the
-    // platform cfg blocks below fire (target_os = "android", not "linux"), so
-    // the compiler has no push() call to infer the element type from, causing
-    // E0282/E0283 in the filter_map closure at the end of this function.
     let mut blacklist: Vec<PathBuf> = Vec::new();
 
-    // Universal critical paths
+    // Universal critical paths for Windows
     #[cfg(target_os = "windows")]
     {
         if let Ok(sys_drive) = std::env::var("SystemDrive") {
@@ -99,6 +105,7 @@ fn get_blacklist() -> Vec<PathBuf> {
         }
     }
 
+    // macOS System Integrity Protection areas
     #[cfg(target_os = "macos")]
     {
         blacklist.push(PathBuf::from("/System"));
@@ -112,6 +119,7 @@ fn get_blacklist() -> Vec<PathBuf> {
         blacklist.push(PathBuf::from("/private"));
     }
 
+    // Standard Linux root directories
     #[cfg(target_os = "linux")]
     {
         blacklist.push(PathBuf::from("/bin"));
@@ -128,9 +136,7 @@ fn get_blacklist() -> Vec<PathBuf> {
         blacklist.push(PathBuf::from("/var"));
     }
 
-    // FIX: Android has target_os = "android", not "linux", so it previously
-    // matched no cfg block and got an empty blacklist — meaning no system
-    // directory protection at all on Android builds.
+    // Android specific OS partitions
     #[cfg(target_os = "android")]
     {
         blacklist.push(PathBuf::from("/system"));
@@ -147,45 +153,37 @@ fn get_blacklist() -> Vec<PathBuf> {
         blacklist.push(PathBuf::from("/apex"));
     }
 
-    // Canonicalize all blacklist paths; silently drop any that don't exist
-    // on this particular device (e.g. /lib64 on 32-bit systems).
+    // Canonicalize all blacklist paths to resolve symlinks and '..'
+    // We silently drop paths that don't exist on the current system (e.g. /lib64 on a 32-bit OS)
     blacklist
         .into_iter()
         .filter_map(|p: PathBuf| fs::canonicalize(p).ok())
         .collect()
 }
 
-/// Validates a path is safe to shred.
-///
-/// SECURITY CHECKS:
-/// 1. Path must exist
-/// 2. Must be a regular file (not device, pipe, socket)
-/// 3. Must not be a symlink
-/// 4. File size must be within limits
-/// 5. Must not be in system directory blacklist
-/// 6. Must have proper permissions
+/// Deep security validation to ensure a file is safe to overwrite.
 fn validate_path(path: &Path) -> Result<PathBuf> {
-    // 1. Check existence
+    // 1. Must exist
     if !path.exists() {
         return Err(anyhow!("Path does not exist"));
     }
 
-    // 2. Use symlink_metadata (doesn't follow symlinks)
+    // 2. Read metadata without following symlinks
     let metadata = fs::symlink_metadata(path)?;
 
-    // 3. Reject symlinks
+    // 3. Reject symlinks (A symlink could point into a blacklisted directory)
     if metadata.file_type().is_symlink() {
         return Err(anyhow!("Symlinks are not supported for security reasons"));
     }
 
-    // 4. Must be regular file
+    // 4. Must be a standard file
     if !metadata.is_file() {
         return Err(anyhow!(
             "Only regular files are supported (not directories or special files)"
         ));
     }
 
-    // 5. Check file size
+    // 5. Enforce size limits
     let size = metadata.len();
     if size > MAX_FILE_SIZE {
         return Err(anyhow!(
@@ -195,10 +193,10 @@ fn validate_path(path: &Path) -> Result<PathBuf> {
         ));
     }
 
-    // 6. Canonicalize
+    // 6. Canonicalize to get the true absolute path
     let canonical = fs::canonicalize(path)?;
 
-    // 7. Check against blacklist
+    // 7. Check against the OS blacklist
     let blacklist = get_blacklist();
     for blocked in &blacklist {
         if canonical.starts_with(blocked) || canonical == *blocked {
@@ -209,7 +207,7 @@ fn validate_path(path: &Path) -> Result<PathBuf> {
         }
     }
 
-    // 8. Check permissions (must be writable)
+    // 8. Check OS write permissions
     if metadata.permissions().readonly() {
         return Err(anyhow!("File is read-only"));
     }
@@ -221,6 +219,9 @@ fn validate_path(path: &Path) -> Result<PathBuf> {
 // DRY RUN (Preview Before Shredding)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Simulates the shredding process.
+/// Calculates exactly what will happen, validates all files, and returns a report
+/// so the user can confirm before irreversible destruction begins.
 pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     let mut files = Vec::new();
     let mut total_size = 0u64;
@@ -238,6 +239,7 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
                     total_size += size;
                     total_file_count += 1;
 
+                    // Warn the user if they selected a massive file that will take a long time
                     let warning = if size > WARN_SIZE_THRESHOLD {
                         Some(format!(
                             "Large file: {} - may take several minutes",
@@ -270,11 +272,13 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
                 }
             }
             Err(e) => {
+                // If the file failed validation, add it to the blocked list so the user knows
                 blocked.push(format!("{}: {}", path_str, e));
             }
         }
     }
 
+    // Add a global warning if the total batch size is extremely large
     if total_size > 10 * 1024 * 1024 * 1024 {
         warnings.push(format!(
             "Total size is {} - operation may take significant time",
@@ -295,7 +299,7 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
 // SHREDDING ALGORITHMS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Shreds a single file with specified method.
+/// Executes the actual overwriting passes on a single file.
 fn shred_file<R: tauri::Runtime>(
     path: &Path,
     method: ShredMethod,
@@ -311,6 +315,7 @@ fn shred_file<R: tauri::Runtime>(
         .to_string_lossy()
         .to_string();
 
+    // Map the selected method to the sequence of byte patterns required
     let passes = match method {
         ShredMethod::Simple => vec![ShredPass::Zeros],
         ShredMethod::DoD3Pass => vec![ShredPass::Random, ShredPass::Complement, ShredPass::Random],
@@ -323,23 +328,25 @@ fn shred_file<R: tauri::Runtime>(
             ShredPass::Pattern(0xFF),
             ShredPass::Random,
         ],
-        ShredMethod::Gutmann => get_gutmann_passes(),
+        ShredMethod::Gutmann => get_gutmann_passes(), // 35 specific passes
     };
 
     let total_passes = passes.len() as u8;
 
-    // Open file for writing
+    // Open the file with Write permissions
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
 
-    // Perform passes
+    // Perform each pass sequentially
     for (pass_num, pass_type) in passes.iter().enumerate() {
+        // Allow user cancellation between passes
         if CANCEL_FLAG.load(Ordering::Relaxed) {
             return Err(anyhow!("Operation cancelled by user"));
         }
 
+        // Execute the write loop
         write_pass(&mut file, file_size, pass_type)?;
 
-        // Emit progress
+        // Emit live progress to the UI
         let progress = ShredProgress {
             current_file: file_index + 1,
             total_files,
@@ -354,14 +361,14 @@ fn shred_file<R: tauri::Runtime>(
         let _ = app_handle.emit("shred-progress", progress);
     }
 
-    // Sync to disk
+    // Force the OS to flush all written buffers to the physical disk platter immediately
     file.sync_all()?;
     drop(file);
 
-    // Delete the file
+    // Finally, ask the OS to delete the file pointer from the filesystem directory
     fs::remove_file(path)?;
 
-    // Verify deletion
+    // Final sanity check
     if path.exists() {
         return Err(anyhow!("File still exists after deletion attempt"));
     }
@@ -369,19 +376,22 @@ fn shred_file<R: tauri::Runtime>(
     Ok(file_size)
 }
 
+/// The type of data to overwrite the file with on a specific pass.
 #[derive(Clone)]
 enum ShredPass {
-    Zeros,
-    Random,
-    Pattern(u8),
-    Complement,
+    Zeros,       // Write 0x00
+    Random,      // Write random noise
+    Pattern(u8), // Write a specific byte (e.g., 0xFF)
+    Complement,  // Read the current data and invert the bits
 }
 
+/// The core loop that actually writes the data to the disk.
 fn write_pass<W: Read + Write + Seek>(
     writer: &mut W,
     size: u64,
     pass_type: &ShredPass,
 ) -> Result<()> {
+    // Rewind to the beginning of the file for every pass
     writer.seek(SeekFrom::Start(0))?;
 
     let mut rng = rand::thread_rng();
@@ -395,12 +405,13 @@ fn write_pass<W: Read + Write + Seek>(
 
         let chunk_size = std::cmp::min(remaining, BUFFER_SIZE as u64) as usize;
 
+        // Fill the buffer based on the pass type
         match pass_type {
             ShredPass::Zeros => buffer[..chunk_size].fill(0x00),
             ShredPass::Random => rng.fill(&mut buffer[..chunk_size]),
             ShredPass::Pattern(byte) => buffer[..chunk_size].fill(*byte),
             ShredPass::Complement => {
-                // Read current data and complement it
+                // Read current data, complement it (bitwise NOT), and step backward to overwrite
                 writer.read_exact(&mut buffer[..chunk_size]).ok();
                 for byte in &mut buffer[..chunk_size] {
                     *byte = !*byte;
@@ -409,6 +420,7 @@ fn write_pass<W: Read + Write + Seek>(
             }
         }
 
+        // Write the filled buffer to the disk
         writer.write_all(&buffer[..chunk_size])?;
         remaining -= chunk_size as u64;
     }
@@ -417,14 +429,17 @@ fn write_pass<W: Read + Write + Seek>(
     Ok(())
 }
 
+/// The Peter Gutmann algorithm requires 35 specific passes designed to maximize
+/// magnetic flux changes on older hard drives to prevent microscopic magnetic
+/// trace analysis via electron microscopes.
 fn get_gutmann_passes() -> Vec<ShredPass> {
     vec![
-        // Random passes
+        // Passes 1-4: Random data
         ShredPass::Random,
         ShredPass::Random,
         ShredPass::Random,
         ShredPass::Random,
-        // Specific patterns for various encoding methods
+        // Passes 5-31: Specific magnetic patterns
         ShredPass::Pattern(0x55),
         ShredPass::Pattern(0xAA),
         ShredPass::Pattern(0x92),
@@ -455,12 +470,13 @@ fn get_gutmann_passes() -> Vec<ShredPass> {
         ShredPass::Pattern(0x6D),
         ShredPass::Pattern(0xB6),
         ShredPass::Pattern(0xDB),
-        // Final random passes
+        // Passes 32-35: Final random passes
         ShredPass::Random,
         ShredPass::Random,
     ]
 }
 
+/// Converts the nested loop states into a smooth 0-100 percentage for the progress bar.
 fn calculate_percentage(
     current_file: usize,
     total_files: usize,
@@ -481,6 +497,7 @@ fn calculate_percentage(
 // BATCH SHREDDING
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Shreds a list of files sequentially.
 pub fn batch_shred<R: tauri::Runtime>(
     paths: Vec<String>,
     method: ShredMethod,
@@ -492,7 +509,9 @@ pub fn batch_shred<R: tauri::Runtime>(
     let mut failed = Vec::new();
     let mut total_bytes_shredded = 0u64;
 
-    // Validate all paths first
+    // Phase 1: Pre-validate all paths in the batch before starting.
+    // If there is an invalid/system file in the middle of the batch, we catch it
+    // now before we start destroying the valid files.
     let validated: Vec<(String, PathBuf)> = paths
         .into_iter()
         .filter_map(|path_str| match validate_path(Path::new(&path_str)) {
@@ -509,7 +528,7 @@ pub fn batch_shred<R: tauri::Runtime>(
 
     let total_files = validated.len();
 
-    // Shred each file
+    // Phase 2: Shred the valid files sequentially
     for (idx, (original_path, canonical_path)) in validated.into_iter().enumerate() {
         if CANCEL_FLAG.load(Ordering::Relaxed) {
             failed.push(FailedFile {
@@ -553,6 +572,7 @@ pub fn cancel_shred() {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Converts raw bytes to a human-readable string (e.g. "1.50 MB").
 fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
@@ -568,3 +588,5 @@ fn format_size(bytes: u64) -> String {
         format!("{} bytes", bytes)
     }
 }
+
+// --- END OF FILE shredder.rs ---

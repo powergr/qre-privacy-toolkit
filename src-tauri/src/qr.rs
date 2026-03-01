@@ -1,3 +1,5 @@
+// --- START OF FILE qr.rs ---
+
 use anyhow::{anyhow, Result};
 use qrcodegen::{QrCode, QrCodeEcc};
 use regex::Regex;
@@ -7,19 +9,23 @@ use std::sync::OnceLock;
 // CONSTANTS & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MAX_INPUT_LENGTH: usize = 2048; // Maximum characters for QR content
-const MAX_WIFI_SSID_LENGTH: usize = 32; // WiFi SSID max length (standard)
-const MAX_WIFI_PASSWORD_LENGTH: usize = 63; // WPA2 max password length
-const MIN_WIFI_PASSWORD_LENGTH: usize = 8; // WPA2 min password length
+// SECURITY: Hard limits prevent memory exhaustion if a user tries to generate
+// a QR code containing an entire book.
+const MAX_INPUT_LENGTH: usize = 2048; // Maximum characters for standard QR content
+const MAX_WIFI_SSID_LENGTH: usize = 32; // Standard maximum length for a WiFi network name
+const MAX_WIFI_PASSWORD_LENGTH: usize = 63; // Standard maximum length for WPA2 passwords
+const MIN_WIFI_PASSWORD_LENGTH: usize = 8; // Standard minimum length for WPA2 passwords
 
-// Allowed QR error correction levels
+/// Maps frontend string selections to the underlying QR library's Error Correction types.
+/// Higher error correction means the QR code can sustain more damage (smudges, tears)
+/// and still be scanned, but makes the QR pattern denser and harder for cheap cameras to read.
 #[derive(serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum ErrorCorrectionLevel {
-    Low,    // 7% recovery
-    Medium, // 15% recovery
+    Low,      // 7% recovery
+    Medium,   // 15% recovery (Standard default)
     Quartile, // 25% recovery
-    High,   // 30% recovery
+    High,     // 30% recovery
 }
 
 impl ErrorCorrectionLevel {
@@ -37,6 +43,7 @@ impl ErrorCorrectionLevel {
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Payload received from the frontend to generate a standard text/URL QR code.
 #[derive(serde::Deserialize)]
 pub struct QrOptions {
     pub text: String,
@@ -53,17 +60,18 @@ fn default_ecc() -> ErrorCorrectionLevel {
 }
 
 fn default_border() -> u32 {
-    4
+    4 // 4 "modules" (squares) of white space around the QR code is the standard quiet zone requirement
 }
 
+/// Payload received from the frontend to generate a WiFi connection QR code.
 #[derive(serde::Deserialize)]
 pub struct WifiQrOptions {
     pub ssid: String,
     pub password: String,
     #[serde(default)]
-    pub hidden: bool,
+    pub hidden: bool, // True if the WiFi network does not broadcast its SSID
     #[serde(default = "default_security")]
-    pub security: String, // WPA, WPA2, WEP, nopass
+    pub security: String, // "WPA", "WPA2", "WEP", or "nopass"
     pub fg_color: String,
     pub bg_color: String,
     #[serde(default = "default_ecc")]
@@ -76,13 +84,15 @@ fn default_security() -> String {
     "WPA".to_string()
 }
 
+/// The response sent back to the React frontend containing the raw SVG markup.
 #[derive(serde::Serialize)]
 pub struct QrResult {
-    pub svg: String,
-    pub size: i32,
-    pub version: i32,
+    pub svg: String,  // The generated raw SVG XML string
+    pub size: i32,    // The calculated dimension of the QR code matrix
+    pub version: i32, // The QR protocol version (1-40) determining density
 }
 
+/// Feedback sent to the frontend while the user is typing to validate their input live.
 #[derive(serde::Serialize)]
 pub struct QrValidation {
     pub valid: bool,
@@ -94,23 +104,26 @@ pub struct QrValidation {
 // ═══════════════════════════════════════════════════════════════════════════
 // INPUT VALIDATION (CRITICAL SECURITY)
 // ═══════════════════════════════════════════════════════════════════════════
+// We generate SVGs manually by concatenating strings later in this file.
+// If we don't strictly validate inputs (like colors), an attacker could pass
+// `"><script>alert(1)</script>` as a color, resulting in an XSS payload
+// executing in the Tauri WebView.
 
-/// Validates hex color format.
+/// Enforces strict `#RRGGBB` format for colors.
 fn validate_color(color: &str) -> Result<String> {
+    // OnceLock compiles the regex exactly once during the application's lifecycle,
+    // making subsequent calls incredibly fast.
     static HEX_REGEX: OnceLock<Regex> = OnceLock::new();
-    let regex = HEX_REGEX.get_or_init(|| {
-        Regex::new(r"^#[0-9A-Fa-f]{6}$").unwrap()
-    });
+    let regex = HEX_REGEX.get_or_init(|| Regex::new(r"^#[0-9A-Fa-f]{6}$").unwrap());
 
     if !regex.is_match(color) {
         return Err(anyhow!("Invalid color format. Use #RRGGBB hex format"));
     }
 
-    // Normalize to uppercase
     Ok(color.to_uppercase())
 }
 
-/// Validates input text length.
+/// Rejects inputs that are empty or maliciously large.
 fn validate_text_length(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(anyhow!("Input text cannot be empty"));
@@ -127,15 +140,14 @@ fn validate_text_length(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates border size.
 fn validate_border(border: u32) -> Result<u32> {
+    // Prevent rendering massive padding that crashes the UI
     if border > 20 {
         return Err(anyhow!("Border too large (maximum: 20)"));
     }
     Ok(border)
 }
 
-/// Validates WiFi SSID.
 fn validate_wifi_ssid(ssid: &str) -> Result<()> {
     if ssid.is_empty() {
         return Err(anyhow!("WiFi SSID cannot be empty"));
@@ -149,7 +161,6 @@ fn validate_wifi_ssid(ssid: &str) -> Result<()> {
         ));
     }
 
-    // Check for invalid characters
     if ssid.contains('\0') {
         return Err(anyhow!("WiFi SSID contains null characters"));
     }
@@ -157,17 +168,19 @@ fn validate_wifi_ssid(ssid: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates WiFi password.
 fn validate_wifi_password(password: &str, security: &str) -> Result<()> {
-    // Allow empty password for open networks
+    // Open networks don't need a password
     if security == "nopass" {
         return Ok(());
     }
 
     if password.is_empty() {
-        return Err(anyhow!("WiFi password cannot be empty for secured networks"));
+        return Err(anyhow!(
+            "WiFi password cannot be empty for secured networks"
+        ));
     }
 
+    // WPA/WPA2 specification enforcement
     if password.len() < MIN_WIFI_PASSWORD_LENGTH {
         return Err(anyhow!(
             "WiFi password too short: {} characters (minimum: {})",
@@ -187,7 +200,6 @@ fn validate_wifi_password(password: &str, security: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates WiFi security type.
 fn validate_wifi_security(security: &str) -> Result<String> {
     let valid = ["WPA", "WPA2", "WEP", "nopass"];
     let upper = security.to_uppercase();
@@ -202,7 +214,8 @@ fn validate_wifi_security(security: &str) -> Result<String> {
     Ok(upper)
 }
 
-/// Escapes special characters in WiFi strings.
+/// The WiFi QR Code specification dictates that special characters used in the syntax
+/// (like colons or semicolons) must be escaped with a backslash if they appear in the password/SSID.
 fn escape_wifi_string(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace(';', "\\;")
@@ -215,18 +228,18 @@ fn escape_wifi_string(s: &str) -> String {
 // SANITIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Sanitizes color for safe SVG insertion.
+/// Strips any non-alphanumeric characters from the color string (except `#`).
+/// This acts as a secondary defense-in-depth layer against XSS in the SVG generator.
 fn sanitize_color(color: &str) -> String {
-    // Remove any potential SVG injection attempts
-    color.chars()
+    color
+        .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '#')
         .collect()
 }
 
-/// Sanitizes SVG output to prevent XSS.
+/// Sanitizes the final SVG string.
+/// Even though we build the SVG safely, this final pass guarantees no script nodes sneaked in.
 fn sanitize_svg(svg: &str) -> String {
-    // Additional sanitization layer
-    // Remove any script tags or event handlers
     svg.replace("<script", "&lt;script")
         .replace("</script>", "&lt;/script&gt;")
         .replace("javascript:", "")
@@ -238,29 +251,29 @@ fn sanitize_svg(svg: &str) -> String {
 // QR CODE GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Generates QR code from text with validation.
+/// Primary endpoint for generating standard QR codes.
 pub fn generate_qr(options: QrOptions) -> Result<QrResult> {
-    // Validate inputs
+    // 1. Validate all inputs strictly
     validate_text_length(&options.text)?;
     let fg_color = validate_color(&options.fg_color)?;
     let bg_color = validate_color(&options.bg_color)?;
     let border = validate_border(options.border)?;
 
-    // Check color contrast (warn if too similar)
+    // 2. Usability check: Prevent user from generating invisible/unscannable QR codes
     if colors_too_similar(&fg_color, &bg_color) {
         return Err(anyhow!(
             "Foreground and background colors are too similar. QR code may not scan properly."
         ));
     }
 
-    // Generate QR code
+    // 3. Compute the QR matrix
     let qr = QrCode::encode_text(&options.text, options.ecc.to_qr_ecc())
         .map_err(|e| anyhow!("Failed to encode QR: {}", e))?;
 
     let size = qr.size();
     let version = qr.version().value() as i32;
 
-    // Generate SVG
+    // 4. Build and sanitize the SVG XML
     let svg = to_svg_string(&qr, border as i32, &fg_color, &bg_color);
     let sanitized_svg = sanitize_svg(&svg);
 
@@ -271,9 +284,8 @@ pub fn generate_qr(options: QrOptions) -> Result<QrResult> {
     })
 }
 
-/// Generates WiFi QR code with validation.
+/// Primary endpoint for generating WiFi-specific QR codes.
 pub fn generate_wifi_qr(options: WifiQrOptions) -> Result<QrResult> {
-    // Validate inputs
     validate_wifi_ssid(&options.ssid)?;
     let security = validate_wifi_security(&options.security)?;
     validate_wifi_password(&options.password, &security)?;
@@ -281,34 +293,28 @@ pub fn generate_wifi_qr(options: WifiQrOptions) -> Result<QrResult> {
     let bg_color = validate_color(&options.bg_color)?;
     let border = validate_border(options.border)?;
 
-    // Check color contrast
     if colors_too_similar(&fg_color, &bg_color) {
         return Err(anyhow!(
             "Foreground and background colors are too similar. QR code may not scan properly."
         ));
     }
 
-    // Escape special characters
     let safe_ssid = escape_wifi_string(&options.ssid);
     let safe_password = escape_wifi_string(&options.password);
 
-    // Build WiFi string: WIFI:T:WPA;S:MyNetwork;P:password;H:false;;
+    // Construct the standardized MECARD format string that phones recognize as a WiFi network.
+    // Example: WIFI:T:WPA;S:MyHomeNetwork;P:SuperSecretPassword;H:false;;
     let wifi_string = format!(
         "WIFI:T:{};S:{};P:{};H:{};;",
-        security,
-        safe_ssid,
-        safe_password,
-        options.hidden
+        security, safe_ssid, safe_password, options.hidden
     );
 
-    // Generate QR code
     let qr = QrCode::encode_text(&wifi_string, options.ecc.to_qr_ecc())
         .map_err(|e| anyhow!("Failed to encode WiFi QR: {}", e))?;
 
     let size = qr.size();
     let version = qr.version().value() as i32;
 
-    // Generate SVG
     let svg = to_svg_string(&qr, border as i32, &fg_color, &bg_color);
     let sanitized_svg = sanitize_svg(&svg);
 
@@ -319,12 +325,11 @@ pub fn generate_wifi_qr(options: WifiQrOptions) -> Result<QrResult> {
     })
 }
 
-/// Validates QR input without generating.
+/// Endpoint called continuously by the frontend as the user types to provide live feedback.
 pub fn validate_qr_input(text: &str) -> QrValidation {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
-    // Check length
     if text.is_empty() {
         errors.push("Input text is empty".to_string());
     } else if text.len() > MAX_INPUT_LENGTH {
@@ -335,13 +340,14 @@ pub fn validate_qr_input(text: &str) -> QrValidation {
         ));
     }
 
-    // Estimate QR size
+    // Attempt to generate a dry-run QR code to determine how dense the matrix will be
     let estimated_size = if !text.is_empty() && text.len() <= MAX_INPUT_LENGTH {
         match QrCode::encode_text(text, QrCodeEcc::Medium) {
             Ok(qr) => {
                 let version = qr.version().value();
                 let size = qr.size();
 
+                // High versions create tiny, dense pixels that are difficult for cheap phones to scan
                 if version > 20 {
                     warnings.push(format!(
                         "Large QR code (version {}). Consider shortening content for better scannability.",
@@ -360,7 +366,7 @@ pub fn validate_qr_input(text: &str) -> QrValidation {
         None
     };
 
-    // Check for URLs
+    // General best-practice warnings
     if text.starts_with("http://") && !text.starts_with("https://") {
         warnings.push("Using HTTP instead of HTTPS is not secure".to_string());
     }
@@ -377,36 +383,38 @@ pub fn validate_qr_input(text: &str) -> QrValidation {
 // SVG GENERATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Builds the actual SVG XML string.
+/// This is highly optimized. Instead of rendering thousands of individual `<rect>` tags
+/// for the black squares, it constructs a single massive `<path>` using `M` (Move To)
+/// and `h1v1h-1z` (Draw 1x1 square) commands. This shrinks the DOM size dramatically,
+/// making rendering in React instantaneous.
 fn to_svg_string(qr: &QrCode, border: i32, fg: &str, bg: &str) -> String {
     let size = qr.size();
     let dimension = size + border * 2;
-    let mut sb = String::with_capacity(1024); // Pre-allocate
+    let mut sb = String::with_capacity(1024); // Pre-allocate memory to avoid reallocation overhead
 
-    // Sanitize colors one more time
     let fg_safe = sanitize_color(fg);
     let bg_safe = sanitize_color(bg);
 
-    // XML Header
     sb.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-    
-    // SVG Root
+
     sb.push_str(&format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {} {}\" stroke=\"none\">",
         dimension, dimension
     ));
 
-    // Background Rectangle
+    // Draw the background square
     sb.push_str(&format!(
         "<rect width=\"100%\" height=\"100%\" fill=\"{}\"/>",
         bg_safe
     ));
 
-    // Foreground Path
+    // Start drawing the foreground data path
     sb.push_str(&format!("<path fill=\"{}\" d=\"", fg_safe));
 
-    // Draw QR modules
     for y in 0..size {
         for x in 0..size {
+            // If the module is dark (true), draw a 1x1 square path at that coordinate
             if qr.get_module(x, y) {
                 sb.push_str(&format!("M{},{}h1v1h-1z ", x + border, y + border));
             }
@@ -423,7 +431,8 @@ fn to_svg_string(qr: &QrCode, border: i32, fg: &str, bg: &str) -> String {
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Checks if two colors are too similar (poor contrast).
+/// Calculates the contrast ratio between two hex colors to ensure the QR code is legible
+/// according to WCAG contrast algorithms.
 fn colors_too_similar(color1: &str, color2: &str) -> bool {
     let rgb1 = hex_to_rgb(color1);
     let rgb2 = hex_to_rgb(color2);
@@ -435,7 +444,7 @@ fn colors_too_similar(color1: &str, color2: &str) -> bool {
     let (r1, g1, b1) = rgb1.unwrap();
     let (r2, g2, b2) = rgb2.unwrap();
 
-    // Calculate luminance
+    // Calculate relative luminance
     let lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
     let lum2 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2;
 
@@ -446,10 +455,11 @@ fn colors_too_similar(color1: &str, color2: &str) -> bool {
         (lum2 + 0.05) / (lum1 + 0.05)
     };
 
-    // QR codes need at least 3:1 contrast ratio
+    // QR codes generally need at least a 3:1 contrast ratio for scanners to distinguish the dots
     contrast < 3.0
 }
 
+/// Converts a standard #RRGGBB string into a tuple of 0.0-1.0 floats.
 fn hex_to_rgb(hex: &str) -> Option<(f64, f64, f64)> {
     if hex.len() != 7 || !hex.starts_with('#') {
         return None;
@@ -461,3 +471,5 @@ fn hex_to_rgb(hex: &str) -> Option<(f64, f64, f64)> {
 
     Some((r, g, b))
 }
+
+// --- END OF FILE qr.rs ---

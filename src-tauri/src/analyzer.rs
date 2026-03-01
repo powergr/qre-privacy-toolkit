@@ -1,27 +1,39 @@
+// --- START OF FILE analyzer.rs ---
+
 use anyhow::Result;
-use rayon::prelude::*;
+use rayon::prelude::*; // Provides parallel iterators for multi-threaded performance
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{AppHandle, Emitter};
 use walkdir::{DirEntry, WalkDir};
 
+// Use the directories crate to resolve standard OS user folders on Desktop platforms.
 #[cfg(not(target_os = "android"))]
 use directories::UserDirs;
 
+/// Represents the findings for a single analyzed file.
+/// Sent to the frontend to populate the security scan results table.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AnalysisResult {
     pub path: String,
     pub filename: String,
     pub extension: String,
-    pub real_type: String,
+    pub real_type: String, // The actual file type determined by its magic bytes
     pub risk_level: String, // "DANGER", "WARNING", "SAFE"
-    pub description: String,
+    pub description: String, // Human-readable explanation of the finding
 }
 
-// Helper to check if we should skip a directory (Optimization)
+// ==========================================
+// --- HELPER: Directory Filtering ---
+// ==========================================
+
+/// Checks if a directory should be skipped during the recursive walk.
+/// (Optimization & Noise Reduction)
 fn is_ignored_dir(entry: &DirEntry) -> bool {
     let name = entry.file_name().to_string_lossy();
-    // Skip hidden folders (.git, .vscode) and heavy dev folders
+    // Skip hidden folders (e.g., .git, .vscode) and heavy development/build folders.
+    // Scanning these would take far too long and yield many false positives
+    // (e.g., intermediate compiled objects masquerading as other data).
     name.starts_with('.')
         || name == "node_modules"
         || name == "target"
@@ -32,32 +44,46 @@ fn is_ignored_dir(entry: &DirEntry) -> bool {
         || name == "__pycache__"
 }
 
+// ==========================================
+// --- CORE: Directory Scanner ---
+// ==========================================
+
+/// Recursively scans a target directory and analyzes all files within it.
 pub fn scan_directory(app: &AppHandle, dir: &str) -> Vec<AnalysisResult> {
+    // 1. Collect all valid file entries synchronously using WalkDir.
+    // We cap the depth at 10 to prevent infinite symlink loops or excessively deep structures.
     let entries: Vec<_> = WalkDir::new(dir)
         .min_depth(1)
         .max_depth(10)
         .into_iter()
-        .filter_entry(|e| !e.path().is_dir() || !is_ignored_dir(e))
-        .filter_map(|e| e.ok())
-        .filter(|e| !e.path().is_dir())
+        .filter_entry(|e| !e.path().is_dir() || !is_ignored_dir(e)) // Prune ignored dirs immediately
+        .filter_map(|e| e.ok()) // Drop entries we don't have permission to read
+        .filter(|e| !e.path().is_dir()) // Keep only actual files
         .collect();
 
+    // 2. Process the collected files in PARALLEL using Rayon (`par_iter`).
+    // This vastly speeds up I/O and CPU-bound heuristic checks across thousands of files.
     let results: Vec<AnalysisResult> = entries
         .par_iter()
         .filter_map(|entry| {
             let path = entry.path();
             let path_str = path.to_string_lossy().to_string();
+
+            // Emit a progress event to the Tauri UI.
+            // Note: Since this is highly multi-threaded, events will arrive rapidly and out of order.
             let _ = app.emit("qre:analyzer-progress", &path_str);
 
+            // 3. Analyze the individual file.
             match analyze_file(path) {
                 Ok(res) => {
+                    // Only return files that triggered a security flag.
                     if res.risk_level != "SAFE" {
                         Some(res)
                     } else {
-                        None
+                        None // Discard safe files to save memory
                     }
                 }
-                Err(_) => None,
+                Err(_) => None, // Ignore files that couldn't be read/analyzed
             }
         })
         .collect();
@@ -65,18 +91,26 @@ pub fn scan_directory(app: &AppHandle, dir: &str) -> Vec<AnalysisResult> {
     results
 }
 
+// ==========================================
+// --- CORE: Heuristic File Analysis ---
+// ==========================================
+
+/// Analyzes a single file by comparing its declared extension against its "Magic Bytes" (file header).
 pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
     let filename = path
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
+
+    // The "Declared" extension (what the user sees and what the OS uses to open it)
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
 
+    // Use the `infer` crate to read the first few bytes of the file and match them against known signatures.
     let kind_opt = infer::get_from_path(path).unwrap_or(None);
 
     let (real_ext, mime) = match kind_opt {
@@ -87,19 +121,28 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
     let mut risk_level = "SAFE".to_string();
     let mut description = "Match".to_string();
 
+    // If we successfully identified the actual file type...
     if real_ext != "unknown" {
-        let is_executable_mime = mime.contains("dosexec")
+        // Check if the actual file contents represent an executable program.
+        let is_executable_mime = mime.contains("dosexec") // Windows PE (.exe, .dll)
             || mime.contains("executable")
-            || mime.contains("mach-binary")
-            || mime.contains("elf");
+            || mime.contains("mach-binary") // macOS binaries
+            || mime.contains("elf"); // Linux binaries
+
+        // Expected extensions for legitimate executable formats.
         let allowed_binary_exts = [
             "exe", "dll", "sys", "ocx", "cpl", "scr", "msi", "node", "pyd", "efi", "acm", "ax",
             "tsp", "drv", "bin", "elf", "so", "o", "deb", "rpm", "appimage", "dylib", "kext",
             "app", "sh", "bat", "cmd", "ps1", "vbs",
         ];
 
+        // ------------------------------------------------------------
+        // SECURITY CHECK 1: DANGER - Executables masquerading as data
+        // ------------------------------------------------------------
         if is_executable_mime {
+            // If the actual file is an executable, but its extension is NOT an executable extension...
             if !allowed_binary_exts.contains(&ext.as_str()) {
+                // If it's masquerading as a format users implicitly trust (like a document or image)...
                 let user_safe_formats = [
                     "txt", "pdf", "jpg", "jpeg", "png", "gif", "mp3", "mp4", "docx", "xlsx", "zip",
                     "rar", "csv",
@@ -110,36 +153,44 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
                     description = format!("EXECUTABLE hidden as .{}", ext.to_uppercase());
                 }
             }
-        } else if real_ext != ext {
+        }
+        // ------------------------------------------------------------
+        // SECURITY CHECK 2: WARNING - General Extension Mismatch
+        // ------------------------------------------------------------
+        else if real_ext != ext {
+            // The file isn't an executable, but its extension is lying about what it is.
+            // We need to filter out common legitimate reasons for mismatches (whitelisting).
+
             let system_extensions = [
                 "mui", "cat", "tlb", "cip", "nls", "icm", "inf", "pnf", "xml", "json", "lib",
                 "rlib", "pdb", "exp", "obj", "iobj", "ipdb", "dat", "bin", "cache", "tmp", "db",
                 "db-shm", "db-wal", "plugin", "bpl",
             ];
 
-            // --- IMAGE FORMATS ---
             let image_formats = [
                 "jpg", "jpeg", "png", "gif", "webp", "bmp", "ico", "tiff", "tif",
             ];
 
             if system_extensions.contains(&ext.as_str()) {
-                // Ignore
+                // Ignore: Common OS and dev files often have custom extensions but standard headers.
             } else if real_ext == "der" && (ext == "cat" || ext == "cip" || ext == "crl") {
-                // Safe
+                // Safe: Windows security catalog files use DER certificate encoding.
             } else if (real_ext == "zip" || real_ext == "jar")
                 && matches!(
                     ext.as_str(),
                     "docx" | "xlsx" | "pptx" | "odt" | "apk" | "nupkg" | "whl" | "vsix" | "crx"
                 )
             {
-                // Safe
+                // Safe: Modern documents (Office), Android apps (.apk), and browser extensions (.crx)
+                // are actually just ZIP archives under the hood. The infer crate sees "ZIP", but the
+                // extension is "docx". This is expected.
             } else if mime.starts_with("text") {
-                // Safe
-            }
-            // Cross-image format mismatches are common and usually safe (e.g. .webp named .png)
-            else if image_formats.contains(&real_ext) && image_formats.contains(&ext.as_str()) {
-                // Safe
+                // Safe: Text is text, regardless of extension.
+            } else if image_formats.contains(&real_ext) && image_formats.contains(&ext.as_str()) {
+                // Safe: Image format mismatches are incredibly common on the web
+                // (e.g., a .webp file downloaded and saved as .png). Usually harmless.
             } else {
+                // If it doesn't match our whitelists, flag it if the user thinks it's a standard media/document.
                 let monitored_exts = [
                     "jpg", "jpeg", "png", "gif", "pdf", "mp4", "mp3", "zip", "rar", "7z", "avi",
                     "mov", "wav",
@@ -167,10 +218,15 @@ pub fn analyze_file(path: &Path) -> Result<AnalysisResult> {
     })
 }
 
+// ==========================================
+// --- OS SPECIFIC DIRECTORY RESOLUTION ---
+// ==========================================
+
 // ── Desktop (Windows / macOS / Linux) ────────────────────────────────────────
 #[cfg(not(target_os = "android"))]
 pub fn get_user_dirs() -> Vec<String> {
     let mut paths = Vec::new();
+    // Resolve standard directories where users typically download/store risky files.
     if let Some(user_dirs) = UserDirs::new() {
         if let Some(d) = user_dirs.download_dir() {
             paths.push(d.to_string_lossy().to_string());
@@ -186,11 +242,12 @@ pub fn get_user_dirs() -> Vec<String> {
 }
 
 // ── Android ───────────────────────────────────────────────────────────────────
-// The `directories` crate resolves to the app's private sandbox on Android,
-// which is always empty. Instead we target the real public storage folders
-// that are accessible with READ_EXTERNAL_STORAGE / MANAGE_EXTERNAL_STORAGE.
+// The standard Rust `directories` crate resolves to the app's isolated private sandbox
+// on Android, which is normally empty and safe. We need to target the public storage
+// folders (requires READ_EXTERNAL_STORAGE / MANAGE_EXTERNAL_STORAGE permissions in AndroidManifest).
 #[cfg(target_os = "android")]
 pub fn get_user_dirs() -> Vec<String> {
+    // Common public paths across different Android vendor implementations
     let candidates = vec![
         "/sdcard/Download",
         "/sdcard/Documents",
@@ -204,7 +261,9 @@ pub fn get_user_dirs() -> Vec<String> {
 
     candidates
         .into_iter()
-        .filter(|p| std::path::Path::new(p).exists())
+        .filter(|p| std::path::Path::new(p).exists()) // Only return paths that actually exist on this device
         .map(|p| p.to_string())
         .collect()
 }
+
+// --- END OF FILE analyzer.rs ---

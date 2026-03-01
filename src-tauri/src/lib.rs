@@ -1,10 +1,16 @@
-// Declare all modules
+// --- START OF FILE lib.rs ---
+
+// ==========================================
+// --- MODULE DECLARATIONS ---
+// ==========================================
+// In Rust, explicitly declaring `mod` tells the compiler to look for these files
+// (e.g., `analyzer.rs`, `bookmarks.rs`) and compile them into the binary tree.
 mod analyzer;
 mod bookmarks;
 mod breach;
 mod cleaner;
 mod clipboard_store;
-mod commands; // Refers to src/commands/mod.rs
+mod commands; // Refers to src/commands/mod.rs (which encapsulates files.rs, tools.rs, vault.rs)
 mod crypto;
 mod crypto_stream;
 mod entropy;
@@ -17,7 +23,7 @@ mod shredder;
 mod state;
 mod system_cleaner;
 #[cfg(test)]
-mod tests;
+mod tests; // Only compiled when running `cargo test`
 mod utils;
 mod vault;
 mod wordlist;
@@ -25,26 +31,48 @@ mod wordlist;
 use state::SessionState;
 use std::sync::{Arc, Mutex};
 
+// Conditional compilation: Global OS-level keyboard shortcuts are not supported on iOS/Android.
 #[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
+// ==========================================
+// --- MAIN TAURI ENTRY POINT ---
+// ==========================================
+// `tauri::mobile_entry_point` generates the necessary boilerplate to run this Rust library
+// as a native mobile app library on Android (JNI) and iOS (C ABI). On desktop, it's just a normal func.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
+        // --- PLUGIN INITIALIZATION ---
+        // Tauri plugins provide safe, sandboxed APIs to native OS features so the frontend
+        // doesn't have to use raw Node.js/OS calls (which is a major security risk in Electron).
         .plugin(tauri_plugin_os::init())
-        // FIX: Wrapped Mutex in Arc::new() to match SessionState struct definition
+        // --- GLOBAL STATE MANAGEMENT ---
+        // `.manage()` injects our `SessionState` struct into the Tauri application context.
+        // Any command can request `state: tauri::State<SessionState>` to access it.
+        // ARCHITECTURE: `Arc` (Atomic Reference Counting) allows multiple threads to share ownership.
+        // `Mutex` (Mutual Exclusion) ensures only one thread can read/write the MasterKey at a time.
         .manage(SessionState {
             master_key: Arc::new(Mutex::new(None)),
         })
-        .plugin(tauri_plugin_http::init()) // <--- ADDED HTTP PLUGIN HERE
+        // More plugins for standard OS interactions
+        .plugin(tauri_plugin_http::init()) // <--- Allows Rust to handle secure HTTP requests bypassing CORS
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init()) // Native OS file pickers
+        .plugin(tauri_plugin_fs::init()) // Sandboxed file system access
+        .plugin(tauri_plugin_opener::init()) // Opens URLs/files in the user's default external apps
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_updater::Builder::new().build()); // Secure OTA auto-updates
 
+    // ==========================================
+    // --- PANIC BUTTON (DESKTOP ONLY) ---
+    // ==========================================
+    // SECURITY FEATURE: Registers a global, system-wide shortcut (Ctrl+Shift+Q).
+    // If the user feels threatened or someone walks in, they hit this shortcut.
+    // `std::process::exit(0)` instantly kills the app. Since our keys are stored in RAM,
+    // killing the process is the fastest and most absolute way to wipe the master key
+    // and lock the vault instantly.
     #[cfg(not(mobile))]
     {
         builder = builder.plugin(
@@ -63,6 +91,7 @@ pub fn run() {
 
     builder
         .setup(|_app| {
+            // Register the panic button shortcut during app initialization
             #[cfg(not(mobile))]
             {
                 let ctrl_shift_q =
@@ -72,6 +101,11 @@ pub fn run() {
             }
             Ok(())
         })
+        // ==========================================
+        // --- IPC COMMAND ROUTER ---
+        // ==========================================
+        // This macro takes all our Rust functions marked with `#[tauri::command]`
+        // and exposes them to the frontend Javascript/Typescript via the `invoke()` API.
         .invoke_handler(tauri::generate_handler![
             // --- FILE COMMANDS (commands/files.rs) ---
             commands::files::lock_file,
@@ -143,6 +177,10 @@ pub fn run() {
             // Generator
             commands::tools::generate_passphrase,
         ])
+        // Boot the Tauri application loop. This will block the main thread and keep the app alive
+        // until all windows are closed or `std::process::exit()` is called.
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// --- END OF FILE lib.rs ---
