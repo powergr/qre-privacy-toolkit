@@ -141,10 +141,7 @@
 /* Clickable filter chip */
 .tag-chip.filter-chip {
   cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .tag-chip.filter-chip:hover {
   background: var(--bg-card);
@@ -241,9 +238,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
+  transition: border-color 0.15s, background 0.15s;
   gap: 12px;
 }
 .notes-list-item:hover {
@@ -540,23 +535,15 @@
   overflow-y: auto;
   cursor: text;
 }
-.editor-textarea::-webkit-scrollbar {
-  width: 12px;
-  cursor: default;
-}
-.editor-textarea::-webkit-scrollbar-track {
-  background: var(--bg-card);
-  cursor: default;
-}
+.editor-textarea::-webkit-scrollbar       { width: 12px; cursor: default; }
+.editor-textarea::-webkit-scrollbar-track { background: var(--bg-card); cursor: default; }
 .editor-textarea::-webkit-scrollbar-thumb {
   background-color: var(--border);
   border-radius: 6px;
   border: 3px solid var(--bg-card);
   cursor: default;
 }
-.editor-textarea::-webkit-scrollbar-thumb:hover {
-  background-color: var(--text-dim);
-}
+.editor-textarea::-webkit-scrollbar-thumb:hover { background-color: var(--text-dim); }
 
 /* ── Preview mode ─────────────────────────────────────────────────────────── */
 .editor-preview {
@@ -569,12 +556,8 @@
   user-select: none;
   -webkit-user-select: none;
 }
-.editor-preview::-webkit-scrollbar {
-  width: 12px;
-}
-.editor-preview::-webkit-scrollbar-track {
-  background: var(--bg-card);
-}
+.editor-preview::-webkit-scrollbar       { width: 12px; }
+.editor-preview::-webkit-scrollbar-track { background: var(--bg-card); }
 .editor-preview::-webkit-scrollbar-thumb {
   background-color: var(--border);
   border-radius: 6px;

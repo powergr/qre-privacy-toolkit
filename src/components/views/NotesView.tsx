@@ -505,14 +505,14 @@ export function NotesView() {
     return indices;
   }, [findQuery, editing?.content]);
 
-  // Reset match index when query changes, and jump to first match immediately
+  // Reset the match counter whenever the query changes.
+  // Do NOT call navigateToMatch here — that calls textareaRef.focus()
+  // on every keypress and steals focus away from the find input after the
+  // very first character the user types.  The counter updates live; the
+  // user presses Enter or clicks the arrows to jump to a match.
   useEffect(() => {
     setCurrentMatchIdx(0);
-    if (findMatches.length > 0) {
-      // Small delay so the textarea has rendered with the current value
-      setTimeout(() => navigateToMatch(0), 30);
-    }
-  }, [findQuery, findMatches.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [findQuery]);
 
   // Navigate to current match in textarea
   const navigateToMatch = useCallback(
