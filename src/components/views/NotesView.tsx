@@ -930,11 +930,11 @@ export function NotesView() {
 
           {/* Import */}
           <button
-            className="secondary-btn icon-only-btn"
+            className="notes-icon-btn"
             onClick={handleImport}
             title="Import Text File"
           >
-            <Upload size={18} />
+            <Upload size={16} />
           </button>
 
           {/* New Note */}

@@ -55,6 +55,30 @@
   height: 40px;
 }
 
+/* Standalone icon button in the header row — same height as view-toggle */
+.notes-icon-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+  flex-shrink: 0;
+}
+.notes-icon-btn:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+  border-color: var(--accent);
+}
+
 /* ── Sort dropdown ─────────────────────────────────────────────────────────── */
 .custom-select-container {
   position: relative;
@@ -143,10 +167,10 @@
 .tag-filter-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   flex-wrap: nowrap;
   overflow-x: auto;
-  padding: 10px 0 12px 0;
+  padding: 18px 0 18px 0;
   margin-bottom: 8px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
