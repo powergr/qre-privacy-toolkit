@@ -506,10 +506,10 @@ export function NotesView() {
   }, [findQuery, editing?.content]);
 
   // Reset the match counter whenever the query changes.
-  // Do NOT call navigateToMatch here — that calls textareaRef.focus()
-  // on every keypress and steals focus away from the find input after the
-  // very first character the user types.  The counter updates live; the
-  // user presses Enter or clicks the arrows to jump to a match.
+  // Do NOT call navigateToMatch here — it calls textareaRef.focus() which
+  // steals focus back to the editor after every single keystroke, making
+  // it impossible to type more than one character in the find box.
+  // The user presses Enter or clicks ‹ › to jump to a match.
   useEffect(() => {
     setCurrentMatchIdx(0);
   }, [findQuery]);
@@ -1182,7 +1182,7 @@ export function NotesView() {
           >
             {/* ── Title row ── */}
             <div className="editor-title-row">
-              <div style={{ width: 40 }} />
+              <div style={{ width: 76, flexShrink: 0 }} />
               <input
                 className="auth-input editor-title-input"
                 placeholder="Untitled Note"
@@ -1239,6 +1239,15 @@ export function NotesView() {
                 placeholder="Add tag…"
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
+                onBlur={() => {
+                  // Commit any typed-but-not-confirmed tag when focus leaves
+                  // the input (e.g. user types "hello" then clicks Save & Close
+                  // without pressing Enter — without this the tag is lost).
+                  if (tagInput.trim()) {
+                    addTag(tagInput);
+                    setTagInput("");
+                  }
+                }}
                 onKeyDown={(e) => {
                   if ((e.key === "Enter" || e.key === ",") && tagInput.trim()) {
                     e.preventDefault();

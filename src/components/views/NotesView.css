@@ -1,3 +1,4 @@
+/* ── Layout ────────────────────────────────────────────────────────────────── */
 .notes-view {
   flex: 1;
   display: flex;
@@ -6,20 +7,18 @@
   overflow-y: auto;
 }
 
-/* ── Header ──────────────────────────────────────────────────────────────── */
+/* ── Header ────────────────────────────────────────────────────────────────── */
 .notes-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  gap: 12px;
-  flex-wrap: wrap;
+  margin-bottom: 20px;
+  gap: 20px;
 }
-
 .notes-view .search-container {
   position: relative;
   flex: 1;
-  max-width: 380px;
+  max-width: 400px;
   height: 40px;
 }
 .notes-view .search-input {
@@ -48,7 +47,7 @@
   pointer-events: none;
 }
 
-/* ── Right-side controls row ──────────────────────────────────────────────── */
+/* ── Right-side controls row ───────────────────────────────────────────────── */
 .notes-controls-row {
   display: flex;
   align-items: center;
@@ -56,346 +55,9 @@
   height: 40px;
 }
 
-.icon-only-btn {
-  height: 40px;
-  width: 40px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-main);
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: all 0.15s;
-}
-.icon-only-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ── View toggle (grid / list) ────────────────────────────────────────────── */
-.view-toggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-  height: 40px;
-}
-.view-toggle-btn {
-  background: var(--bg-card);
-  border: none;
-  color: var(--text-dim);
-  padding: 0 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  transition: all 0.15s;
-}
-.view-toggle-btn:hover {
-  color: var(--text-main);
-  background: var(--highlight);
-}
-.view-toggle-btn.active {
-  background: var(--highlight);
-  color: var(--accent);
-}
-.view-toggle-btn + .view-toggle-btn {
-  border-left: 1px solid var(--border);
-}
-
-/* ── Tag filter bar ───────────────────────────────────────────────────────── */
-.tag-filter-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  padding: 0 0 12px 0;
-  scrollbar-width: none;
-}
-.tag-filter-bar::-webkit-scrollbar {
-  display: none;
-}
-
-/* ── Tag chips (shared) ───────────────────────────────────────────────────── */
-.tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border-radius: 20px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: default;
-  background: var(--highlight);
-  border: 1px solid var(--border);
-  color: var(--accent);
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-/* Clickable filter chip */
-.tag-chip.filter-chip {
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.tag-chip.filter-chip:hover {
-  background: var(--bg-card);
-  border-color: var(--accent);
-  color: var(--text-main);
-}
-.tag-chip.filter-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-/* Tags on cards */
-.tag-chip.card-tag {
-  font-size: 0.7rem;
-  padding: 2px 7px;
-}
-
-/* Tags in editor */
-.tag-chip.editor-tag {
-  font-size: 0.78rem;
-  padding: 3px 6px 3px 9px;
-}
-
-.tag-remove-btn {
-  background: transparent;
-  border: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--text-dim);
-  opacity: 0.7;
-  transition: opacity 0.15s;
-  margin-left: 2px;
-}
-.tag-remove-btn:hover {
-  opacity: 1;
-  color: var(--btn-danger);
-}
-
-/* Tags row on note cards */
-.note-card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 10px;
-}
-
-/* ── Card ─────────────────────────────────────────────────────────────────── */
-.note-card-modern.pinned {
-  border-color: rgba(255, 215, 0, 0.4);
-  background: linear-gradient(
-    to bottom right,
-    var(--bg-card),
-    rgba(255, 215, 0, 0.03)
-  );
-}
-.pinned-icon {
-  color: #ffd700;
-  margin-right: 4px;
-}
-.note-body {
-  margin-bottom: 10px;
-  color: var(--text-dim);
-  font-size: 0.9rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-height: 3em;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-/* ── List view ────────────────────────────────────────────────────────────── */
-.notes-list-view {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.notes-list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  gap: 12px;
-}
-.notes-list-item:hover {
-  border-color: var(--accent);
-  background: var(--highlight);
-}
-.notes-list-item.pinned {
-  border-color: rgba(255, 215, 0, 0.3);
-}
-
-.list-item-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.list-item-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: var(--text-main);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 1;
-}
-
-.list-item-tags {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.list-item-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.list-item-meta {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-/* ── Editor modal card ────────────────────────────────────────────────────── */
-.editor-modal-card {
-  display: flex;
-  flex-direction: column;
-}
-
-/* ── Title row ────────────────────────────────────────────────────────────── */
-.editor-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  gap: 8px;
-}
-
-.editor-title-input {
-  font-size: 1.2rem !important;
-  font-weight: bold !important;
-  border: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-  text-align: center;
-  flex: 1;
-}
-
-.editor-header-actions {
-  display: flex;
-  gap: 4px;
-  width: 60px;
-  justify-content: flex-end;
-}
-
-/* ── Tag editor row ───────────────────────────────────────────────────────── */
-.tag-editor-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 4px 10px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 10px;
-  min-height: 36px;
-}
-
-.tag-input-field {
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--text-main);
-  font-size: 0.78rem;
-  min-width: 80px;
-  max-width: 140px;
-  padding: 2px 4px;
-}
-.tag-input-field::placeholder {
-  color: var(--text-dim);
-  opacity: 0.6;
-}
-
-/* ── Editor toolbar ───────────────────────────────────────────────────────── */
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  flex-wrap: wrap;
-}
-
-.toolbar-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  padding: 5px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-.toolbar-btn:hover {
-  background: var(--highlight);
-  color: var(--text-main);
-}
-.toolbar-btn.active {
-  background: var(--highlight);
-  color: var(--accent);
-}
-.toolbar-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.toolbar-separator {
-  width: 1px;
-  height: 18px;
-  background: var(--border);
-  margin: 0 3px;
-}
-
-/* ── Custom dropdown ──────────────────────────────────────────────────────── */
+/* ── Sort dropdown ─────────────────────────────────────────────────────────── */
 .custom-select-container {
   position: relative;
-  min-width: 90px;
 }
 .custom-select-trigger {
   background: var(--bg-card);
@@ -421,12 +83,12 @@
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  min-width: 140px;
+  min-width: 100%;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   z-index: 9999;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
 .custom-option {
@@ -446,72 +108,394 @@
   background: var(--highlight);
 }
 
-/* ── Find & Replace bar ───────────────────────────────────────────────────── */
+/* ── Grid / List view toggle ───────────────────────────────────────────────── */
+.view-toggle {
+  display: flex;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view-toggle-btn {
+  background: var(--bg-card);
+  border: none;
+  color: var(--text-dim);
+  padding: 0 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.view-toggle-btn:hover {
+  color: var(--text-main);
+  background: var(--highlight);
+}
+.view-toggle-btn.active {
+  background: var(--highlight);
+  color: var(--accent);
+}
+.view-toggle-btn + .view-toggle-btn {
+  border-left: 1px solid var(--border);
+}
+
+/* ── Tag filter bar (above cards) ──────────────────────────────────────────── */
+.tag-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 10px 0 12px 0;
+  margin-bottom: 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.tag-filter-bar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Tag chips ─────────────────────────────────────────────────────────────── */
+/*
+ * Uses explicit fallback values on every var() so chips are ALWAYS visible
+ * even if the app theme doesn't define --highlight, --border, or --accent.
+ */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  background: var(--highlight, #2a2a3e);
+  border: 1px solid var(--border, #3a3a52);
+  color: var(--accent, #7c6af7);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Clickable filter chip */
+.tag-chip.filter-chip {
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+.tag-chip.filter-chip:hover {
+  background: var(--bg-card, #1e1e2e);
+  border-color: var(--accent, #7c6af7);
+  color: var(--text-main, #e0e0e0);
+}
+.tag-chip.filter-chip.active {
+  background: var(--accent, #7c6af7);
+  border-color: var(--accent, #7c6af7);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Tags on grid cards and list rows */
+.tag-chip.card-tag {
+  font-size: 0.7rem;
+  padding: 2px 7px;
+}
+
+/* Tags inside the editor (with remove button) */
+.tag-chip.editor-tag {
+  font-size: 0.78rem;
+  padding: 3px 6px 3px 9px;
+}
+
+.tag-remove-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+.tag-remove-btn:hover {
+  opacity: 1;
+}
+
+/* Container for tag chips on a grid card */
+.note-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── Grid card ─────────────────────────────────────────────────────────────── */
+.note-card-modern.pinned {
+  border-color: rgba(255, 215, 0, 0.4);
+  background: linear-gradient(
+    to bottom right,
+    var(--bg-card),
+    rgba(255, 215, 0, 0.03)
+  );
+}
+.pinned-icon {
+  color: #ffd700;
+  margin-right: 5px;
+}
+.note-body {
+  margin-bottom: 15px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 3em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.note-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-top: auto;
+}
+
+/* ── List view ─────────────────────────────────────────────────────────────── */
+.notes-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.notes-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  gap: 12px;
+  min-height: 44px;
+}
+.notes-list-item:hover {
+  background: var(--highlight, #2a2a3e);
+  border-color: var(--border);
+}
+.notes-list-item.pinned {
+  border-color: rgba(255, 215, 0, 0.25);
+}
+.list-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.list-item-title {
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.list-item-tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.list-item-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.list-item-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* ── Editor toolbar ────────────────────────────────────────────────────────── */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.toolbar-btn:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+}
+.toolbar-btn.active {
+  background: var(--highlight);
+  color: var(--accent);
+}
+.toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+/* ── Editor title row ──────────────────────────────────────────────────────── */
+.editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+/* Override the global auth-input class — it's designed for login forms
+   (tall, large padding). In the editor title bar we need it compact. */
+.editor-title-input {
+  flex: 1;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  height: 36px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  min-width: 0;
+}
+.editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 76px; /* fits 2 icon buttons (36px each + 4px gap) */
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* ── Tag editor row (inside the modal, below the title) ────────────────────── */
+.tag-editor-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 4px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+  min-height: 36px;
+}
+.tag-input-field {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-main);
+  font-size: 0.78rem;
+  min-width: 80px;
+  max-width: 160px;
+  padding: 2px 4px;
+}
+.tag-input-field::placeholder {
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+/* ── Find & Replace bar ────────────────────────────────────────────────────── */
 .find-replace-bar {
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-bottom: none;
-  padding: 6px 10px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
-
 .find-replace-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
 .find-input {
   flex: 1;
   background: var(--bg-card);
   border: 1px solid var(--border);
+  border-radius: 4px;
   color: var(--text-main);
-  padding: 4px 10px;
-  border-radius: 5px;
-  font-size: 0.85rem;
+  padding: 4px 8px;
+  font-size: 0.83rem;
   outline: none;
-  transition: border-color 0.15s;
   min-width: 0;
 }
 .find-input:focus {
   border-color: var(--accent);
 }
-
 .find-counter {
   font-size: 0.75rem;
   color: var(--text-dim);
   white-space: nowrap;
   min-width: 36px;
-  text-align: right;
-  font-family: monospace;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
-
 .find-action-btn {
-  background: var(--bg-card);
+  background: var(--highlight);
   border: 1px solid var(--border);
+  border-radius: 4px;
   color: var(--text-main);
   padding: 4px 10px;
-  border-radius: 5px;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  transition: background 0.15s;
 }
 .find-action-btn:hover:not(:disabled) {
+  background: var(--bg-card);
   border-color: var(--accent);
-  color: var(--accent);
 }
 .find-action-btn:disabled {
   opacity: 0.4;
-  cursor: not-allowed;
+  cursor: default;
 }
 
-/* ── Editor container & textarea ──────────────────────────────────────────── */
+/* ── Editor container & textarea ───────────────────────────────────────────── */
 .editor-container {
   width: 100%;
-  height: 430px;
+  height: 450px;
   background: var(--bg-color);
   border: 1px solid var(--border);
   border-bottom-left-radius: 8px;
@@ -520,7 +504,6 @@
   overflow: hidden;
   position: relative;
 }
-
 .editor-textarea {
   width: 100%;
   height: 100%;
@@ -528,24 +511,32 @@
   color: var(--text-main);
   border: none;
   padding: 20px;
-  line-height: 1.7;
+  line-height: 1.6;
   resize: none;
   outline: none;
   box-sizing: border-box;
   overflow-y: auto;
   cursor: text;
 }
-.editor-textarea::-webkit-scrollbar       { width: 12px; cursor: default; }
-.editor-textarea::-webkit-scrollbar-track { background: var(--bg-card); cursor: default; }
+.editor-textarea::-webkit-scrollbar {
+  width: 12px;
+  cursor: default;
+}
+.editor-textarea::-webkit-scrollbar-track {
+  background: var(--bg-card);
+  cursor: default;
+}
 .editor-textarea::-webkit-scrollbar-thumb {
   background-color: var(--border);
   border-radius: 6px;
   border: 3px solid var(--bg-card);
   cursor: default;
 }
-.editor-textarea::-webkit-scrollbar-thumb:hover { background-color: var(--text-dim); }
+.editor-textarea::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-dim);
+}
 
-/* ── Preview mode ─────────────────────────────────────────────────────────── */
+/* Preview mode */
 .editor-preview {
   width: 100%;
   height: 100%;
@@ -556,15 +547,19 @@
   user-select: none;
   -webkit-user-select: none;
 }
-.editor-preview::-webkit-scrollbar       { width: 12px; }
-.editor-preview::-webkit-scrollbar-track { background: var(--bg-card); }
+.editor-preview::-webkit-scrollbar {
+  width: 12px;
+}
+.editor-preview::-webkit-scrollbar-track {
+  background: var(--bg-card);
+}
 .editor-preview::-webkit-scrollbar-thumb {
   background-color: var(--border);
   border-radius: 6px;
   border: 3px solid var(--bg-card);
 }
 
-/* ── Editor footer ────────────────────────────────────────────────────────── */
+/* ── Editor footer ─────────────────────────────────────────────────────────── */
 .editor-footer {
   display: flex;
   align-items: center;
@@ -575,15 +570,15 @@
   font-family: monospace;
 }
 
-/* ── Auto-save status ─────────────────────────────────────────────────────── */
+/* ── Auto-save status indicator ────────────────────────────────────────────── */
 .autosave-status {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 0.75rem;
-  font-family: monospace;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 4px;
+  font-family: sans-serif;
 }
 .autosave-status.saving {
   color: var(--accent);
@@ -591,44 +586,41 @@
 }
 .autosave-status.saved {
   color: var(--success, #22c55e);
-  background: rgba(34, 197, 94, 0.1);
+  background: var(--highlight);
 }
 .autosave-status.error {
-  color: var(--btn-danger);
-  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  background: var(--highlight);
 }
 .autosave-status.dirty {
-  color: var(--warning, #f59e0b);
+  color: var(--text-dim);
 }
 
-/* ── Save error banner ────────────────────────────────────────────────────── */
+/* ── Save error banner ─────────────────────────────────────────────────────── */
 .save-error-banner {
-  margin-bottom: 10px;
-  color: var(--btn-danger);
-  font-size: 0.85rem;
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 6px;
+  color: #f87171;
   padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  margin-top: 8px;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   EXPANDED MARKDOWN STYLES
-═══════════════════════════════════════════════════════════════════════════ */
-
+/* ── Markdown preview styles ───────────────────────────────────────────────── */
 .md-h1 {
   font-size: 1.8em;
   font-weight: bold;
   color: var(--accent);
-  margin: 0.2em 0 0.5em;
+  margin: 0.6em 0 0.4em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 5px;
 }
 .md-h2 {
-  font-size: 1.35em;
+  font-size: 1.4em;
   font-weight: bold;
   color: var(--text-main);
-  margin: 1em 0 0.4em;
+  margin: 0.8em 0 0.3em;
 }
 .md-h3 {
   font-size: 1.1em;
@@ -638,68 +630,89 @@
   opacity: 0.85;
 }
 .md-h4 {
-  font-size: 0.95em;
+  font-size: 0.82em;
   font-weight: 600;
   color: var(--text-dim);
   margin: 0.6em 0 0.2em;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 0.82em;
 }
-
 .md-list-item {
   margin-left: 20px;
   list-style-type: disc;
   display: list-item;
-  margin-bottom: 2px;
 }
-
 .md-ol-item {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin-bottom: 2px;
-  padding-left: 4px;
+  gap: 8px;
+  margin-bottom: 3px;
 }
 .md-ol-num {
   color: var(--accent);
   font-weight: 600;
-  min-width: 22px;
-  font-size: 0.9em;
+  flex-shrink: 0;
+  min-width: 20px;
 }
-
 .md-blockquote {
   border-left: 3px solid var(--accent);
-  margin: 4px 0 4px 4px;
   padding: 4px 0 4px 14px;
   color: var(--text-dim);
   font-style: italic;
-  background: var(--highlight);
+  background: var(--highlight, #2a2a3e);
   border-radius: 0 4px 4px 0;
+  margin: 4px 0;
 }
-
 .md-hr {
   border: none;
   border-top: 1px solid var(--border);
   margin: 12px 0;
-  opacity: 0.6;
 }
-
-/* Tables */
+.md-code-block {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px;
+  border-radius: 6px;
+  font-family: monospace;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  color: #a3e635;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.md-bold {
+  font-weight: bold;
+  color: #fff;
+}
+.md-italic {
+  font-style: italic;
+}
+.md-strikethrough {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.md-inline-code {
+  font-family: monospace;
+  font-size: 0.88em;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: #a3e635;
+}
 .md-table {
   border-collapse: collapse;
   width: 100%;
   margin: 10px 0;
-  font-size: 0.9em;
+  font-size: 0.88em;
 }
 .md-table th,
 .md-table td {
   border: 1px solid var(--border);
-  padding: 7px 12px;
+  padding: 6px 10px;
   text-align: left;
 }
 .md-table th {
-  background: var(--highlight);
+  background: var(--highlight, #2a2a3e);
   color: var(--accent);
   font-weight: 600;
   font-size: 0.85em;
@@ -710,43 +723,5 @@
   background: rgba(255, 255, 255, 0.02);
 }
 .md-table tr:hover td {
-  background: var(--highlight);
-}
-
-/* Inline styles */
-.md-bold {
-  font-weight: bold;
-  color: #fff;
-}
-.md-italic {
-  font-style: italic;
-}
-.md-strikethrough {
-  text-decoration: line-through;
-  opacity: 0.6;
-}
-.md-inline-code {
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 0.88em;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
-  color: #a3e635;
-}
-
-/* Code blocks */
-.md-code-block {
-  background: rgba(0, 0, 0, 0.3);
-  padding: 12px 14px;
-  border-radius: 6px;
-  font-family: Consolas, "Courier New", monospace;
-  margin: 8px 0;
-  border: 1px solid var(--border);
-  white-space: pre-wrap;
-  color: #a3e635;
-  font-size: 0.88em;
-  line-height: 1.6;
-  user-select: none;
-  -webkit-user-select: none;
+  background: var(--highlight, #2a2a3e);
 }
