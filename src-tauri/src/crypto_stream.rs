@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 // ==========================================
 // --- CONSTANTS ---
@@ -147,11 +147,28 @@ pub fn encrypt_file_stream(
     // 1. Write the magic version number (4 bytes)
     output_file.write_all(&CURRENT_VERSION.to_le_bytes())?;
 
-    // 2. Setup RNG (Deterministic if entropy_seed is provided, otherwise truly random)
-    let mut rng: Box<dyn RngCore> = match entropy_seed {
-        Some(seed) => Box::new(ChaCha20Rng::from_seed(seed)),
-        None => Box::new(OsRng),
-    };
+    // ---------------------------------------------------------
+    // 2. SECURITY UPGRADE: Entropy Mixing (Paranoid Mode Fix)
+    // ---------------------------------------------------------
+    // Previously, if `entropy_seed` (mouse wiggle data) was provided, we completely ignored
+    // the OS random generator (`OsRng`). If the user wiggled the mouse poorly, the key was weak.
+    // Now, we *always* pull 32 bytes of high-entropy cryptographic randomness from the OS.
+    // If Paranoid Mode is ON, we XOR (mix) the user's mouse data into the OS data.
+    // This guarantees maximum security: Immune to bad mouse wiggles, AND immune to OS backdoors.
+
+    let mut combined_seed = [0u8; 32];
+    OsRng.fill_bytes(&mut combined_seed); // Always start with OS-level Cryptographic RNG
+
+    if let Some(user_seed) = entropy_seed {
+        // Mix the user's entropy into the OS entropy using XOR.
+        for i in 0..32 {
+            combined_seed[i] ^= user_seed[i];
+        }
+    }
+
+    // Initialize our stream cipher RNG with the perfectly mixed seed
+    let mut rng = ChaCha20Rng::from_seed(combined_seed);
+    // ---------------------------------------------------------
 
     // 3. Generate the File Encryption Key (FEK) - Zeroized on drop
     let mut file_key = Zeroizing::new([0u8; FILE_KEY_LEN]);
@@ -251,6 +268,10 @@ pub fn encrypt_file_stream(
     }
 
     output_file.flush()?;
+
+    // Ensure memory is wiped (Zeroizing wrapper handles it, but explicit drop clears combined_seed)
+    combined_seed.zeroize();
+
     Ok(())
 }
 

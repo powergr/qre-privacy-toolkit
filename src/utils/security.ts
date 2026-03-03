@@ -1,20 +1,9 @@
-// --- ENTROPY GENERATION (Paranoid Mode) ---
+// --- ENTROPY GENERATION (Paranoid Mode Fallback) ---
 
-export function generateBrowserEntropy(paranoid: boolean): number[] {
+export function generateBrowserEntropy(): number[] {
+  // Always use the browser's Cryptographically Secure Pseudo-Random Number Generator (CSPRNG)
   const array = new Uint8Array(32);
   window.crypto.getRandomValues(array);
-
-  if (!paranoid) {
-    return Array.from(array);
-  }
-
-  const time = performance.now();
-  const timeBytes = new Uint8Array(new Float64Array([time]).buffer);
-
-  for (let i = 0; i < array.length; i++) {
-    array[i] = array[i] ^ timeBytes[i % 8];
-  }
-
   return Array.from(array);
 }
 

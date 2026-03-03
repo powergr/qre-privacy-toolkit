@@ -116,7 +116,7 @@ export function useCrypto(reloadDir: () => void) {
             Math.max(0, Math.min(255, Math.floor(v))),
           );
         } else if (isParanoid) {
-          const raw = generateBrowserEntropy(true);
+          const raw = generateBrowserEntropy();
           // Apply the same clamp to auto-generated entropy for consistency.
           finalEntropy = raw.map((v) =>
             Math.max(0, Math.min(255, Math.floor(v))),

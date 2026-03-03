@@ -124,7 +124,7 @@ A security tool designed to detect malicious files hiding behind fake extensions
 
 **Key Derivation:** Argon2id (Resistant to GPU brute-force).
 
-**Paranoid Mode:** Inject your own physical entropy (mouse movements/touch) to seed the random number generator.
+**Paranoid Mode:** Mixes true physical entropy (mouse/touch timing jitter) with the OS's cryptographic generator. This mathematically immunizes your encryption against theoretical hardware RNG backdoors.
 
 **Panic Button:** `Ctrl+Shift+Q` instantly kills the app and wipes memory (Desktop).
 

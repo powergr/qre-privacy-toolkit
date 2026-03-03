@@ -9,40 +9,50 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
   const [progress, setProgress] = useState(0);
   const [hashView, setHashView] = useState("Waiting for input...");
 
-  // Store raw entropy values
+  // Store raw entropy values. We need exactly 32 bytes.
   const entropyPool = useRef<number[]>([]);
   const lastPos = useRef({ x: 0, y: 0 });
+  const lastTimestamp = useRef<number>(performance.now());
 
   // Unified logic for processing coordinates (Mouse or Touch)
   const processMovement = (clientX: number, clientY: number) => {
     if (progress >= 100) return;
 
-    // Calculate distance to ensure they aren't just hovering
+    // Calculate distance to ensure they aren't just holding still
     const deltaX = Math.abs(clientX - lastPos.current.x);
     const deltaY = Math.abs(clientY - lastPos.current.y);
     const distance = Math.sqrt(deltaX ** 2 + deltaY ** 2);
 
-    // Only collect if they moved enough pixels
+    // Only collect if they actually moved
     if (distance > 5) {
+      const now = performance.now();
+      // The true entropy comes from the unpredictable timing jitter between human movements
+      const timeDelta = now - lastTimestamp.current;
+
       lastPos.current = { x: clientX, y: clientY };
+      lastTimestamp.current = now;
 
-      // Collect data: Coordinates + Timestamp + Random Jitter
-      // This mixes physical world data with high-res timing
-      const time = performance.now();
-      const raw = Math.floor(clientX * clientY + time);
+      // Extract the least significant bits of the timing delta (the most unpredictable part)
+      const jitterByte = Math.floor(timeDelta * 1000) & 0xff;
 
-      // Normalize to byte range (0-255) for easy consumption by backend
-      entropyPool.current.push(raw % 255);
+      // Pull a truly random byte from the OS to mix with our physical jitter
+      const cryptoByte = window.crypto.getRandomValues(new Uint8Array(1))[0];
 
-      // Update UI (Hash View) - Just visual noise for effect
+      // XOR them together to guarantee maximum unpredictability, ensuring we get a full 0-255 range.
+      const secureByte = cryptoByte ^ jitterByte;
+      entropyPool.current.push(secureByte);
+
+      // Update UI (Hash View) - Visual feedback for the user
       const randomDisplay = Array.from(
-        window.crypto.getRandomValues(new Uint8Array(16))
+        window.crypto.getRandomValues(new Uint8Array(16)),
       )
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
       setHashView(randomDisplay);
 
-      // Increase Progress (Requires steady movement)
+      // We need 32 bytes of entropy. If we collect 1 byte per movement,
+      // adding ~1.5 to progress means it takes ~66 distinct movements to fill the pool.
+      // We will slice exactly 32 bytes on completion.
       setProgress((prev) => Math.min(prev + 1.5, 100));
     }
   };
@@ -52,7 +62,6 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    // Check if there is at least one touch point
     if (e.touches.length > 0) {
       const touch = e.touches[0];
       processMovement(touch.clientX, touch.clientY);
@@ -61,9 +70,22 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
 
   useEffect(() => {
     if (progress >= 100) {
-      // Finished! Small delay for UX
+      // Finished!
       setTimeout(() => {
-        onComplete(entropyPool.current);
+        // Ensure we only ever return exactly 32 bytes of the highest quality collected entropy
+        // If we collected more due to rapid movement, just take the last 32 bytes.
+        let finalEntropy = entropyPool.current;
+        if (finalEntropy.length > 32) {
+          finalEntropy = finalEntropy.slice(finalEntropy.length - 32);
+        } else
+          while (finalEntropy.length < 32) {
+            // Fallback: If somehow we hit 100% without 32 bytes, fill the rest with OS CSPRNG
+            finalEntropy.push(
+              window.crypto.getRandomValues(new Uint8Array(1))[0],
+            );
+          }
+
+        onComplete(finalEntropy);
       }, 300);
     }
   }, [progress, onComplete]);
