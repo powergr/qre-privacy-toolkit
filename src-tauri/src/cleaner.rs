@@ -845,4 +845,136 @@ fn clean_zip_metadata(input: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    // Helper to create a temporary dummy file for testing path logic
+    fn create_temp_dummy(name: &str) -> PathBuf {
+        let test_dir = std::env::temp_dir().join("qre_cleaner_tests");
+        fs::create_dir_all(&test_dir).unwrap();
+        let path = test_dir.join(name);
+        let mut file = fs::File::create(&path).unwrap();
+        file.write_all(b"dummy data").unwrap();
+        path
+    }
+
+    #[test]
+    fn test_validate_file_path_safe() {
+        let path = create_temp_dummy("safe.jpg");
+        let result = validate_file_path(&path);
+        assert!(result.is_ok(), "Valid jpg should pass validation");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_validate_file_path_unsupported_ext() {
+        // .exe is not in the whitelist for the metadata cleaner
+        let path = create_temp_dummy("malicious.exe");
+        let result = validate_file_path(&path);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported file type"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_validate_file_path_missing_file() {
+        let path = PathBuf::from("/path/that/does/not/exist.jpg");
+        let result = validate_file_path(&path);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("File does not exist"));
+    }
+
+    #[test]
+    fn test_parse_office_core_xml() {
+        // Simulate the exact XML found inside a DOCX docProps/core.xml
+        let mock_xml = r#"
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                <dc:title>Secret Report</dc:title>
+                <dc:subject></dc:subject>
+                <dc:creator>John Doe</dc:creator>
+                <cp:keywords></cp:keywords>
+                <dc:description></dc:description>
+                <cp:lastModifiedBy>Jane Smith</cp:lastModifiedBy>
+                <cp:revision>2</cp:revision>
+                <dcterms:created xsi:type="dcterms:W3CDTF">2023-10-25T14:30:00Z</dcterms:created>
+                <dcterms:modified xsi:type="dcterms:W3CDTF">2023-10-26T09:15:00Z</dcterms:modified>
+            </cp:coreProperties>
+        "#;
+
+        let mut report = MetadataReport {
+            has_gps: false,
+            has_author: false,
+            camera_info: None,
+            software_info: None,
+            creation_date: None,
+            gps_info: None,
+            file_type: "Office".into(),
+            file_size: 100,
+            raw_tags: Vec::new(),
+        };
+
+        parse_office_core_xml(mock_xml, &mut report);
+
+        // Verify extraction
+        assert!(report.has_author);
+        assert_eq!(report.creation_date.unwrap(), "2023-10-25T14:30:00Z");
+
+        // Verify raw tags
+        let creator_tag = report.raw_tags.iter().find(|t| t.key == "Creator").unwrap();
+        assert_eq!(creator_tag.value, "John Doe");
+
+        let modifier_tag = report
+            .raw_tags
+            .iter()
+            .find(|t| t.key == "Last Modified By")
+            .unwrap();
+        assert_eq!(modifier_tag.value, "Jane Smith");
+    }
+
+    #[test]
+    fn test_zip_bomb_protection_file_count() {
+        // Create a mock ZIP file in memory using the zip crate
+        let mut zip_buffer = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut zip_buffer);
+            let options = zip::write::SimpleFileOptions::default();
+
+            // Deliberately exceed the MAX_ZIP_FILES limit (10,000)
+            for i in 0..10_005 {
+                zip.start_file(format!("file_{}.txt", i), options).unwrap();
+                zip.write_all(b"tiny").unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        // Reset cursor to read
+        zip_buffer.set_position(0);
+        let mut archive = zip::ZipArchive::new(zip_buffer).unwrap();
+
+        let result = validate_zip_archive(&mut archive);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ZIP contains too many files"));
+    }
+}
+
 // --- END OF FILE cleaner.rs ---

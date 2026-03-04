@@ -6,14 +6,14 @@ use serde::Serialize;
 use std::time::Duration;
 
 /// The structure returned to the frontend after a password breach check.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct BreachResult {
     pub found: bool, // True if the password hash was found in a known data breach
     pub count: u64,  // The number of times this specific password was seen in breaches
 }
 
 /// The structure returned to the frontend after an IP address check.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct IpResult {
     pub ip: String,           // The public IPv4 or IPv6 address
     pub is_warp: bool, // True if the user is currently routing traffic through Cloudflare WARP (VPN)
@@ -201,4 +201,96 @@ async fn get_ip_ipify() -> Result<IpResult> {
     })
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Validation Tests (No Network Required) ---
+
+    #[test]
+    fn test_check_pwned_invalid_prefix_length() {
+        tauri::async_runtime::block_on(async {
+            let result = check_pwned_by_prefix("ABCD", "12345678901234567890123456789012345").await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Invalid prefix"));
+        });
+    }
+
+    #[test]
+    fn test_check_pwned_invalid_prefix_hex() {
+        tauri::async_runtime::block_on(async {
+            let result =
+                check_pwned_by_prefix("1234Z", "12345678901234567890123456789012345").await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Invalid prefix"));
+        });
+    }
+
+    #[test]
+    fn test_check_pwned_invalid_suffix_length() {
+        tauri::async_runtime::block_on(async {
+            let result = check_pwned_by_prefix("ABCDE", "12345").await;
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Invalid suffix"));
+        });
+    }
+
+    // --- Integration Tests (Requires Internet) ---
+
+    #[test]
+    fn test_hibp_breached_password() {
+        tauri::async_runtime::block_on(async {
+            // SHA-1 for "password"
+            let result =
+                check_pwned_by_prefix("5BAA6", "1E4C9B93F3F0682250B6CF8331B7EE68FD8").await;
+
+            assert!(result.is_ok(), "HIBP request failed. Network issue?");
+            let breach = result.unwrap();
+
+            assert!(
+                breach.found,
+                "The password 'password' should definitely be breached!"
+            );
+            assert!(breach.count > 3000000, "The count should be massively high");
+        });
+    }
+
+    #[test]
+    fn test_hibp_safe_password() {
+        tauri::async_runtime::block_on(async {
+            // Hash of a very long, random string
+            let result =
+                check_pwned_by_prefix("785A8", "81E576B3C0E514B1F870E83D62D9BA1E915").await;
+
+            assert!(result.is_ok(), "HIBP request failed. Network issue?");
+            let breach = result.unwrap();
+
+            assert!(
+                !breach.found,
+                "This specific random hash should not be in the breach database."
+            );
+            assert_eq!(breach.count, 0);
+        });
+    }
+
+    #[test]
+    fn test_get_public_ip() {
+        tauri::async_runtime::block_on(async {
+            let result = get_public_ip().await;
+            assert!(result.is_ok(), "Failed to get public IP. Network issue?");
+
+            let ip_data = result.unwrap();
+            assert!(!ip_data.ip.is_empty(), "IP string should not be empty");
+
+            assert!(
+                ip_data.service_used == "Cloudflare" || ip_data.service_used == "ipify",
+                "Unrecognized service used"
+            );
+        });
+    }
+}
 // --- END OF FILE breach.rs ---

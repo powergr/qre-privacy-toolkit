@@ -266,4 +266,87 @@ pub fn get_user_dirs() -> Vec<String> {
         .collect()
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    /// Helper to create a temporary file with specific byte content
+    fn create_temp_file(name: &str, content: &[u8]) -> std::path::PathBuf {
+        let test_dir = std::env::temp_dir().join("qre_analyzer_tests");
+        fs::create_dir_all(&test_dir).unwrap();
+
+        let path = test_dir.join(name);
+        let mut file = fs::File::create(&path).unwrap();
+        file.write_all(content).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_analyze_safe_text_file() {
+        // A normal text file
+        let path = create_temp_file("safe.txt", b"Hello, this is just text.");
+        let result = analyze_file(&path).unwrap();
+
+        assert_eq!(result.risk_level, "SAFE");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_analyze_danger_executable_spoofing() {
+        // Create a file with a Windows PE Executable Header (MZ)
+        // but name it as an innocent PDF document.
+        let exe_magic_bytes: &[u8] = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xFF\xFF\x00\x00\xb8\x00\x00\x00\x00\x00\x00\x00\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x00\x00\x00\x0E\x1F\xBA\x0E\x00\xB4\x09\xCD\x21\xB8\x01\x4C\xCD\x21\x54\x68\x69\x73\x20\x70\x72\x6F\x67\x72\x61\x6D\x20\x63\x61\x6E\x6E\x6F\x74\x20\x62\x65\x20\x72\x75\x6E\x20\x69\x6E\x20\x44\x4F\x53\x20\x6D\x6F\x64\x65\x2E\x0D\x0D\x0A\x24\x00\x00\x00\x00\x00\x00\x00";
+
+        let path = create_temp_file("invoice.pdf", exe_magic_bytes);
+        let result = analyze_file(&path).unwrap();
+
+        assert_eq!(result.risk_level, "DANGER");
+        assert!(result.description.contains("EXECUTABLE hidden as"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_analyze_warning_extension_mismatch() {
+        // Create a ZIP file header (PK\x03\x04)
+        // but name it as an image file. This shouldn't be an executable danger,
+        // but it is a mismatch warning for monitored extensions.
+        let zip_magic_bytes: &[u8] = b"PK\x03\x04\x14\x00\x08\x00\x08\x00";
+
+        let path = create_temp_file("vacation.jpg", zip_magic_bytes);
+        let result = analyze_file(&path).unwrap();
+
+        assert_eq!(result.risk_level, "WARNING");
+        assert_eq!(result.real_type, "zip");
+        assert!(result
+            .description
+            .contains("File is actually .ZIP but named .jpg"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_analyze_safe_docx_is_zip() {
+        // A .docx file is literally a ZIP file under the hood.
+        // The analyzer should recognize this and whitelist it as SAFE.
+        let zip_magic_bytes: &[u8] = b"PK\x03\x04\x14\x00\x08\x00\x08\x00";
+
+        let path = create_temp_file("report.docx", zip_magic_bytes);
+        let result = analyze_file(&path).unwrap();
+
+        assert_eq!(
+            result.risk_level, "SAFE",
+            "DOCX files should be whitelisted even though they are ZIPs"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+}
 // --- END OF FILE analyzer.rs ---

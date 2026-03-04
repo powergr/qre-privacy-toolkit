@@ -275,4 +275,149 @@ fn parse_node(
     Ok(())
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(not(target_os = "android"))]
+    use serde_json::json;
+
+    // --- Vault Validation Tests ---
+
+    fn create_valid_bookmark(id: &str, url: &str) -> BookmarkEntry {
+        BookmarkEntry {
+            id: id.to_string(),
+            title: "Test Bookmark".to_string(),
+            url: url.to_string(),
+            category: "General".to_string(),
+            created_at: 1700000000,
+            is_pinned: false,
+            color: BookmarkEntry::default_color(),
+        }
+    }
+
+    #[test]
+    fn test_vault_creation_and_validation() {
+        let mut vault = BookmarksVault::new();
+        assert_eq!(vault.schema_version, 1);
+        assert!(vault.validate().is_ok());
+
+        vault
+            .entries
+            .push(create_valid_bookmark("b1", "https://projectqre.com"));
+        vault
+            .entries
+            .push(create_valid_bookmark("b2", "https://github.com"));
+        assert!(vault.validate().is_ok());
+    }
+
+    #[test]
+    fn test_duplicate_id_fails() {
+        let mut vault = BookmarksVault::new();
+        vault
+            .entries
+            .push(create_valid_bookmark("dup-id", "https://example.com"));
+        vault
+            .entries
+            .push(create_valid_bookmark("dup-id", "https://test.com"));
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate ID"));
+    }
+
+    #[test]
+    fn test_empty_url_fails() {
+        let mut vault = BookmarksVault::new();
+        vault.entries.push(create_valid_bookmark("b1", ""));
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Empty URL"));
+    }
+
+    // --- Parser & Security Tests (Desktop Only) ---
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn test_parse_node_valid_urls() {
+        let mut results = Vec::new();
+
+        // Simulate a Chromium JSON bookmark structure
+        let node = json!({
+            "children": [
+                {
+                    "type": "url",
+                    "name": "QRE Website",
+                    "url": "https://projectqre.com"
+                },
+                {
+                    "type": "folder",
+                    "name": "Social",
+                    "children": [
+                        {
+                            "type": "url",
+                            "name": "GitHub",
+                            "url": "https://github.com"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        parse_node(&node, "Root", &mut results).unwrap();
+
+        assert_eq!(results.len(), 2);
+
+        // Verify flat structure
+        assert_eq!(results[0].title, "QRE Website");
+        assert_eq!(results[0].category, "Root");
+
+        // Verify nested folder flattening
+        assert_eq!(results[1].title, "GitHub");
+        assert_eq!(results[1].category, "Root > Social");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn test_parse_node_security_rejection() {
+        let mut results = Vec::new();
+
+        // Simulate an attacker injecting a malicious bookmarklet
+        let node = json!({
+            "children": [
+                {
+                    "type": "url",
+                    "name": "Safe Link",
+                    "url": "https://google.com"
+                },
+                {
+                    "type": "url",
+                    "name": "XSS Attack",
+                    "url": "javascript:alert('pwned')"
+                },
+                {
+                    "type": "url",
+                    "name": "Data Payload",
+                    "url": "data:text/html,<script>alert('pwned')</script>"
+                },
+                {
+                    "type": "url",
+                    "name": "Tricky XSS",
+                    "url": "JAVAScript:console.log('hi')"
+                }
+            ]
+        });
+
+        parse_node(&node, "Root", &mut results).unwrap();
+
+        // Out of 4 links, only 1 should survive the security filter
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Safe Link");
+    }
+}
+
 // --- END OF FILE bookmarks.rs ---

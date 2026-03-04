@@ -99,4 +99,307 @@ impl NotesVault {
     }
 }
 
-// --- END OF FILE notes.rs ---
+// ==========================================
+// --- TESTS ---
+// ==========================================
+// Run with: cargo test
+// Run a single test: cargo test test_name
+// Run with output:   cargo test -- --nocapture
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helper ────────────────────────────────────────────────────────────────
+
+    /// Creates a fully-populated, valid baseline note.
+    fn create_valid_note(id: &str) -> NoteEntry {
+        NoteEntry {
+            id: id.to_string(),
+            title: "Test Note".to_string(),
+            content: "Super secret content".to_string(),
+            created_at: 1700000000,
+            updated_at: 1700000000,
+            is_pinned: false,
+            tags: vec!["personal".to_string(), "finance".to_string()],
+        }
+    }
+
+    #[test]
+    fn test_notes_vault_creation() {
+        let vault = NotesVault::new();
+        assert_eq!(vault.schema_version, 1);
+        assert!(vault.entries.is_empty());
+        assert!(vault.validate().is_ok());
+    }
+
+    #[test]
+    fn test_valid_notes_pass_validation() {
+        let mut vault = NotesVault::new();
+        vault.entries.push(create_valid_note("note-1"));
+        vault.entries.push(create_valid_note("note-2"));
+        assert!(
+            vault.validate().is_ok(),
+            "Valid vault should pass validation"
+        );
+    }
+
+    #[test]
+    fn test_future_schema_version_fails() {
+        let mut vault = NotesVault::new();
+        vault.schema_version = NotesVault::CURRENT_SCHEMA_VERSION + 1;
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too new"));
+    }
+
+    #[test]
+    fn test_empty_id_fails() {
+        let mut vault = NotesVault::new();
+        vault.entries.push(create_valid_note(""));
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Note has empty ID");
+    }
+
+    #[test]
+    fn test_duplicate_id_fails() {
+        let mut vault = NotesVault::new();
+        vault.entries.push(create_valid_note("duplicate-id"));
+        vault.entries.push(create_valid_note("duplicate-id"));
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate ID"));
+    }
+
+    #[test]
+    fn test_too_many_tags_fails() {
+        let mut vault = NotesVault::new();
+        let mut note = create_valid_note("note-1");
+        note.tags = (0..11).map(|i| format!("tag{}", i)).collect();
+        vault.entries.push(note);
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too many tags"));
+    }
+
+    #[test]
+    fn test_empty_tag_fails() {
+        let mut vault = NotesVault::new();
+        let mut note = create_valid_note("note-1");
+        note.tags.push("   ".to_string());
+        vault.entries.push(note);
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty tag"));
+    }
+
+    // 1. Serialization round-trip
+    // The most critical path: this is exactly what happens every time the
+    // vault is saved and loaded. If any field is silently dropped during
+    // JSON serialization, this test catches it.
+    #[test]
+    fn test_serialization_round_trip() {
+        let mut original = NotesVault::new();
+        let mut note = create_valid_note("round-trip-id");
+        note.title = "My Seed Phrase".to_string();
+        note.content = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+            .to_string();
+        note.is_pinned = true;
+        note.tags = vec!["crypto".to_string(), "important".to_string()];
+        note.created_at = 1700000001;
+        note.updated_at = 1700000002;
+        original.entries.push(note);
+
+        // Serialize → deserialize
+        let json = serde_json::to_string(&original).expect("Serialization should not fail");
+        let restored: NotesVault =
+            serde_json::from_str(&json).expect("Deserialization should not fail");
+
+        // Every field must survive the round-trip exactly
+        assert_eq!(restored.schema_version, original.schema_version);
+        assert_eq!(restored.entries.len(), 1);
+
+        let r = &restored.entries[0];
+        assert_eq!(r.id, "round-trip-id");
+        assert_eq!(r.title, "My Seed Phrase");
+        assert_eq!(
+            r.content,
+            "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
+        );
+        assert_eq!(r.is_pinned, true);
+        assert_eq!(r.tags, vec!["crypto", "important"]);
+        assert_eq!(r.created_at, 1700000001);
+        assert_eq!(r.updated_at, 1700000002);
+    }
+
+    // 2. Backwards compatibility — missing `tags` field
+    // Old vaults saved before tags were added have no "tags" key in their JSON.
+    // #[serde(default)] must silently produce an empty Vec instead of panicking.
+    // If this breaks, every user who upgrades loses access to their vault.
+    #[test]
+    fn test_backwards_compat_missing_tags_field() {
+        let json = r#"{
+            "schema_version": 1,
+            "entries": [{
+                "id": "old-note",
+                "title": "Old Note",
+                "content": "Secret",
+                "created_at": 1700000000,
+                "updated_at": 1700000000,
+                "is_pinned": false
+            }]
+        }"#;
+
+        let vault: NotesVault = serde_json::from_str(json)
+            .expect("Old vault without 'tags' field should deserialize without error");
+
+        assert_eq!(vault.entries.len(), 1);
+        assert!(
+            vault.entries[0].tags.is_empty(),
+            "Missing 'tags' field should default to empty Vec, not panic"
+        );
+        assert!(vault.validate().is_ok());
+    }
+
+    // 3. Backwards compatibility — missing `is_pinned` field
+    // Same concern as above but for is_pinned, which was also added later.
+    #[test]
+    fn test_backwards_compat_missing_is_pinned_field() {
+        let json = r#"{
+            "schema_version": 1,
+            "entries": [{
+                "id": "old-note",
+                "title": "Old Note",
+                "content": "Secret",
+                "created_at": 1700000000,
+                "updated_at": 1700000000
+            }]
+        }"#;
+
+        let vault: NotesVault = serde_json::from_str(json)
+            .expect("Old vault without 'is_pinned' field should deserialize without error");
+
+        assert_eq!(
+            vault.entries[0].is_pinned, false,
+            "Missing 'is_pinned' should default to false"
+        );
+        assert!(vault.validate().is_ok());
+    }
+
+    // 4. new() always uses CURRENT_SCHEMA_VERSION
+    // Guards against someone bumping the constant but forgetting to update new().
+    // A mismatch would cause every newly created vault to immediately fail
+    // its own validation on the next app upgrade.
+    #[test]
+    fn test_new_vault_uses_current_schema_version() {
+        let vault = NotesVault::new();
+        assert_eq!(
+            vault.schema_version,
+            NotesVault::CURRENT_SCHEMA_VERSION,
+            "new() must produce schema_version == CURRENT_SCHEMA_VERSION"
+        );
+    }
+
+    // 5. Exactly 10 tags must pass (boundary case)
+    // The validation rejects > 10 but must accept exactly 10.
+    // Off-by-one bugs live precisely at this boundary.
+    #[test]
+    fn test_exactly_ten_tags_passes() {
+        let mut vault = NotesVault::new();
+        let mut note = create_valid_note("note-1");
+        note.tags = (0..10).map(|i| format!("tag{}", i)).collect();
+        vault.entries.push(note);
+        assert!(
+            vault.validate().is_ok(),
+            "Exactly 10 tags should pass validation (limit is 10, not 9)"
+        );
+    }
+
+    // 6. Tab and newline whitespace-only tags must be rejected
+    // trim() handles spaces but the intent is to reject all whitespace-only tags.
+    // Storing a tab-only tag would create an invisible, unremovable label.
+    #[test]
+    fn test_whitespace_only_tag_variants_fail() {
+        for whitespace in &["\t", "\n", "\r\n", "  \t  "] {
+            let mut vault = NotesVault::new();
+            let mut note = create_valid_note("note-1");
+            note.tags = vec![whitespace.to_string()];
+            vault.entries.push(note);
+            let result = vault.validate();
+            assert!(
+                result.is_err(),
+                "Whitespace-only tag {:?} should fail validation",
+                whitespace
+            );
+            assert!(result.unwrap_err().contains("empty tag"));
+        }
+    }
+
+    // 7. Non-ASCII content round-trips without corruption
+    // Users store seed phrases, Greek/Cyrillic passphrases, and emoji-labelled
+    // entries. UTF-8 must survive serialization intact — corruption here means
+    // the user can never recover their data.
+    #[test]
+    fn test_non_ascii_content_round_trip() {
+        let mut vault = NotesVault::new();
+        let mut note = create_valid_note("unicode-note");
+        note.title = "🔐 Crypto Wallet — Ελληνικά".to_string();
+        note.content = "seed: абвгд эюя 日本語 한국어 🌍".to_string();
+        note.tags = vec!["кошелёк".to_string(), "🔑".to_string()];
+        vault.entries.push(note);
+
+        let json = serde_json::to_string(&vault).expect("Non-ASCII content should serialize");
+        let restored: NotesVault =
+            serde_json::from_str(&json).expect("Non-ASCII content should deserialize");
+
+        let r = &restored.entries[0];
+        assert_eq!(r.title, "🔐 Crypto Wallet — Ελληνικά");
+        assert_eq!(r.content, "seed: абвгд эюя 日本語 한국어 🌍");
+        assert_eq!(r.tags, vec!["кошелёк", "🔑"]);
+    }
+
+    // 8. Empty vault serializes and deserializes cleanly
+    // A brand-new install has an empty vault. It must survive its first
+    // save/load cycle without errors or phantom entries appearing.
+    #[test]
+    fn test_empty_vault_round_trip() {
+        let vault = NotesVault::new();
+        let json = serde_json::to_string(&vault).expect("Empty vault should serialize");
+        let restored: NotesVault =
+            serde_json::from_str(&json).expect("Empty vault should deserialize");
+        assert!(restored.entries.is_empty());
+        assert!(restored.validate().is_ok());
+    }
+
+    // 9. Large vault with many notes validates efficiently
+    // Not a performance benchmark — just confirms O(n) validation doesn't
+    // blow up with a realistic number of notes (500).
+    #[test]
+    fn test_large_vault_validates() {
+        let mut vault = NotesVault::new();
+        for i in 0..500 {
+            vault
+                .entries
+                .push(create_valid_note(&format!("note-{}", i)));
+        }
+        assert!(vault.validate().is_ok(), "500-note vault should validate");
+    }
+
+    // 10. Validation catches duplicate ID even when surrounded by valid notes
+    // The duplicate must be detected regardless of its position in the list —
+    // first, last, or buried in the middle.
+    #[test]
+    fn test_duplicate_id_anywhere_in_list_fails() {
+        let mut vault = NotesVault::new();
+        vault.entries.push(create_valid_note("note-a"));
+        vault.entries.push(create_valid_note("note-b"));
+        vault.entries.push(create_valid_note("note-c"));
+        vault.entries.push(create_valid_note("note-b")); // duplicate buried at end
+        vault.entries.push(create_valid_note("note-d"));
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate ID"));
+    }
+}

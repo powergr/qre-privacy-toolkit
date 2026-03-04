@@ -144,9 +144,14 @@ pub fn analyze_content(text: &str) -> Option<String> {
     }
 
     // 5. Emails
-    // Basic heuristic: contains exactly one '@' and isn't too long.
+    // Basic heuristic: contains exactly one '@', isn't too long, and contains a '.'
+    // to distinguish it from a password using '@' as a special character.
     if text.contains('@') && text.chars().filter(|c| *c == '@').count() == 1 && text.len() < 100 {
-        return Some("Email".to_string());
+        // Also check if there is a '.' somewhere after the '@'
+        let parts: Vec<&str> = text.split('@').collect();
+        if parts.len() == 2 && parts[1].contains('.') {
+            return Some("Email".to_string());
+        }
     }
 
     // 6. Web Links
@@ -230,6 +235,126 @@ pub fn create_entry(text: &str) -> ClipboardEntry {
         category,
         created_at: Utc::now().timestamp(),
         is_pinned: false,
+    }
+}
+
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Vault Validation Tests ---
+
+    #[test]
+    fn test_vault_creation_and_validation() {
+        let mut vault = ClipboardVault::new();
+        assert_eq!(vault.schema_version, 1);
+        assert!(vault.validate().is_ok());
+
+        let entry1 = create_entry("Some copied text");
+        vault.add_entry(entry1).unwrap();
+        assert!(vault.validate().is_ok());
+    }
+
+    #[test]
+    fn test_duplicate_id_fails() {
+        let mut vault = ClipboardVault::new();
+        let mut entry1 = create_entry("First");
+        let mut entry2 = create_entry("Second");
+
+        // Force duplicate ID
+        entry1.id = "same-uuid".to_string();
+        entry2.id = "same-uuid".to_string();
+
+        vault.add_entry(entry1).unwrap();
+
+        // add_entry should fail
+        let result = vault.add_entry(entry2);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+    }
+
+    // --- Analyzer / Heuristic Tests ---
+
+    #[test]
+    fn test_analyze_credit_card() {
+        // Standard 16 digit format with spaces
+        let category = analyze_content("4111 2222 3333 4444").unwrap();
+        assert_eq!(category, "Credit Card");
+
+        // 16 digit without spaces
+        let category2 = analyze_content("4111222233334444").unwrap();
+        assert_eq!(category2, "Credit Card");
+    }
+
+    #[test]
+    fn test_analyze_api_keys() {
+        assert_eq!(
+            analyze_content("sk-test-1234567890abcdef").unwrap(),
+            "API Key"
+        );
+        assert_eq!(
+            analyze_content("ghp_1234567890abcdefghijklmnopqr").unwrap(),
+            "API Key"
+        );
+        assert_eq!(
+            analyze_content("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9").unwrap(),
+            "API Key"
+        ); // JWT
+    }
+
+    #[test]
+    fn test_analyze_password() {
+        // High entropy, mixed case, numbers, special characters, no spaces
+        assert_eq!(analyze_content("P@ssw0rd123!").unwrap(), "Password");
+
+        // Ensure standard sentence is NOT a password
+        assert_eq!(
+            analyze_content("This is a normal sentence").unwrap(),
+            "Text"
+        );
+    }
+
+    #[test]
+    fn test_analyze_link_and_email() {
+        assert_eq!(
+            analyze_content("https://projectqre.com/test").unwrap(),
+            "Link"
+        );
+        assert_eq!(analyze_content("user@example.com").unwrap(), "Email");
+    }
+
+    // --- Redaction / Preview Tests ---
+
+    #[test]
+    fn test_redaction_credit_card() {
+        let entry = create_entry("4111 2222 3333 4444");
+        assert_eq!(entry.category, "Credit Card");
+        // Should show first 4, last 4, mask the rest
+        assert_eq!(entry.preview, "4111 **** **** **** 4444");
+    }
+
+    #[test]
+    fn test_redaction_password() {
+        let entry = create_entry("SuperSecretPassword123!");
+        assert_eq!(entry.category, "Password");
+        // Passwords show only first 6 characters
+        assert_eq!(entry.preview, "SuperS...");
+    }
+
+    #[test]
+    fn test_redaction_standard_text() {
+        // Text should just be truncated if it's too long, but not masked with asterisks
+        let long_text = "This is a very long piece of text that someone copied from a website and we need to make sure it gets truncated properly in the UI.";
+        let entry = create_entry(long_text);
+
+        assert_eq!(entry.category, "Text");
+        assert!(!entry.preview.contains("****"));
+        assert!(entry.preview.ends_with("..."));
+        assert!(entry.preview.len() <= 65); // 60 chars + "..."
     }
 }
 
