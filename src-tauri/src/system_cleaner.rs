@@ -981,4 +981,116 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    // Helper to create a temporary test file inside the OS Temp directory
+    // (which is usually whitelisted by default)
+    fn create_temp_target(name: &str) -> PathBuf {
+        let temp_dir = std::env::temp_dir().join("qre_system_cleaner_tests");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join(name);
+        let mut file = fs::File::create(&path).unwrap();
+        file.write_all(b"junk data").unwrap();
+        path
+    }
+
+    // --- Validation & Sandbox Tests ---
+
+    #[test]
+    fn test_validate_path_virtual_commands_allowed() {
+        let whitelist = get_whitelist();
+        // Virtual commands like DNS flush must bypass the filesystem checks
+        assert!(validate_path("::DNS_CACHE::", &whitelist).is_ok());
+        assert!(validate_path("::CLIPBOARD::", &whitelist).is_ok());
+    }
+
+    #[test]
+    fn test_validate_path_rejects_missing_files() {
+        let whitelist = get_whitelist();
+        let result = validate_path("/path/that/definitely/does/not/exist/999", &whitelist);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_non_whitelisted_system_paths() {
+        let whitelist = get_whitelist();
+
+        // Construct a path that exists on almost every system, but should NEVER be in the cache whitelist
+        #[cfg(target_os = "windows")]
+        let dangerous_path = "C:\\Windows\\System32\\cmd.exe";
+
+        #[cfg(target_os = "macos")]
+        let dangerous_path = "/bin/sh";
+
+        #[cfg(target_os = "linux")]
+        let dangerous_path = "/bin/sh";
+
+        // Fallback for Android or weird test environments where the above might not exist
+        if Path::new(dangerous_path).exists() {
+            let result = validate_path(dangerous_path, &whitelist);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("not in whitelist"));
+        }
+    }
+
+    #[test]
+    fn test_validate_path_allows_whitelisted_paths() {
+        let whitelist = get_whitelist();
+
+        // We create a temp file. `std::env::temp_dir()` is usually included in our `get_whitelist()`
+        // output via `std::env::var("TEMP")` or `/tmp`.
+        let target = create_temp_target("safe_to_delete.tmp");
+
+        // This test will only execute if the temp dir was successfully whitelisted on the host OS
+        if whitelist.iter().any(|w| target.starts_with(w)) {
+            let result = validate_path(target.to_str().unwrap(), &whitelist);
+            assert!(result.is_ok(), "Target inside whitelist should be allowed");
+        }
+
+        let _ = fs::remove_file(target);
+    }
+
+    // --- Logic & Formatting Tests ---
+
+    #[test]
+    fn test_format_size_logic() {
+        assert_eq!(format_size(500), "500 bytes");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1536), "1.50 KB");
+        assert_eq!(format_size(1024 * 1024), "1.00 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.00 GB");
+
+        // 50 GB Limit Format Check
+        assert_eq!(format_size(50 * 1024 * 1024 * 1024), "50.00 GB");
+    }
+
+    #[test]
+    fn test_count_files() {
+        let test_dir = std::env::temp_dir().join("qre_count_tests");
+        fs::create_dir_all(&test_dir).unwrap();
+
+        // Create 3 dummy files
+        fs::File::create(test_dir.join("1.txt")).unwrap();
+        fs::File::create(test_dir.join("2.txt")).unwrap();
+
+        let subdir = test_dir.join("sub");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::File::create(subdir.join("3.txt")).unwrap();
+
+        let count = count_files(&test_dir);
+        assert_eq!(count, 3, "Should correctly count files in subdirectories");
+
+        let _ = fs::remove_dir_all(test_dir);
+    }
+}
+
 // --- END OF FILE system_cleaner.rs.txt ---

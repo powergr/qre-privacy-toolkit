@@ -156,4 +156,116 @@ impl PasswordVault {
     }
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to create a valid, fully populated vault entry
+    fn create_valid_entry(id: &str) -> VaultEntry {
+        VaultEntry {
+            id: id.to_string(),
+            service: "GitHub".to_string(),
+            username: "testuser".to_string(),
+            password: "super_secret_password_123!".to_string(),
+            notes: "2FA recovery codes".to_string(),
+            created_at: 1700000000,
+            updated_at: 1700000000,
+            url: "https://github.com".to_string(),
+            color: "#000000".to_string(),
+            is_pinned: false,
+        }
+    }
+
+    // --- Validation Tests ---
+
+    #[test]
+    fn test_vault_creation_defaults() {
+        let vault = PasswordVault::new();
+        assert_eq!(vault.schema_version, 1);
+        assert!(vault.entries.is_empty());
+        assert!(vault.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validation_passes_valid_entries() {
+        let mut vault = PasswordVault::new();
+        vault.entries.push(create_valid_entry("uuid-1"));
+        vault.entries.push(create_valid_entry("uuid-2"));
+
+        assert!(
+            vault.validate().is_ok(),
+            "Valid vault should pass validation"
+        );
+    }
+
+    #[test]
+    fn test_validation_fails_empty_id() {
+        let mut vault = PasswordVault::new();
+        vault.entries.push(create_valid_entry("")); // Empty ID
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty ID"));
+    }
+
+    #[test]
+    fn test_validation_fails_duplicate_id() {
+        let mut vault = PasswordVault::new();
+        vault.entries.push(create_valid_entry("same-id"));
+        vault.entries.push(create_valid_entry("same-id")); // Duplicate
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("duplicate entry ID"));
+    }
+
+    #[test]
+    fn test_validation_fails_future_schema() {
+        let mut vault = PasswordVault::new();
+        // Simulate a user trying to load a V2 vault into a V1 application
+        vault.schema_version = PasswordVault::CURRENT_SCHEMA_VERSION + 1;
+
+        let result = vault.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("newer than this application supports"));
+    }
+
+    // --- Mutation Logic Tests ---
+
+    #[test]
+    fn test_add_entry() {
+        let mut vault = PasswordVault::new();
+        let entry = create_valid_entry("id-1");
+
+        // Add first time should succeed
+        assert!(vault.add_entry(entry.clone()).is_ok());
+        assert_eq!(vault.entries.len(), 1);
+
+        // Add same ID should fail
+        assert!(vault.add_entry(entry).is_err());
+    }
+
+    #[test]
+    fn test_update_entry() {
+        let mut vault = PasswordVault::new();
+        vault.add_entry(create_valid_entry("id-1")).unwrap();
+
+        // Update existing entry
+        let mut updated = create_valid_entry("id-1");
+        updated.password = "NEW_PASSWORD".to_string();
+        assert!(vault.update_entry(updated).is_ok());
+
+        assert_eq!(vault.entries[0].password, "NEW_PASSWORD");
+
+        // Try to update non-existent entry
+        let missing = create_valid_entry("id-999");
+        assert!(vault.update_entry(missing).is_err());
+    }
+}
 // --- END OF FILE vault.rs ---

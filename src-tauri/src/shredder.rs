@@ -589,4 +589,204 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::{Read, Write};
+
+    // Helper to create a temporary dummy file for testing
+    fn create_temp_file(name: &str, content: &[u8]) -> PathBuf {
+        let test_dir = std::env::temp_dir().join("qre_shredder_tests");
+        fs::create_dir_all(&test_dir).unwrap();
+
+        let path = test_dir.join(name);
+        let mut file = fs::File::create(&path).unwrap();
+        file.write_all(content).unwrap();
+        path
+    }
+
+    // --- Validation & Safety Tests ---
+
+    #[test]
+    fn test_validate_path_safe_file() {
+        let path = create_temp_file("safe_shred.txt", b"Can be deleted");
+        let result = validate_path(&path);
+
+        assert!(result.is_ok(), "A normal user file should pass validation");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_validate_path_system_blacklist() {
+        // We simulate passing a known blacklisted root directory.
+        // Even though we can't create a file in C:\Windows during a test,
+        // we can pass the path string to the validator.
+        #[cfg(target_os = "windows")]
+        let bad_path = Path::new("C:\\Windows\\System32\\cmd.exe");
+
+        #[cfg(not(target_os = "windows"))]
+        let bad_path = Path::new("/bin/sh");
+
+        // The validator checks if the file exists first. If it does exist (which it should on most systems),
+        // the blacklist check MUST catch it. If it doesn't exist, it fails the exist check (which is also fine).
+        let result = validate_path(bad_path);
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+
+        // It should either fail because it's protected, or fail because we don't have read access to it.
+        // As long as it fails, the safety mechanism works.
+        assert!(
+            err_msg.contains("protected system directory")
+                || err_msg.contains("Path does not exist")
+                || err_msg.contains("Permission denied")
+                || err_msg.contains("read-only"),
+            "Failed with unexpected error: {}",
+            err_msg
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    fn create_test_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(original, link)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn create_test_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(original, link)
+    }
+
+    #[test]
+    fn test_validate_path_symlink_rejected() {
+        let test_dir = std::env::temp_dir().join("qre_shredder_tests_symlink");
+        fs::create_dir_all(&test_dir).unwrap();
+
+        let target = test_dir.join("target.txt");
+        fs::File::create(&target).unwrap();
+
+        let symlink = test_dir.join("link_to_target.txt");
+
+        // Use the clean OS-agnostic helper
+        let link_result = create_test_symlink(&target, &symlink);
+
+        // If the OS allows the test to create a symlink (Windows often requires Admin)
+        if link_result.is_ok() {
+            let result = validate_path(&symlink);
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Symlinks are not supported"));
+            let _ = fs::remove_file(symlink);
+        }
+
+        let _ = fs::remove_file(target);
+        let _ = fs::remove_dir_all(test_dir);
+    }
+
+    // --- Core Shredding Engine Tests ---
+
+    #[test]
+    fn test_write_pass_zeros() {
+        let path = create_temp_file("zeros.txt", b"SECRET DATA 12345");
+        let file_size = fs::metadata(&path).unwrap().len();
+
+        // Open file for read/write
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        // Execute a ZEROS pass
+        write_pass(&mut file, file_size, &ShredPass::Zeros).unwrap();
+
+        // Read it back
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+
+        // Verify every byte is exactly 0x00
+        assert_eq!(buffer.len() as u64, file_size);
+        for byte in buffer {
+            assert_eq!(byte, 0x00);
+        }
+
+        drop(file);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_write_pass_pattern() {
+        let path = create_temp_file("pattern.txt", b"SECRET DATA 12345");
+        let file_size = fs::metadata(&path).unwrap().len();
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        // Execute a PATTERN pass (0xFF)
+        write_pass(&mut file, file_size, &ShredPass::Pattern(0xFF)).unwrap();
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+
+        // Verify every byte is exactly 0xFF
+        for byte in buffer {
+            assert_eq!(byte, 0xFF);
+        }
+
+        drop(file);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_write_pass_complement() {
+        // Original bits for 'A' (0x41): 01000001
+        // Complement should be    (0xBE): 10111110
+        let path = create_temp_file("complement.txt", &[0x41, 0x41, 0x41]);
+        let file_size = fs::metadata(&path).unwrap().len();
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        // Execute COMPLEMENT pass
+        write_pass(&mut file, file_size, &ShredPass::Complement).unwrap();
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+
+        for byte in buffer {
+            assert_eq!(byte, 0xBE);
+        }
+
+        drop(file);
+        let _ = fs::remove_file(path);
+    }
+
+    // --- Formatting Helper Tests ---
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(500), "500 bytes");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1536), "1.50 KB");
+        assert_eq!(format_size(1024 * 1024), "1.00 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.00 GB");
+    }
+}
+
 // --- END OF FILE shredder.rs ---

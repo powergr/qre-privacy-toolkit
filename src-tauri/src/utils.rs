@@ -296,4 +296,172 @@ pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    // Helper to create a temporary environment
+    fn setup_test_dir(name: &str) -> PathBuf {
+        let test_dir = std::env::temp_dir().join(format!("qre_utils_tests_{}", name));
+        let _ = fs::remove_dir_all(&test_dir); // Ensure clean state
+        fs::create_dir_all(&test_dir).unwrap();
+        test_dir
+    }
+
+    // --- Keyfile Tests ---
+
+    #[test]
+    fn test_process_keyfile_valid() {
+        let dir = setup_test_dir("keyfile_valid");
+        let path = dir.join("my_keyfile.key");
+
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(b"my super secret key data").unwrap();
+
+        let result = process_keyfile(Some(path.to_string_lossy().to_string()));
+        assert!(result.is_ok());
+        let hash = result.unwrap();
+        assert!(hash.is_some());
+
+        // Should produce a predictable 32-byte SHA-256 hash
+        let hash_bytes = hash.unwrap();
+        assert_eq!(hash_bytes.len(), 32);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_process_keyfile_empty_or_none() {
+        // Passing None should return Ok(None)
+        let res1 = process_keyfile(None);
+        assert!(res1.is_ok());
+        assert!(res1.unwrap().is_none());
+
+        // Passing an empty string should also return Ok(None)
+        let res2 = process_keyfile(Some("   ".to_string()));
+        assert!(res2.is_ok());
+        assert!(res2.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_process_keyfile_not_found() {
+        let result = process_keyfile(Some("/path/does/not/exist.txt".to_string()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    // --- Unique Path Generation Tests ---
+
+    #[test]
+    fn test_get_unique_path() {
+        let dir = setup_test_dir("unique_path");
+        let original_path = dir.join("document.txt");
+
+        // 1. If the file doesn't exist, it should return the exact same path
+        let path1 = get_unique_path(&original_path);
+        assert_eq!(path1, original_path);
+
+        // 2. Create the file. Now it should generate "document (1).txt"
+        fs::File::create(&original_path).unwrap();
+        let path2 = get_unique_path(&original_path);
+        assert_eq!(
+            path2.file_name().unwrap().to_string_lossy(),
+            "document (1).txt"
+        );
+
+        // 3. Create the (1) file. Now it should generate "document (2).txt"
+        fs::File::create(&path2).unwrap();
+        let path3 = get_unique_path(&original_path);
+        assert_eq!(
+            path3.file_name().unwrap().to_string_lossy(),
+            "document (2).txt"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // --- Zip Directory Traversal / Symlink Tests ---
+
+    // --- Helper for OS-specific symlink creation ---
+    #[cfg(target_os = "windows")]
+    fn create_test_dir_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(original, link)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn create_test_dir_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(original, link)
+    }
+
+    // --- Zip Directory Traversal / Symlink Tests ---
+
+    #[test]
+    fn test_zip_directory_symlink_defense() {
+        let dir = setup_test_dir("zip_defense");
+
+        let source_dir = dir.join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        // Create a normal file
+        let safe_file = source_dir.join("safe.txt");
+        fs::File::create(&safe_file)
+            .unwrap()
+            .write_all(b"Hello")
+            .unwrap();
+
+        // Create a directory outside the source to act as a simulated sensitive area
+        let out_of_bounds_dir = dir.join("sensitive_data");
+        fs::create_dir_all(&out_of_bounds_dir).unwrap();
+        let secret_file = out_of_bounds_dir.join("secret.txt");
+        fs::File::create(&secret_file)
+            .unwrap()
+            .write_all(b"DO NOT LEAK THIS")
+            .unwrap();
+
+        // Create a symlink inside the source folder pointing to the sensitive folder
+        let symlink_path = source_dir.join("link_to_secrets");
+
+        // Use the clean OS-agnostic helper
+        let link_res = create_test_dir_symlink(&out_of_bounds_dir, &symlink_path);
+
+        // If the OS allows symlink creation (Windows requires admin), test the zip
+        if link_res.is_ok() {
+            let output_zip = dir.join("output.zip");
+            let result = zip_directory_to_file(&source_dir, &output_zip);
+
+            assert!(
+                result.is_ok(),
+                "Zipping should succeed, but silently ignore the symlink"
+            );
+
+            // Open the resulting zip to verify contents
+            let zip_file = fs::File::open(&output_zip).unwrap();
+            let mut archive = zip::ZipArchive::new(zip_file).unwrap();
+
+            // It should only contain the safe folder and safe file.
+            // The symlink and the secret file should NOT be inside the zip.
+            let mut found_secret = false;
+            for i in 0..archive.len() {
+                let file = archive.by_index(i).unwrap();
+                if file.name().contains("secret") {
+                    found_secret = true;
+                }
+            }
+
+            assert!(
+                !found_secret,
+                "CRITICAL: The Zip function followed a symlink and leaked external files!"
+            );
+        }
+
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
 // --- END OF FILE utils.rs ---

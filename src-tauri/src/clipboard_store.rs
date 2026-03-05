@@ -95,7 +95,6 @@ pub fn analyze_content(text: &str) -> Option<String> {
     }
 
     // 1. Credit Cards (Bounded)
-    // Matches 13-19 digit numbers, optionally separated by spaces or dashes.
     let card_regex = Regex::new(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}\b").unwrap();
     if card_regex.is_match(text) {
         let nums = text.chars().filter(|c| c.is_numeric()).count();
@@ -105,20 +104,17 @@ pub fn analyze_content(text: &str) -> Option<String> {
     }
 
     // 2. IBAN (International Bank Account Number)
-    // Matches 2 letters, 2 numbers, followed by groups of alphanumeric characters.
     let iban_regex = Regex::new(r"(?i)\b[A-Z]{2}\d{2}(?:[A-Z0-9]{4}[ ]?){3,7}\b").unwrap();
     if iban_regex.is_match(text) {
         return Some("Bank Info".to_string());
     }
 
     // 3. Cryptocurrency Addresses
-    // Ethereum format (0x followed by 40 hex characters)
     if text.starts_with("0x") && text.len() == 42 {
         if text[2..].chars().all(|c| c.is_ascii_hexdigit()) {
             return Some("Crypto Address".to_string());
         }
     }
-    // Bitcoin Legacy/SegWit format heuristic (starts with 1, 3, or bc1)
     if text.len() >= 26 && text.len() <= 35 {
         let f = text.chars().next().unwrap_or(' ');
         if (f == '1' || f == '3' || f == 'b' || f == 'B')
@@ -129,28 +125,31 @@ pub fn analyze_content(text: &str) -> Option<String> {
     }
 
     // 4. API Keys & Secrets
-    // Standard UUIDs or keys containing multiple hyphens
     if text.len() >= 16 && text.chars().filter(|c| *c == '-').count() >= 4 {
         return Some("Secret".to_string());
     }
-    // Known API key prefixes (Stripe, GitHub, JWT tokens, AWS)
     if text.starts_with("sk-")
         || text.starts_with("ghp_")
-        || text.starts_with("eyJ") // Standard start of a Base64 encoded JSON Web Token
+        || text.starts_with("eyJ")
         || text.starts_with("AKIA")
-    // AWS Access Key ID
     {
         return Some("API Key".to_string());
     }
 
-    // 5. Emails
-    // Basic heuristic: contains exactly one '@', isn't too long, and contains a '.'
-    // to distinguish it from a password using '@' as a special character.
-    if text.contains('@') && text.chars().filter(|c| *c == '@').count() == 1 && text.len() < 100 {
-        // Also check if there is a '.' somewhere after the '@'
-        let parts: Vec<&str> = text.split('@').collect();
-        if parts.len() == 2 && parts[1].contains('.') {
-            return Some("Email".to_string());
+    // -------------------------------------------------------------
+    // 5. Passwords
+    // -------------------------------------------------------------
+    // If it looks like a high-entropy string, we classify it as a password FIRST.
+    // This prevents "p@.ssw0rd123!" from being caught by the weaker Email rule below.
+    let has_upper = text.chars().any(|c| c.is_uppercase());
+    let has_lower = text.chars().any(|c| c.is_lowercase());
+    let has_digit = text.chars().any(|c| c.is_numeric());
+    let has_special = text.chars().any(|c| !c.is_alphanumeric());
+    let has_space = text.contains(' ');
+
+    if !has_space && text.len() >= 8 {
+        if (has_upper && has_lower && has_digit) || (has_lower && has_digit && has_special) {
+            return Some("Password".to_string());
         }
     }
 
@@ -159,20 +158,19 @@ pub fn analyze_content(text: &str) -> Option<String> {
         return Some("Link".to_string());
     }
 
-    // 7. Passwords
-    // Analyzes character entropy. If a string contains a mix of cases, numbers,
-    // and/or symbols, is over 8 characters, and has no spaces, it's likely a password.
-    let has_upper = text.chars().any(|c| c.is_uppercase());
-    let has_lower = text.chars().any(|c| c.is_lowercase());
-    let has_digit = text.chars().any(|c| c.is_numeric());
-    let has_special = text.chars().any(|c| !c.is_alphanumeric());
-    let has_space = text.contains(' ');
-
-    if !has_space && has_upper && has_lower && has_digit && text.len() >= 8 {
-        return Some("Password".to_string());
-    }
-    if !has_space && has_lower && has_digit && has_special && text.len() >= 8 {
-        return Some("Password".to_string());
+    // -------------------------------------------------------------
+    // 7. Emails
+    // -------------------------------------------------------------
+    // Only fires if the string failed the strong Password check above.
+    if !has_space
+        && text.contains('@')
+        && text.chars().filter(|c| *c == '@').count() == 1
+        && text.len() < 100
+    {
+        let parts: Vec<&str> = text.split('@').collect();
+        if parts.len() == 2 && parts[1].contains('.') {
+            return Some("Email".to_string());
+        }
     }
 
     // Fallback
@@ -310,6 +308,10 @@ mod tests {
     fn test_analyze_password() {
         // High entropy, mixed case, numbers, special characters, no spaces
         assert_eq!(analyze_content("P@ssw0rd123!").unwrap(), "Password");
+
+        // EDGE CASE: A password that looks dangerously like an email or uses email characters
+        assert_eq!(analyze_content("p@.ssw0rd123!").unwrap(), "Password");
+        assert_eq!(analyze_content("admin@123.com").unwrap(), "Password"); // Contains numbers and symbols, no spaces, >8 chars
 
         // Ensure standard sentence is NOT a password
         assert_eq!(

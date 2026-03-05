@@ -422,4 +422,141 @@ pub fn keychain_exists(path: &Path) -> bool {
     path.exists()
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // Helper to generate a temporary, unique file path for each test
+    fn get_temp_keychain_path(test_name: &str) -> std::path::PathBuf {
+        let test_dir = std::env::temp_dir().join("qre_keychain_tests");
+        fs::create_dir_all(&test_dir).unwrap();
+        test_dir.join(format!("{}.json", test_name))
+    }
+
+    #[test]
+    fn test_init_and_unlock_success() {
+        let path = get_temp_keychain_path("test_init_success");
+        let _ = fs::remove_file(&path); // Ensure clean state
+
+        let password = "MySuperSecretPassword123!";
+
+        // 1. Initialize
+        let init_result = init_keychain(&path, password);
+        assert!(init_result.is_ok(), "Failed to initialize keychain");
+
+        let (recovery_code, original_master_key) = init_result.unwrap();
+        assert!(recovery_code.starts_with("QRE-"));
+
+        // 2. Unlock
+        let unlock_result = unlock_keychain(&path, password);
+        assert!(
+            unlock_result.is_ok(),
+            "Failed to unlock with correct password"
+        );
+
+        let decrypted_master_key = unlock_result.unwrap();
+
+        // 3. Verify Master Key matches exactly
+        assert_eq!(
+            original_master_key.0, decrypted_master_key.0,
+            "Decrypted Master Key does not match the originally generated key!"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_unlock_wrong_password_fails() {
+        let path = get_temp_keychain_path("test_wrong_password");
+        let _ = fs::remove_file(&path);
+
+        init_keychain(&path, "CorrectPassword").unwrap();
+
+        // Attempt unlock with wrong password
+        let result = unlock_keychain(&path, "WrongPassword");
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Incorrect Password"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_recovery_flow() {
+        let path = get_temp_keychain_path("test_recovery");
+        let _ = fs::remove_file(&path);
+
+        // 1. Init with forgotten password
+        let (recovery_code, original_mk) = init_keychain(&path, "ForgottenPassword").unwrap();
+
+        // 2. Recover using code and set new password
+        let new_password = "NewRememberedPassword!";
+        let recovery_result = recover_with_code(&path, &recovery_code, new_password);
+
+        assert!(recovery_result.is_ok(), "Recovery failed with valid code");
+        let recovered_mk = recovery_result.unwrap();
+
+        // Ensure the Master Key remained the same
+        assert_eq!(original_mk.0, recovered_mk.0);
+
+        // 3. Verify old password no longer works
+        assert!(unlock_keychain(&path, "ForgottenPassword").is_err());
+
+        // 4. Verify new password works
+        assert!(unlock_keychain(&path, new_password).is_ok());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_reset_recovery_code() {
+        let path = get_temp_keychain_path("test_reset_recovery");
+        let _ = fs::remove_file(&path);
+
+        let (old_code, mk) = init_keychain(&path, "Password").unwrap();
+
+        // Generate new code
+        let new_code = reset_recovery_code(&path, &mk).expect("Failed to reset code");
+
+        assert_ne!(
+            old_code, new_code,
+            "New code should be different from old code"
+        );
+
+        // Old code should fail
+        assert!(recover_with_code(&path, &old_code, "Pass2").is_err());
+
+        // New code should succeed
+        assert!(recover_with_code(&path, &new_code, "Pass3").is_ok());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_change_password() {
+        let path = get_temp_keychain_path("test_change_pass");
+        let _ = fs::remove_file(&path);
+
+        let (_, mk) = init_keychain(&path, "OldPass").unwrap();
+
+        // Change password
+        let change_result = change_password(&path, &mk, "NewPass");
+        assert!(change_result.is_ok());
+
+        // Old fails, New succeeds
+        assert!(unlock_keychain(&path, "OldPass").is_err());
+        assert!(unlock_keychain(&path, "NewPass").is_ok());
+
+        let _ = fs::remove_file(path);
+    }
+}
+
 // --- END OF FILE keychain.rs ---

@@ -472,4 +472,122 @@ fn hex_to_rgb(hex: &str) -> Option<(f64, f64, f64)> {
     Some((r, g, b))
 }
 
+// ==========================================
+// --- TESTS ---
+// ==========================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Validation Tests ---
+
+    #[test]
+    fn test_validate_color() {
+        // Valid colors
+        assert!(validate_color("#FFFFFF").is_ok());
+        assert!(validate_color("#000000").is_ok());
+        assert!(validate_color("#ff00aA").is_ok()); // Mixed case should pass
+
+        // Invalid colors
+        assert!(validate_color("FFFFFF").is_err()); // Missing #
+        assert!(validate_color("#FFF").is_err()); // 3-digit hex not supported by our strict regex
+        assert!(validate_color("#GG0000").is_err()); // Invalid hex character
+        assert!(validate_color("red").is_err()); // Named colors rejected
+    }
+
+    #[test]
+    fn test_validate_wifi_rules() {
+        // SSID tests
+        assert!(validate_wifi_ssid("MyHomeNetwork").is_ok());
+        assert!(validate_wifi_ssid("").is_err()); // Empty SSID
+        assert!(validate_wifi_ssid(&"A".repeat(33)).is_err()); // > 32 chars
+
+        // Password tests (WPA)
+        assert!(validate_wifi_password("SecurePass123", "WPA").is_ok());
+        assert!(validate_wifi_password("short", "WPA").is_err()); // < 8 chars
+        assert!(validate_wifi_password(&"A".repeat(64), "WPA").is_err()); // > 63 chars
+
+        // Open network tests
+        assert!(validate_wifi_password("", "nopass").is_ok()); // Empty pass allowed on open networks
+
+        // Security Type tests
+        assert!(validate_wifi_security("WPA2").is_ok());
+        assert!(validate_wifi_security("wep").is_ok()); // Lowercase should be accepted and upper-cased
+        assert!(validate_wifi_security("WPA3").is_err()); // Unsupported type
+    }
+
+    #[test]
+    fn test_escape_wifi_string() {
+        // WiFi spec requires \ ; , : " to be escaped with a backslash
+        let raw = r#"Pass;Word,With:Special"Chars\"#;
+        let escaped = escape_wifi_string(raw);
+        assert_eq!(escaped, r#"Pass\;Word\,With\:Special\"Chars\\"#);
+    }
+
+    // --- Logic & Math Tests ---
+
+    #[test]
+    fn test_color_contrast() {
+        // High contrast (Black and White)
+        assert!(!colors_too_similar("#000000", "#FFFFFF"));
+        assert!(!colors_too_similar("#FFFFFF", "#000000"));
+
+        // Low contrast (Black and Very Dark Grey)
+        // #0F0F0F against #000000 produces a contrast ratio well below 3.0
+        assert!(colors_too_similar("#000000", "#0F0F0F"));
+
+        // Low contrast (Red on Dark Red)
+        assert!(colors_too_similar("#FF0000", "#AA0000"));
+
+        // Exact same color
+        assert!(colors_too_similar("#FF0000", "#FF0000"));
+    }
+
+    // --- Generation & Integration Tests ---
+
+    #[test]
+    fn test_generate_qr_success() {
+        let options = QrOptions {
+            text: "https://projectqre.com".to_string(),
+            fg_color: "#000000".to_string(),
+            bg_color: "#FFFFFF".to_string(),
+            ecc: ErrorCorrectionLevel::Medium,
+            border: 4,
+        };
+
+        let result = generate_qr(options);
+        assert!(result.is_ok());
+
+        let qr_data = result.unwrap();
+        // Check if standard SVG elements are present
+        assert!(qr_data.svg.contains("<?xml"));
+        assert!(qr_data.svg.contains("<svg"));
+        assert!(qr_data.svg.contains("<rect"));
+        assert!(qr_data.svg.contains("<path"));
+        assert!(qr_data.size > 0);
+        assert!(qr_data.version >= 1);
+    }
+
+    #[test]
+    fn test_validate_qr_input_live_feedback() {
+        // Valid HTTPS URL
+        let val1 = validate_qr_input("https://secure.com");
+        assert!(val1.valid);
+        assert!(val1.errors.is_empty());
+        assert!(val1.warnings.is_empty());
+
+        // Insecure HTTP URL should trigger a warning
+        let val2 = validate_qr_input("http://insecure.com");
+        assert!(val2.valid); // It's still valid QR data
+        assert!(!val2.warnings.is_empty());
+        assert!(val2.warnings[0].contains("not secure"));
+
+        // Empty input should trigger an error
+        let val3 = validate_qr_input("");
+        assert!(!val3.valid);
+        assert!(!val3.errors.is_empty());
+    }
+}
+
 // --- END OF FILE qr.rs ---
