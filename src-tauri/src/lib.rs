@@ -13,19 +13,17 @@ mod clipboard_store;
 mod commands; // Refers to src/commands/mod.rs (which encapsulates files.rs, tools.rs, vault.rs)
 mod crypto;
 mod crypto_stream;
-mod entropy;
 mod hasher;
 mod keychain;
 mod notes;
+mod passwords;
 mod qr;
-mod secure_rng;
 mod shredder;
 mod state;
 mod system_cleaner;
 #[cfg(test)]
 mod tests; // Only compiled when running `cargo test`
 mod utils;
-mod vault;
 mod wordlist;
 
 use state::SessionState;

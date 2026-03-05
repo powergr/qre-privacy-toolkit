@@ -166,6 +166,7 @@ export function VaultView() {
 
   const [editing, setEditing] = useState<Partial<VaultEntry> | null>(null);
   const [showPass, setShowPass] = useState<string | null>(null);
+  const [showEditPass, setShowEditPass] = useState(false);
   const [copyModalMsg, setCopyModalMsg] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<VaultEntry | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -731,6 +732,7 @@ export function VaultView() {
               <div>
                 <div className="vault-view-custom-password-wrapper">
                   <input
+                    type={showEditPass ? "text" : "password"}
                     className="auth-input has-icon"
                     placeholder="Password"
                     value={editing.password ?? ""}
@@ -749,6 +751,14 @@ export function VaultView() {
                     }
                   >
                     <Key size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    className="vault-view-custom-password-toggle"
+                    title={showEditPass ? "Hide password" : "Show password"}
+                    onClick={() => setShowEditPass(!showEditPass)}
+                  >
+                    {showEditPass ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
                 {editing.password && editing.password.length > 0 && (

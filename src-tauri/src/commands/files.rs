@@ -34,7 +34,8 @@ pub struct BatchItemResult {
 /// Checks if a file is likely already compressed based on its extension.
 /// This prevents wasting CPU cycles trying to compress formats that are already highly compressed
 /// (like archives, images, and videos) before encrypting them.
-fn is_already_compressed(filename: &str) -> bool {
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn is_already_compressed(filename: &str) -> bool {
     let ext = Path::new(filename)
         .extension()
         .and_then(|s| s.to_str())
@@ -72,7 +73,7 @@ fn is_already_compressed(filename: &str) -> bool {
 /// Checks if a path is a critical OS directory.
 /// Acts as a safety net to prevent users (or malicious payloads) from accidentally
 /// encrypting, deleting, or shredding files essential to the operating system.
-fn is_system_critical(path: &Path) -> bool {
+pub(crate) fn is_system_critical(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
 
     // Windows Critical Paths
@@ -108,7 +109,7 @@ fn is_system_critical(path: &Path) -> bool {
 }
 
 /// Comprehensive path security check: blocks path traversal ('..') and system critical paths.
-fn reject_critical_path(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_critical_path(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
     }
@@ -122,7 +123,7 @@ fn reject_critical_path(path: &Path) -> Result<(), String> {
 }
 
 /// Basic path traversal check: ensures operations don't escape their intended directory using '..'.
-fn reject_path_traversal(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
     }

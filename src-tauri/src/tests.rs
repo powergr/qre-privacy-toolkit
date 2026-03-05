@@ -6,9 +6,75 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
-    // =====================================================================
-    // V5 STREAMING ENGINE TESTS (Large Files)
-    // =====================================================================
+    // -------------------------------------------------------------------------
+    // SHARED HELPERS
+    // No external crates needed — all I/O uses std::env::temp_dir().
+    // Each test gets its own uniquely named subdirectory so parallel test runs
+    // (cargo test) never collide with each other.
+    // -------------------------------------------------------------------------
+
+    fn mk(seed: u8) -> MasterKey {
+        MasterKey([seed; 32])
+    }
+
+    fn entropy(seed: u8) -> [u8; 32] {
+        [seed; 32]
+    }
+
+    /// Creates a fresh, empty temp directory for one test.
+    /// The caller is responsible for removing it at the end.
+    fn make_test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Writes `content` into `dir/filename` and returns the full path string.
+    fn write_file(dir: &std::path::Path, filename: &str, content: &[u8]) -> String {
+        let path = dir.join(filename);
+        fs::File::create(&path).unwrap().write_all(content).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+
+    /// Simulates a real vault JSON payload the way the Tauri backend serializes it.
+    /// Matches the `VaultEntry` shape used by useVault.ts / vault.rs.
+    fn vault_json_payload() -> Vec<u8> {
+        serde_json::json!({
+            "entries": [
+                {
+                    "id": "a1b2c3d4-0000-4000-8000-000000000001",
+                    "service": "GitHub",
+                    "username": "alice@example.com",
+                    "password": "correct-horse-battery-staple",
+                    "url": "https://github.com",
+                    "notes": "Work account",
+                    "color": "#1DA1F2",
+                    "is_pinned": true,
+                    "created_at": 1_700_000_000_u64,
+                    "updated_at": 1_700_000_000_u64
+                },
+                {
+                    "id": "a1b2c3d4-0000-4000-8000-000000000002",
+                    "service": "Proton Mail",
+                    "username": "alice@proton.me",
+                    "password": "Tr0ub4dor&3",
+                    "url": "https://proton.me",
+                    "notes": "",
+                    "color": "#8e44ad",
+                    "is_pinned": false,
+                    "created_at": 1_700_000_001_u64,
+                    "updated_at": 1_700_000_001_u64
+                }
+            ]
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    // =========================================================================
+    // SECTION 1 — V5 STREAMING ENGINE (original tests, unchanged)
+    // =========================================================================
 
     #[test]
     fn test_v5_streaming_roundtrip_standard() {
@@ -27,22 +93,20 @@ mod tests {
             .write_all(original_data)
             .unwrap();
 
-        let mk = MasterKey([42u8; 32]); // Mock Master Key
+        let mk = MasterKey([42u8; 32]);
         let progress_cb = |_, _| {};
 
-        // Encrypt
         crypto_stream::encrypt_file_stream(
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
             &mk,
-            None, // No keyfile
-            None, // No extra entropy
-            1,    // Fast compression
+            None,
+            None,
+            1,
             progress_cb,
         )
         .expect("V5 Encryption failed");
 
-        // Decrypt
         let result_filename = crypto_stream::decrypt_file_stream(
             encrypted_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
@@ -52,7 +116,6 @@ mod tests {
         )
         .expect("V5 Decryption failed");
 
-        // Verify
         let final_path = output_dir.join(result_filename);
         let decrypted_data = fs::read(&final_path).unwrap();
         assert_eq!(decrypted_data, original_data, "V5 Decrypted data mismatch");
@@ -79,10 +142,9 @@ mod tests {
 
         let mk = MasterKey([77u8; 32]);
         let keyfile_data = b"My Super Secret Keyfile Data";
-        let entropy_seed = [99u8; 32]; // Mock mouse wiggle entropy
+        let entropy_seed = [99u8; 32];
         let progress_cb = |_, _| {};
 
-        // Encrypt with ALL advanced features active
         crypto_stream::encrypt_file_stream(
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
@@ -94,12 +156,11 @@ mod tests {
         )
         .expect("V5 Paranoid Encryption failed");
 
-        // Decrypt
         let result_filename = crypto_stream::decrypt_file_stream(
             encrypted_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
             &mk,
-            Some(keyfile_data), // MUST provide exact same keyfile
+            Some(keyfile_data),
             progress_cb,
         )
         .expect("V5 Paranoid Decryption failed");
@@ -130,7 +191,6 @@ mod tests {
         let correct_mk = MasterKey([1u8; 32]);
         let wrong_mk = MasterKey([2u8; 32]);
 
-        // Encrypt with Correct Key
         crypto_stream::encrypt_file_stream(
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
@@ -142,16 +202,14 @@ mod tests {
         )
         .unwrap();
 
-        // Attempt Decrypt with Wrong Key
         let result = crypto_stream::decrypt_file_stream(
             encrypted_path.to_str().unwrap(),
             output_dir.to_str().unwrap(),
-            &wrong_mk, // <--- WRONG KEY
+            &wrong_mk,
             None,
             |_, _| {},
         );
 
-        // MUST return an error
         assert!(
             result.is_err(),
             "Decryption should have failed with wrong key!"
@@ -164,9 +222,9 @@ mod tests {
         let _ = fs::remove_dir_all(test_dir);
     }
 
-    // =====================================================================
-    // V4 IN-MEMORY ENGINE TESTS (Vaults, Notes, Bookmarks)
-    // =====================================================================
+    // =========================================================================
+    // SECTION 2 — V4 IN-MEMORY ENGINE (original tests, unchanged)
+    // =========================================================================
 
     #[test]
     fn test_v4_memory_roundtrip() {
@@ -174,22 +232,13 @@ mod tests {
         let filename = "passwords.json";
         let mk = MasterKey([123u8; 32]);
 
-        // Encrypt (In RAM)
-        let container = crypto::encrypt_file_with_master_key(
-            &mk,
-            None, // No keyfile
-            filename,
-            original_data,
-            None, // No paranoid entropy
-            3,    // Standard compression
-        )
-        .expect("V4 Encryption failed");
+        let container =
+            crypto::encrypt_file_with_master_key(&mk, None, filename, original_data, None, 3)
+                .expect("V4 Encryption failed");
 
-        // Verify container structure
         assert_eq!(container.version, 4);
         assert!(!container.ciphertext.is_empty());
 
-        // Decrypt (In RAM)
         let decrypted_payload = crypto::decrypt_file_with_master_key(&mk, None, &container)
             .expect("V4 Decryption failed");
 
@@ -204,7 +253,6 @@ mod tests {
         let correct_keyfile = b"ValidKeyfile";
         let wrong_keyfile = b"InvalidKeyfile";
 
-        // Encrypt with keyfile
         let container = crypto::encrypt_file_with_master_key(
             &mk,
             Some(correct_keyfile),
@@ -215,16 +263,827 @@ mod tests {
         )
         .unwrap();
 
-        // Attempt Decrypt with wrong keyfile
-        let result = crypto::decrypt_file_with_master_key(
-            &mk,
-            Some(wrong_keyfile), // <--- WRONG KEYFILE
-            &container,
-        );
+        let result = crypto::decrypt_file_with_master_key(&mk, Some(wrong_keyfile), &container);
 
         assert!(
             result.is_err(),
             "V4 Decryption should fail with wrong keyfile"
         );
+    }
+
+    // =========================================================================
+    // SECTION 3 — PASSWORD VAULT (V4 real-world JSON payloads)
+    // Tests the exact data path used by vault.rs / useVault.ts
+    // =========================================================================
+
+    /// The vault is a real JSON blob — verify it survives a full encrypt/decrypt
+    /// cycle and parses back to valid JSON with all entries intact.
+    #[test]
+    fn test_vault_json_roundtrip() {
+        let payload = vault_json_payload();
+        let mk = mk(10);
+
+        let container =
+            crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+                .expect("Vault encryption failed");
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+            .expect("Vault decryption failed");
+
+        assert_eq!(
+            result.content, payload,
+            "Vault JSON payload must be identical after roundtrip"
+        );
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&result.content).expect("Decrypted vault must be valid JSON");
+
+        let entries = parsed["entries"]
+            .as_array()
+            .expect("entries must be an array");
+        assert_eq!(entries.len(), 2, "Both vault entries must survive");
+        assert_eq!(entries[0]["service"], "GitHub");
+        assert_eq!(entries[1]["service"], "Proton Mail");
+        assert_eq!(
+            entries[0]["password"], "correct-horse-battery-staple",
+            "Password must not be altered"
+        );
+    }
+
+    /// The filename stored inside the V4 container must always be "vault.json"
+    /// regardless of what path was passed in — this is what vault.rs relies on
+    /// to route the decrypted bytes to the right handler.
+    #[test]
+    fn test_vault_filename_preserved_in_container() {
+        let mk = mk(11);
+        let container = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container).unwrap();
+
+        assert_eq!(
+            result.filename, "vault.json",
+            "Vault filename must be preserved so the backend can identify the payload type"
+        );
+    }
+
+    /// A vault encrypted with a keyfile must be completely unreadable without it —
+    /// even if the correct master key is supplied.
+    #[test]
+    fn test_vault_with_keyfile_unreadable_without_it() {
+        let mk = mk(12);
+        let keyfile = b"hardware-token-bytes-32bytes!!!!";
+
+        let container = crypto::encrypt_file_with_master_key(
+            &mk,
+            Some(keyfile),
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(
+            result.is_err(),
+            "Vault must not open without its required keyfile"
+        );
+    }
+
+    /// Two consecutive encryptions of the same vault must produce different
+    /// ciphertexts — prevents an attacker comparing snapshots to detect changes.
+    #[test]
+    fn test_vault_ciphertexts_differ_across_saves() {
+        let mk = mk(13);
+        let payload = vault_json_payload();
+
+        let c1 = crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+            .unwrap();
+        let c2 = crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+            .unwrap();
+
+        assert_ne!(
+            c1.ciphertext, c2.ciphertext,
+            "Each vault save must produce a unique ciphertext (OsRng nonce)"
+        );
+    }
+
+    /// Flipping one byte of the encrypted vault ciphertext must cause decryption
+    /// to fail — AES-GCM authentication tag catches any tampering.
+    #[test]
+    fn test_vault_tamper_detected() {
+        let mk = mk(14);
+        let mut container = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        let mid = container.ciphertext.len() / 2;
+        container.ciphertext[mid] ^= 0xFF;
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(
+            result.is_err(),
+            "Tampered vault ciphertext must be rejected"
+        );
+    }
+
+    /// Corrupting the stored SHA-256 hash in the container header must fail at
+    /// the integrity check step — independently of the AES-GCM auth tag.
+    #[test]
+    fn test_vault_integrity_hash_detects_corruption() {
+        let mk = mk(15);
+        let mut container = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        if let Some(ref mut h) = container.header.original_hash {
+            h[0] ^= 0xFF;
+        }
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(result.is_err(), "Corrupted integrity hash must be caught");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("INTEGRITY") || msg.contains("hash") || msg.contains("corrupt"),
+            "Error must describe an integrity failure, got: {msg}"
+        );
+    }
+
+    /// Paranoid mode vault: the combined OsRng + user entropy seed must still
+    /// decrypt cleanly, and a zero seed must not weaken the output.
+    #[test]
+    fn test_vault_paranoid_mode_roundtrip() {
+        let mk = mk(16);
+        let payload = vault_json_payload();
+        let user_seed = entropy(0xCA);
+
+        let container = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &payload,
+            Some(user_seed),
+            3,
+        )
+        .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+            .expect("Paranoid vault decryption must succeed");
+
+        assert_eq!(result.content, payload);
+    }
+
+    /// With a zero entropy seed (worst-case mouse wiggle), the OsRng baseline
+    /// must still guarantee a different ciphertext on each run.
+    #[test]
+    fn test_vault_paranoid_zero_seed_still_unique() {
+        let mk = mk(17);
+        let payload = vault_json_payload();
+        let zero_seed = [0u8; 32];
+
+        let c1 = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &payload,
+            Some(zero_seed),
+            3,
+        )
+        .unwrap();
+        let c2 = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &payload,
+            Some(zero_seed),
+            3,
+        )
+        .unwrap();
+
+        assert_ne!(
+            c1.ciphertext, c2.ciphertext,
+            "Even an all-zero entropy seed must not produce identical ciphertexts (OsRng must run)"
+        );
+    }
+
+    /// An empty vault (no entries) must encrypt and decrypt without errors.
+    #[test]
+    fn test_vault_empty_entries_array() {
+        let payload = serde_json::json!({ "entries": [] })
+            .to_string()
+            .into_bytes();
+        let mk = mk(18);
+
+        let container =
+            crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+                .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+            .expect("Empty vault must decrypt cleanly");
+
+        let parsed: serde_json::Value = serde_json::from_slice(&result.content).unwrap();
+        assert_eq!(
+            parsed["entries"].as_array().unwrap().len(),
+            0,
+            "Empty entries array must round-trip correctly"
+        );
+    }
+
+    /// A large vault (500 entries) must survive without data loss or truncation.
+    #[test]
+    fn test_vault_large_payload_roundtrip() {
+        let entries: Vec<serde_json::Value> = (0..500)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("entry-{:04}", i),
+                    "service": format!("Service {}", i),
+                    "username": format!("user{}@example.com", i),
+                    "password": format!("P@ssw0rd-{}-secure!", i),
+                    "url": format!("https://service{}.example.com", i),
+                    "notes": format!("Auto-generated test entry #{}", i),
+                    "color": "#555555",
+                    "is_pinned": false,
+                    "created_at": 1_700_000_000_u64 + i as u64,
+                    "updated_at": 1_700_000_000_u64 + i as u64
+                })
+            })
+            .collect();
+
+        let payload = serde_json::json!({ "entries": entries })
+            .to_string()
+            .into_bytes();
+        let mk = mk(19);
+
+        let container =
+            crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+                .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+            .expect("Large vault must decrypt successfully");
+
+        let parsed: serde_json::Value = serde_json::from_slice(&result.content).unwrap();
+        assert_eq!(
+            parsed["entries"].as_array().unwrap().len(),
+            500,
+            "All 500 entries must survive the roundtrip"
+        );
+    }
+
+    /// Passwords containing special characters, Unicode, and maximum-length strings
+    /// must survive encryption without mangling.
+    #[test]
+    fn test_vault_special_characters_in_passwords() {
+        let long_password = "a".repeat(512);
+        let tricky_passwords: Vec<&str> = vec![
+            r#"p@$$w0rd"with"quotes"#,
+            "日本語パスワード",
+            "пароль-на-русском",
+            "emoji🔐passphrase🛡️",
+            &long_password,
+            "back\\slash and /forward/slash",
+        ];
+
+        for password in &tricky_passwords {
+            let payload = serde_json::json!({
+                "entries": [{
+                    "id": "test-id",
+                    "service": "Test",
+                    "username": "user",
+                    "password": password,
+                    "url": "",
+                    "notes": "",
+                    "color": "#555",
+                    "is_pinned": false,
+                    "created_at": 0_u64,
+                    "updated_at": 0_u64
+                }]
+            })
+            .to_string()
+            .into_bytes();
+
+            let mk = mk(20);
+            let container =
+                crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &payload, None, 3)
+                    .unwrap();
+
+            let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+                .expect("Special character password vault must decrypt");
+
+            let parsed: serde_json::Value = serde_json::from_slice(&result.content).unwrap();
+            assert_eq!(
+                parsed["entries"][0]["password"], *password,
+                "Password must survive roundtrip unaltered"
+            );
+        }
+    }
+
+    // =========================================================================
+    // SECTION 4 — V4 SECURITY (crypto.rs hardening)
+    // =========================================================================
+
+    /// Changing one bit of the master key must completely prevent decryption.
+    #[test]
+    fn test_v4_wrong_master_key_fails() {
+        let correct = mk(30);
+        let wrong = mk(31);
+
+        let container =
+            crypto::encrypt_file_with_master_key(&correct, None, "a.txt", b"secret data", None, 3)
+                .unwrap();
+
+        assert!(
+            crypto::decrypt_file_with_master_key(&wrong, None, &container).is_err(),
+            "Wrong master key must be rejected"
+        );
+    }
+
+    /// Removing the keyfile from a keyfile-protected vault must fail with a clear
+    /// error — not silently fall back to master-key-only decryption.
+    #[test]
+    fn test_v4_keyfile_required_guard() {
+        let mk = mk(32);
+        let kf = b"required-keyfile";
+
+        let container = crypto::encrypt_file_with_master_key(
+            &mk,
+            Some(kf),
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Keyfile") || msg.contains("keyfile"),
+            "Error must mention the missing keyfile, got: {msg}"
+        );
+    }
+
+    /// Encrypting the same content twice must never produce the same ciphertext.
+    #[test]
+    fn test_v4_nonce_uniqueness() {
+        let mk = mk(33);
+        let data = b"repeated vault content";
+
+        let c1 = crypto::encrypt_file_with_master_key(&mk, None, "v.json", data, None, 3).unwrap();
+        let c2 = crypto::encrypt_file_with_master_key(&mk, None, "v.json", data, None, 3).unwrap();
+
+        assert_ne!(
+            c1.ciphertext, c2.ciphertext,
+            "Every encryption must use a unique nonce"
+        );
+    }
+
+    /// All compression levels (store → extreme) must produce correctly decryptable output.
+    #[test]
+    fn test_v4_all_compression_levels() {
+        let mk = mk(34);
+        let data = vault_json_payload();
+
+        for level in [0i32, 1, 3, 9, 19] {
+            let container =
+                crypto::encrypt_file_with_master_key(&mk, None, "vault.json", &data, None, level)
+                    .unwrap_or_else(|e| panic!("Encryption at level {level} failed: {e}"));
+
+            let result = crypto::decrypt_file_with_master_key(&mk, None, &container)
+                .unwrap_or_else(|e| panic!("Decryption at level {level} failed: {e}"));
+
+            assert_eq!(
+                result.content, data,
+                "Compression level {level}: content must match after roundtrip"
+            );
+        }
+    }
+
+    // =========================================================================
+    // SECTION 5 — V5 STREAMING SECURITY (crypto_stream.rs hardening)
+    // =========================================================================
+
+    /// An attacker who truncates the last chunk of a multi-chunk encrypted file
+    /// must be detected by the whole-file SHA-256 hash in the stream header.
+    /// Per-chunk AES-GCM tags alone would not catch this.
+    #[test]
+    fn test_v5_truncation_attack_detected() {
+        let dir = make_test_dir("qre_v5_truncation");
+        // Input and output live in separate subdirs so dir/output/big.bin is
+        // unambiguously the decryptor's file, not the original input.
+        let input = write_file(&dir, "big.bin", &vec![0x42u8; 2 * 1024 * 1024]); // 2 MB
+        let encrypted = dir.join("big.bin.qre").to_str().unwrap().to_owned();
+        let out_dir = dir.join("output");
+        fs::create_dir_all(&out_dir).unwrap();
+        let out_dir_str = out_dir.to_str().unwrap().to_owned();
+        let mk = mk(40);
+
+        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        // Remove the last 64 KB to simulate a truncation attack
+        let mut bytes = fs::read(&encrypted).unwrap();
+        let new_len = bytes.len().saturating_sub(64_000);
+        bytes.truncate(new_len);
+        fs::write(&encrypted, &bytes).unwrap();
+
+        let result =
+            crypto_stream::decrypt_file_stream(&encrypted, &out_dir_str, &mk, None, |_, _| {});
+
+        assert!(result.is_err(), "Truncated file must be rejected");
+        // Check the output subdir — the original input big.bin must not
+        // cause a false positive here.
+        assert!(
+            !out_dir.join("big.bin").exists(),
+            "Decryptor must delete the partial output file after a truncation failure"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The AAD field binds each chunk to its exact filename and index. Flipping a
+    /// byte inside any chunk must invalidate that chunk's GCM tag.
+    #[test]
+    fn test_v5_chunk_tampering_detected() {
+        let dir = make_test_dir("qre_v5_tamper");
+        let input = write_file(
+            &dir,
+            "data.bin",
+            b"This content will be tampered with after encryption",
+        );
+        let encrypted = dir.join("data.bin.qre").to_str().unwrap().to_owned();
+        let out_dir = dir.to_str().unwrap().to_owned();
+        let mk = mk(41);
+
+        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        // Flip a byte in the second half of the file (inside the chunk body, past the header)
+        let mut bytes = fs::read(&encrypted).unwrap();
+        let pos = bytes.len() * 3 / 4;
+        bytes[pos] ^= 0xFF;
+        fs::write(&encrypted, &bytes).unwrap();
+
+        let result = crypto_stream::decrypt_file_stream(&encrypted, &out_dir, &mk, None, |_, _| {});
+
+        assert!(
+            result.is_err(),
+            "Tampered chunk must fail the AES-GCM authentication tag check"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Two encryptions of the same file must produce entirely different byte streams
+    /// because OsRng picks a new base_nonce each time.
+    #[test]
+    fn test_v5_nonce_uniqueness_across_runs() {
+        let dir = make_test_dir("qre_v5_nonce");
+        let content = b"identical content encrypted twice";
+        let mk = mk(42);
+
+        let input_a = write_file(&dir, "a.txt", content);
+        let enc_a = dir.join("a.txt.qre").to_str().unwrap().to_owned();
+        crypto_stream::encrypt_file_stream(&input_a, &enc_a, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        let input_b = write_file(&dir, "b.txt", content);
+        let enc_b = dir.join("b.txt.qre").to_str().unwrap().to_owned();
+        crypto_stream::encrypt_file_stream(&input_b, &enc_b, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        assert_ne!(
+            fs::read(&enc_a).unwrap(),
+            fs::read(&enc_b).unwrap(),
+            "Identical content encrypted twice must produce different ciphertexts"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The original filename is stored in the V5 header and must be restored exactly
+    /// on decryption — including the extension.
+    #[test]
+    fn test_v5_original_filename_preserved() {
+        let dir = make_test_dir("qre_v5_filename");
+        // Decrypt into a separate output subdir so get_unique_path never
+        // appends " (1)" due to colliding with the original input file.
+        let input = write_file(&dir, "my_vault_backup.json", b"{}");
+        let encrypted = dir
+            .join("my_vault_backup.json.qre")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let out_dir = dir.join("output");
+        fs::create_dir_all(&out_dir).unwrap();
+        let out_dir_str = out_dir.to_str().unwrap().to_owned();
+        let mk = mk(43);
+
+        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        let out_name =
+            crypto_stream::decrypt_file_stream(&encrypted, &out_dir_str, &mk, None, |_, _| {})
+                .unwrap();
+
+        assert_eq!(
+            out_name, "my_vault_backup.json",
+            "Original filename must be recovered exactly, got: {out_name}"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// With a zero user entropy seed the OsRng baseline must still produce
+    /// non-deterministic output in the V5 engine.
+    #[test]
+    fn test_v5_paranoid_zero_seed_nondeterministic() {
+        let dir = make_test_dir("qre_v5_zero_seed");
+        let content = b"paranoid zero seed content";
+        let mk = mk(44);
+        let zero_seed = [0u8; 32];
+
+        let input_a = write_file(&dir, "c.txt", content);
+        let enc_a = dir.join("c.txt.qre").to_str().unwrap().to_owned();
+        crypto_stream::encrypt_file_stream(
+            &input_a,
+            &enc_a,
+            &mk,
+            None,
+            Some(zero_seed),
+            3,
+            |_, _| {},
+        )
+        .unwrap();
+
+        let input_b = write_file(&dir, "d.txt", content);
+        let enc_b = dir.join("d.txt.qre").to_str().unwrap().to_owned();
+        crypto_stream::encrypt_file_stream(
+            &input_b,
+            &enc_b,
+            &mk,
+            None,
+            Some(zero_seed),
+            3,
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_ne!(
+            fs::read(&enc_a).unwrap(),
+            fs::read(&enc_b).unwrap(),
+            "OsRng must prevent identical ciphertexts even when the entropy seed is all zeros"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// V5 output must begin with the version byte 5, not 4.
+    /// The unlock router in files.rs uses this byte to choose the right decryptor.
+    #[test]
+    fn test_v5_version_byte_is_5() {
+        let dir = make_test_dir("qre_v5_version");
+        let input = write_file(&dir, "v.txt", b"version test");
+        let encrypted = dir.join("v.txt.qre").to_str().unwrap().to_owned();
+        let mk = mk(45);
+
+        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
+            .unwrap();
+
+        let bytes = fs::read(&encrypted).unwrap();
+        assert!(bytes.len() >= 4);
+        let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(version, 5, "V5 streaming engine must write version byte 5");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // ── Path Security tests call pub(crate) helpers in commands/files.rs ────────
+
+    use crate::commands::files::{
+        is_already_compressed, is_system_critical, reject_critical_path, reject_path_traversal,
+    };
+    use std::path::Path;
+
+    // ── Path Traversal ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_path_traversal_dotdot_rejected() {
+        assert!(
+            reject_path_traversal(Path::new("/home/user/../etc/passwd")).is_err(),
+            "Single '..' must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_path_traversal_nested_rejected() {
+        assert!(
+            reject_path_traversal(Path::new("docs/../../secret")).is_err(),
+            "Nested '..' must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_path_traversal_normal_path_allowed() {
+        assert!(
+            reject_path_traversal(Path::new("/home/alice/documents/vault.json")).is_ok(),
+            "Normal absolute path must pass"
+        );
+    }
+
+    #[test]
+    fn test_path_traversal_relative_path_allowed() {
+        assert!(
+            reject_path_traversal(Path::new("exports/backup.csv")).is_ok(),
+            "Relative path without '..' must pass"
+        );
+    }
+
+    // ── System Critical Path Guard ────────────────────────────────────────────
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_etc_blocked() {
+        assert!(is_system_critical(Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_root_blocked() {
+        assert!(is_system_critical(Path::new("/")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_usr_bin_blocked() {
+        assert!(is_system_critical(Path::new("/usr/bin/sh")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_boot_blocked() {
+        assert!(is_system_critical(Path::new("/boot/grub/grub.cfg")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_proc_blocked() {
+        assert!(is_system_critical(Path::new("/proc/1/mem")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_home_allowed() {
+        assert!(!is_system_critical(Path::new("/home/alice/vault.json")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn test_critical_path_tmp_allowed() {
+        assert!(!is_system_critical(Path::new("/tmp/export.csv")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_critical_path_windows_system32_blocked() {
+        assert!(is_system_critical(Path::new("C:\\Windows\\System32")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_critical_path_windows_root_blocked() {
+        assert!(is_system_critical(Path::new("C:\\")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_critical_path_windows_user_allowed() {
+        assert!(!is_system_critical(Path::new(
+            "C:\\Users\\Alice\\Documents"
+        )));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_critical_path_d_drive_allowed() {
+        assert!(!is_system_critical(Path::new("D:\\Backups\\vault.qre")));
+    }
+
+    /// reject_critical_path combines traversal and system-critical checks.
+    /// A traversal toward a system path must fail on the first check alone.
+    #[test]
+    fn test_reject_critical_path_traversal_caught_first() {
+        assert!(
+            reject_critical_path(Path::new("/home/user/../../etc/shadow")).is_err(),
+            "Traversal toward a system path must be rejected"
+        );
+    }
+
+    // ── Compression Heuristic ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_compression_skipped_for_jpg() {
+        assert!(is_already_compressed("photo.jpg"));
+        assert!(is_already_compressed("photo.JPEG")); // Case-insensitive
+    }
+
+    #[test]
+    fn test_compression_skipped_for_video() {
+        assert!(is_already_compressed("clip.mp4"));
+        assert!(is_already_compressed("film.MKV"));
+        assert!(is_already_compressed("video.webm"));
+        assert!(is_already_compressed("old.avi"));
+    }
+
+    #[test]
+    fn test_compression_skipped_for_archives() {
+        assert!(is_already_compressed("backup.zip"));
+        assert!(is_already_compressed("data.7z"));
+        assert!(is_already_compressed("src.tar.gz")); // extension resolved as "gz"
+    }
+
+    #[test]
+    fn test_compression_skipped_for_audio() {
+        assert!(is_already_compressed("track.mp3"));
+        assert!(is_already_compressed("voice.aac"));
+        assert!(is_already_compressed("lossless.flac"));
+    }
+
+    #[test]
+    fn test_compression_skipped_for_pdf() {
+        assert!(is_already_compressed("report.pdf"));
+    }
+
+    #[test]
+    fn test_compression_applied_to_text() {
+        assert!(!is_already_compressed("notes.txt"));
+        assert!(!is_already_compressed("data.csv"));
+        assert!(!is_already_compressed("config.json"));
+        assert!(!is_already_compressed("source.rs"));
+    }
+
+    #[test]
+    fn test_compression_applied_to_office_docs() {
+        // .docx/.xlsx are zip-based internally, but absent from the skip list
+        assert!(!is_already_compressed("report.docx"));
+        assert!(!is_already_compressed("sheet.xlsx"));
+    }
+
+    #[test]
+    fn test_compression_applied_to_no_extension() {
+        assert!(!is_already_compressed("Makefile"));
+        assert!(!is_already_compressed(""));
+    }
+
+    // ── rename_item Input Validation ──────────────────────────────────────────
+
+    #[test]
+    fn test_rename_rejects_empty_name() {
+        let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "".into());
+        assert!(r.is_err(), "Empty rename must be rejected");
+    }
+
+    #[test]
+    fn test_rename_rejects_dot() {
+        let r = crate::commands::files::rename_item("/tmp/file.txt".into(), ".".into());
+        assert!(r.is_err(), "'.' as new name must be rejected");
+    }
+
+    #[test]
+    fn test_rename_rejects_dotdot() {
+        let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "..".into());
+        assert!(r.is_err(), "'..' as new name must be rejected");
+    }
+
+    #[test]
+    fn test_rename_rejects_slash_in_name() {
+        let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "sub/dir.txt".into());
+        assert!(r.is_err(), "Name containing '/' must be rejected");
+    }
+
+    #[test]
+    fn test_rename_rejects_backslash_in_name() {
+        let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "sub\\dir.txt".into());
+        assert!(r.is_err(), "Name containing '\\' must be rejected");
     }
 }
