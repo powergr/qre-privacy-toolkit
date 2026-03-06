@@ -15,7 +15,7 @@ use tauri::Emitter;
 
 // SECURITY LIMITS: Prevents the shredder from locking up the system or running out of memory.
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024 * 1024; // Limit to 10 GB per file
-const WARN_SIZE_THRESHOLD: u64 = 1 * 1024 * 1024 * 1024; // Warn the user if they try to shred > 1 GB
+const WARN_SIZE_THRESHOLD: u64 = 1024 * 1024 * 1024; // Warn the user if they try to shred > 1 GB
 const BUFFER_SIZE: usize = 1024 * 1024; // 1 MB buffer for efficient disk write operations
 
 // Global thread-safe flag to allow the user to abort the operation.
@@ -249,11 +249,11 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
                         None
                     };
 
-                    if warning.is_some() {
+                    if let Some(w) = &warning {
                         warnings.push(format!(
                             "{}: {}",
                             canonical.file_name().unwrap_or_default().to_string_lossy(),
-                            warning.as_ref().unwrap()
+                            w
                         ));
                     }
 
@@ -555,7 +555,7 @@ pub fn batch_shred<R: tauri::Runtime>(
     Ok(ShredResult {
         success,
         failed,
-        total_files: total_files,
+        total_files,
         total_bytes_shredded,
     })
 }

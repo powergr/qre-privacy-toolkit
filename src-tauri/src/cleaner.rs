@@ -610,11 +610,9 @@ fn strip_pdf(input: &Path, output: &Path) -> Result<()> {
     let mut keys_to_remove = Vec::new();
     for (id, object) in doc.objects.iter() {
         if let lopdf::Object::Stream(ref stream) = object {
-            if let Ok(type_obj) = stream.dict.get(b"Type") {
-                if let lopdf::Object::Name(name) = type_obj {
-                    if name == b"Metadata" {
-                        keys_to_remove.push(*id);
-                    }
+            if let Ok(lopdf::Object::Name(name)) = stream.dict.get(b"Type") {
+                if name == b"Metadata" {
+                    keys_to_remove.push(*id);
                 }
             }
         }

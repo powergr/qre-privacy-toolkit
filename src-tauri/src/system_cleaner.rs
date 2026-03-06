@@ -924,7 +924,7 @@ fn clear_clipboard() -> Result<(), String> {
         {
             use std::process::Command;
             Command::new("cmd")
-                .args(&["/C", "echo off | clip"])
+                .args(["/C", "echo off | clip"])
                 .output()
                 .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
             Ok(())

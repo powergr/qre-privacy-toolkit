@@ -29,7 +29,7 @@ pub enum ErrorCorrectionLevel {
 }
 
 impl ErrorCorrectionLevel {
-    fn to_qr_ecc(&self) -> QrCodeEcc {
+    fn to_qr_ecc(self) -> QrCodeEcc {
         match self {
             ErrorCorrectionLevel::Low => QrCodeEcc::Low,
             ErrorCorrectionLevel::Medium => QrCodeEcc::Medium,

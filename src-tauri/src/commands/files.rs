@@ -193,7 +193,7 @@ pub async fn lock_file(
             let level = match mode_str.as_str() {
                 "store" => 0,    // No compression
                 "extreme" => 19, // Max compression (slow)
-                "auto" | _ => {
+                _ => {
                     if is_already_compressed(&filename) {
                         1 // Minimal compression if the file format is already dense
                     } else {
@@ -233,7 +233,7 @@ pub async fn lock_file(
             let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
                 let mut hasher = Sha256::new();
                 hasher.update(bytes);
-                hasher.update(&(file_index as u64).to_le_bytes()); // Ensure different seed per file in batch
+                hasher.update((file_index as u64).to_le_bytes()); // Ensure different seed per file in batch
                 hasher.finalize().into()
             });
 
@@ -353,7 +353,7 @@ pub async fn unlock_file(
 
             // 4. Read the file's Magic Version Bytes to figure out how to decrypt it.
             let mut ver_buf = [0u8; 4];
-            if let Err(_) = file.read_exact(&mut ver_buf) {
+            if file.read_exact(&mut ver_buf).is_err() {
                 results.push(BatchItemResult {
                     name: filename,
                     success: false,
@@ -720,9 +720,7 @@ pub async fn batch_shred_files(
     // SECURITY CHECK: Pre-verify all paths in the batch before starting the shred operation.
     // We don't want to start shredding 3 valid files and accidentally shred C:\Windows on the 4th.
     for path in &paths {
-        if let Err(e) = reject_critical_path(Path::new(path)) {
-            return Err(e);
-        }
+        reject_critical_path(Path::new(path))?;
     }
 
     shredder::batch_shred(paths, method, &app_handle).map_err(|e| e.to_string())

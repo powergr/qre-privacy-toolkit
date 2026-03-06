@@ -98,7 +98,7 @@ pub fn analyze_content(text: &str) -> Option<String> {
     let card_regex = Regex::new(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}\b").unwrap();
     if card_regex.is_match(text) {
         let nums = text.chars().filter(|c| c.is_numeric()).count();
-        if nums >= 13 && nums <= 19 {
+        if (13..=19).contains(&nums) {
             return Some("Credit Card".to_string());
         }
     }
@@ -110,10 +110,10 @@ pub fn analyze_content(text: &str) -> Option<String> {
     }
 
     // 3. Cryptocurrency Addresses
-    if text.starts_with("0x") && text.len() == 42 {
-        if text[2..].chars().all(|c| c.is_ascii_hexdigit()) {
-            return Some("Crypto Address".to_string());
-        }
+    if text.starts_with("0x") && text.len() == 42
+        && text[2..].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Some("Crypto Address".to_string());
     }
     if text.len() >= 26 && text.len() <= 35 {
         let f = text.chars().next().unwrap_or(' ');
@@ -147,10 +147,10 @@ pub fn analyze_content(text: &str) -> Option<String> {
     let has_special = text.chars().any(|c| !c.is_alphanumeric());
     let has_space = text.contains(' ');
 
-    if !has_space && text.len() >= 8 {
-        if (has_upper && has_lower && has_digit) || (has_lower && has_digit && has_special) {
-            return Some("Password".to_string());
-        }
+    if !has_space && text.len() >= 8
+        && (has_special || has_upper) && has_digit && has_lower
+    {
+        return Some("Password".to_string());
     }
 
     // 6. Web Links

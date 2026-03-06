@@ -215,7 +215,18 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     // 1. Un-lock the file: Remove the OS Read-Only attribute if it's set
     let mut perms = fs::metadata(path)?.permissions();
     if perms.readonly() {
+        // On Unix, set_readonly(false) would make the file world-writable (0o666).
+        // We use PermissionsExt to set 0o600 (owner read/write only) instead.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o600);
+        }
+        // On Windows, set_readonly(false) is safe — no world-writable side-effect.
+        #[cfg(not(unix))]
+        #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);
+
         fs::set_permissions(path, perms)?;
     }
 

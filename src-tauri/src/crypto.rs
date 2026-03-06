@@ -83,7 +83,7 @@ fn derive_wrapping_key(
     keyfile_bytes: Option<&[u8]>,
 ) -> Zeroizing<[u8; 32]> {
     let mut hasher = Sha256::new();
-    hasher.update(&master_key.0);
+    hasher.update(master_key.0);
 
     if let Some(kb) = keyfile_bytes {
         hasher.update(b"KEYFILE_MIX");
@@ -251,7 +251,7 @@ pub fn decrypt_file_with_master_key(
     let file_key = Zeroizing::new(file_key_vec);
 
     let cipher_file =
-        Aes256Gcm::new_from_slice(&*file_key).map_err(|_| anyhow!("Invalid file key length"))?;
+        Aes256Gcm::new_from_slice(&file_key).map_err(|_| anyhow!("Invalid file key length"))?;
     let decrypted_blob = cipher_file
         .decrypt(
             Nonce::from_slice(&h.body_nonce),
