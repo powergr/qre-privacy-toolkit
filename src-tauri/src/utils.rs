@@ -236,7 +236,7 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
     // 2. Overwrite the file content with random garbage data (One pass)
     if len > 0 {
         let mut file = fs::OpenOptions::new().write(true).open(path)?;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Write in 16MB chunks. This is faster than 1MB chunks on modern NVMe drives.
         let chunk_size = 16 * 1024 * 1024;

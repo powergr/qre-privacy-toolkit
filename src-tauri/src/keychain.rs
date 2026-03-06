@@ -6,9 +6,9 @@ use aes_gcm::{
 };
 use anyhow::{anyhow, Context, Result};
 // Argon2id is currently the industry standard, cryptographically recommended Key Derivation Function (KDF).
-use argon2::password_hash::{rand_core::OsRng, SaltString};
+use argon2::password_hash::{rand_core::OsRng as Argon2OsRng, SaltString};
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
-use rand::RngCore;
+use rand::{rngs::OsRng, TryRngCore};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -142,11 +142,11 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
 
     // 2. Generate Truly Random Master Key
     let mut mk_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut mk_bytes);
+    OsRng.try_fill_bytes(&mut mk_bytes).expect("OS RNG failed");
     let master_key = MasterKey(mk_bytes);
 
     // 3. Prepare Password Slot (Slot 1)
-    let pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
+    let pass_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
 
     // pass_kek is auto-zeroized when this function ends
     let pass_kek = derive_kek(password, &pass_salt, mem, iter, par)?;
@@ -154,7 +154,9 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         Aes256Gcm::new_from_slice(&*pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut pass_nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut pass_nonce_bytes);
+    OsRng
+        .try_fill_bytes(&mut pass_nonce_bytes)
+        .expect("OS RNG failed");
 
     let enc_mk_pass = cipher_pass
         .encrypt(Nonce::from_slice(&pass_nonce_bytes), master_key.0.as_ref())
@@ -165,7 +167,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     let raw_recovery: String = (0..4)
         .map(|_| {
             let mut buf = [0u8; 2];
-            OsRng.fill_bytes(&mut buf);
+            OsRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
             let n = u16::from_le_bytes(buf);
             format!("{:04X}", n) // Format as uppercase hex
         })
@@ -173,7 +175,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         .join("-");
     let recovery_code = format!("QRE-{}", raw_recovery);
 
-    let rec_salt = SaltString::generate(&mut OsRng).as_str().to_string();
+    let rec_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
 
     // rec_kek is auto-zeroized when this function ends
     let rec_kek = derive_kek(&recovery_code, &rec_salt, mem, iter, par)?;
@@ -181,7 +183,9 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut rec_nonce_bytes);
+    OsRng
+        .try_fill_bytes(&mut rec_nonce_bytes)
+        .expect("OS RNG failed");
 
     let enc_mk_rec = cipher_rec
         .encrypt(Nonce::from_slice(&rec_nonce_bytes), master_key.0.as_ref())
@@ -291,7 +295,7 @@ pub fn recover_with_code(
     // `mk_bytes` drops and zeroizes here.
 
     // 2. Re-encrypt the extracted Master Key with the NEW Password (Slot 1).
-    let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
+    let new_pass_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
     let new_pass_kek = derive_kek(
         new_password,
         &new_pass_salt,
@@ -303,7 +307,9 @@ pub fn recover_with_code(
         Aes256Gcm::new_from_slice(&*new_pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut new_pass_nonce_bytes);
+    OsRng
+        .try_fill_bytes(&mut new_pass_nonce_bytes)
+        .expect("OS RNG failed");
 
     let new_enc_mk_pass = cipher_pass
         .encrypt(
@@ -335,7 +341,7 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
     let raw_recovery: String = (0..4)
         .map(|_| {
             let mut buf = [0u8; 2];
-            OsRng.fill_bytes(&mut buf);
+            OsRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
             let n = u16::from_le_bytes(buf);
             format!("{:04X}", n)
         })
@@ -344,7 +350,7 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
     let recovery_code = format!("QRE-{}", raw_recovery);
 
     // 2. Derive new KEK and Encrypt the active Master Key with the new code.
-    let rec_salt = SaltString::generate(&mut OsRng).as_str().to_string();
+    let rec_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
     let rec_kek = derive_kek(
         &recovery_code,
         &rec_salt,
@@ -356,7 +362,9 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
         Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut rec_nonce_bytes);
+    OsRng
+        .try_fill_bytes(&mut rec_nonce_bytes)
+        .expect("OS RNG failed");
     let rec_nonce = Nonce::from_slice(&rec_nonce_bytes);
 
     let enc_mk_rec = cipher_rec
@@ -381,7 +389,7 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
     // 1. Generate new Salt
-    let new_pass_salt = SaltString::generate(&mut OsRng).as_str().to_string();
+    let new_pass_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
 
     // 2. Derive new Key Encryption Key (KEK) using the new password.
     let new_pass_kek = derive_kek(
@@ -396,7 +404,9 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
 
     // 3. Encrypt the existing active Master Key with the new KEK
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut new_pass_nonce_bytes);
+    OsRng
+        .try_fill_bytes(&mut new_pass_nonce_bytes)
+        .expect("OS RNG failed");
 
     let new_enc_mk_pass = cipher_pass
         .encrypt(

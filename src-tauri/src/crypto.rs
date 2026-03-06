@@ -6,7 +6,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Context, Result};
-use rand::{rngs::OsRng, RngCore, SeedableRng};
+use rand::{rngs::OsRng, RngCore, SeedableRng, TryRngCore};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -146,7 +146,9 @@ pub fn encrypt_file_with_master_key(
     // 3. SECURITY UPGRADE: Entropy Mixing (Paranoid Mode Fix)
     // ---------------------------------------------------------
     let mut combined_seed = [0u8; 32];
-    OsRng.fill_bytes(&mut combined_seed); // Always start with OS-level Cryptographic RNG
+    OsRng
+        .try_fill_bytes(&mut combined_seed)
+        .expect("OS RNG failed"); // Always start with OS-level Cryptographic RNG
 
     if let Some(user_seed) = entropy_seed {
         // Mix the user's entropy into the OS entropy using XOR.

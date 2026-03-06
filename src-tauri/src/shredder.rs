@@ -394,7 +394,7 @@ fn write_pass<W: Read + Write + Seek>(
     // Rewind to the beginning of the file for every pass
     writer.seek(SeekFrom::Start(0))?;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut remaining = size;
 

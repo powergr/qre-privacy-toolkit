@@ -232,7 +232,7 @@ pub async fn get_public_ip_address() -> CommandResult<breach::IpResult> {
 #[tauri::command]
 pub fn generate_passphrase() -> String {
     // Uses a cryptographically secure random number generator (CSPRNG).
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // Generate exactly 6 words.
     (0..6)

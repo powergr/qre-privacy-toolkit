@@ -1,6 +1,7 @@
 [package]
 name = "qre-gui"
 version = "2.6.9"
+license = "MIT"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
 edition = "2021"
@@ -28,8 +29,8 @@ serde_json = "1"
 zip = "2.3.0"
 walkdir = "2"
 aes-gcm = "0.10"
-rand = "0.8"
-rand_chacha = "0.3"
+rand = "0.9"
+rand_chacha = "0.9"
 sha2 = "0.10"
 sha1 = "0.10"
 md-5 = "0.10"
