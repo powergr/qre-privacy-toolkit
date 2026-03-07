@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Full System Access",
+  "description": "Default capability",
   "local": true,
   "windows": ["main"],
   "permissions": [
@@ -45,17 +45,17 @@
       "allow": [
         "$APP_DATA/**",
         "$APP_CONFIG/**",
-        "$DOCUMENT/**",
-        "$DOWNLOAD/**",
-        "$DESKTOP/**",
-        "$PICTURE/**",
-        "$VIDEO/**",
-        "$AUDIO/**",
-        "/storage/emulated/0",
+        "$HOME/**",
+        "C:\\Users\\**",
         "/storage/emulated/0/**",
-        "/sdcard",
-        "/sdcard/**",
-        "**"
+        "/sdcard/**"
+      ],
+      "deny": [
+        "$HOME/.ssh/**",
+        "$HOME/.gnupg/**",
+        "$HOME/.aws/**",
+        "$HOME/AppData/Roaming/Microsoft/**",
+        "$HOME/AppData/Local/Microsoft/**"
       ]
     },
 

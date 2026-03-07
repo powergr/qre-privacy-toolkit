@@ -259,6 +259,18 @@ export function useFileSystem(view: string) {
     }
   }
 
+  async function goHome() {
+    try {
+      if (platform() === "android") {
+        loadDir("/storage/emulated/0");
+      } else {
+        loadDir(await homeDir());
+      }
+    } catch (e) {
+      console.error("Home dir failed", e);
+    }
+  }
+
   function goUp() {
     if (currentPath === "") return;
 
@@ -302,6 +314,7 @@ export function useFileSystem(view: string) {
     selectAll,
     clearSelection,
     handleSelection,
+    goHome,
     accessDenied, // Exported for UI
     setAccessDenied, // Exported for UI
   };

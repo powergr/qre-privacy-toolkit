@@ -5,12 +5,14 @@ interface AddressBarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
   onGoUp: () => void;
+  onGoHome: () => void;
 }
 
 export function AddressBar({
   currentPath,
   onNavigate,
   onGoUp,
+  onGoHome,
 }: AddressBarProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [tempPath, setTempPath] = useState(currentPath);
@@ -116,7 +118,7 @@ export function AddressBar({
               className={`crumb ${segments.length === 0 ? "active" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
-                onNavigate("");
+                onGoHome();
               }}
               style={{ display: "flex", alignItems: "center", paddingRight: 4 }}
             >

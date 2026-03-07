@@ -236,6 +236,7 @@ export function FilesView(props: FilesViewProps) {
       <AddressBar
         currentPath={fs.currentPath}
         onGoUp={fs.goUp}
+        onGoHome={fs.goHome}
         onNavigate={fs.loadDir}
       />
 
