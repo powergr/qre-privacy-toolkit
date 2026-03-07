@@ -145,7 +145,7 @@ pub async fn lock_file(
 ) -> CommandResult<Vec<BatchItemResult>> {
     // 1. Retrieve the master key from the active session state.
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked.".to_string()),
@@ -310,7 +310,7 @@ pub async fn unlock_file(
 ) -> CommandResult<Vec<BatchItemResult>> {
     // 1. Retrieve the master key from the active session state.
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked.".to_string()),

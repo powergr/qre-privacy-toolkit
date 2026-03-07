@@ -437,12 +437,9 @@ fn colors_too_similar(color1: &str, color2: &str) -> bool {
     let rgb1 = hex_to_rgb(color1);
     let rgb2 = hex_to_rgb(color2);
 
-    if rgb1.is_none() || rgb2.is_none() {
+    let (Some((r1, g1, b1)), Some((r2, g2, b2))) = (rgb1, rgb2) else {
         return false;
-    }
-
-    let (r1, g1, b1) = rgb1.unwrap();
-    let (r2, g2, b2) = rgb2.unwrap();
+    };
 
     // Calculate relative luminance
     let lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;

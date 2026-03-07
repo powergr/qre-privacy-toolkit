@@ -1,0 +1,16 @@
+# .github/workflows/fuzz.yml
+name: Fuzz
+on:
+  schedule:
+    - cron: "0 2 * * 1" # every Monday at 2am
+  workflow_dispatch: # or trigger manually from GitHub UI
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - run: cargo +nightly fuzz run fuzz_decrypt -- -max_total_time=300
+        working-directory: src-tauri

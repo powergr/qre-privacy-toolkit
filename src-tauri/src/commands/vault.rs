@@ -112,7 +112,7 @@ pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
 /// - "setup_needed" if no keychain exists (first-time launch).
 #[tauri::command]
 pub fn check_auth_status(app: AppHandle, state: tauri::State<SessionState>) -> String {
-    let guard = state.master_key.lock().unwrap();
+    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_some() {
         return "unlocked".to_string();
     }
@@ -142,7 +142,7 @@ pub fn init_vault(
         keychain::init_keychain(&path, &password).map_err(|e| e.to_string())?;
 
     // Store the decrypted master key securely in the active session memory.
-    let mut guard = state.master_key.lock().unwrap();
+    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(master_key);
 
     // Return the generated recovery code to display to the user once.
@@ -181,7 +181,7 @@ pub fn login(
             LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
 
             // Store the decrypted master key in the session.
-            let mut guard = state.master_key.lock().unwrap();
+            let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
             *guard = Some(master_key);
             Ok("Logged in".to_string())
         }
@@ -197,7 +197,7 @@ pub fn login(
 /// Wipes the master key from the application's active session memory, locking the app.
 #[tauri::command]
 pub fn logout(state: tauri::State<SessionState>) {
-    let mut guard = state.master_key.lock().unwrap();
+    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     *guard = None;
 }
 
@@ -208,7 +208,7 @@ pub fn change_user_password(
     new_password: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let guard = state.master_key.lock().unwrap();
+    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     let master_key = match &*guard {
         Some(mk) => mk,
         None => return Err("Vault is locked.".to_string()),
@@ -237,7 +237,7 @@ pub fn recover_vault(
     LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
 
     // Load the key into the active session
-    let mut guard = state.master_key.lock().unwrap();
+    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(master_key);
     Ok("Recovery successful. Password updated.".to_string())
 }
@@ -248,7 +248,7 @@ pub fn regenerate_recovery_code(
     app: AppHandle,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let guard = state.master_key.lock().unwrap();
+    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
     let master_key = match &*guard {
         Some(mk) => mk,
         None => return Err("Vault is locked. Cannot reset code.".to_string()),
@@ -271,7 +271,7 @@ pub fn load_password_vault(
 ) -> CommandResult<PasswordVault> {
     // 1. Verify app is unlocked
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -281,7 +281,7 @@ pub fn load_password_vault(
     // 2. Resolve path
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("passwords.qre");
 
     // Return an empty vault if the file doesn't exist yet
@@ -290,8 +290,10 @@ pub fn load_password_vault(
     }
 
     // 3. Load encrypted container, decrypt, and deserialize JSON
-    let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    let container = crypto::EncryptedFileContainer::load(
+        path.to_str().ok_or("Invalid path encoding".to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
     let vault: PasswordVault = serde_json::from_slice(&payload.content)
@@ -311,7 +313,7 @@ pub fn save_password_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -320,7 +322,7 @@ pub fn save_password_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("passwords.qre");
 
     // 2. Serialize to JSON bytes
@@ -339,7 +341,7 @@ pub fn save_password_vault(
 
     // 4. Write to disk
     container
-        .save(path.to_str().unwrap())
+        .save(path.to_str().ok_or("Invalid path encoding".to_string())?)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -356,7 +358,7 @@ pub fn load_notes_vault(
     state: tauri::State<SessionState>,
 ) -> CommandResult<NotesVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -364,13 +366,15 @@ pub fn load_notes_vault(
     };
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("notes.qre");
     if !path.exists() {
         return Ok(NotesVault::new());
     }
-    let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    let container = crypto::EncryptedFileContainer::load(
+        path.to_str().ok_or("Invalid path encoding".to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
     let vault: NotesVault = serde_json::from_slice(&payload.content)
@@ -388,7 +392,7 @@ pub fn save_notes_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -397,7 +401,7 @@ pub fn save_notes_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("notes.qre");
 
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
@@ -407,7 +411,7 @@ pub fn save_notes_vault(
             .map_err(|e| e.to_string())?;
 
     container
-        .save(path.to_str().unwrap())
+        .save(path.to_str().ok_or("Invalid path encoding".to_string())?)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -424,7 +428,7 @@ pub fn load_bookmarks_vault(
     state: tauri::State<SessionState>,
 ) -> CommandResult<BookmarksVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -433,15 +437,17 @@ pub fn load_bookmarks_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("bookmarks.qre");
 
     if !path.exists() {
         return Ok(BookmarksVault::new());
     }
 
-    let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    let container = crypto::EncryptedFileContainer::load(
+        path.to_str().ok_or("Invalid path encoding".to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
@@ -463,7 +469,7 @@ pub fn save_bookmarks_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -472,7 +478,7 @@ pub fn save_bookmarks_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("bookmarks.qre");
 
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
@@ -488,7 +494,7 @@ pub fn save_bookmarks_vault(
     .map_err(|e| e.to_string())?;
 
     container
-        .save(path.to_str().unwrap())
+        .save(path.to_str().ok_or("Invalid path encoding".to_string())?)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -532,7 +538,7 @@ pub fn load_clipboard_vault(
     retention_hours: u64,
 ) -> CommandResult<ClipboardVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -541,15 +547,17 @@ pub fn load_clipboard_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("clipboard.qre");
 
     if !path.exists() {
         return Ok(ClipboardVault::new());
     }
 
-    let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+    let container = crypto::EncryptedFileContainer::load(
+        path.to_str().ok_or("Invalid path encoding".to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
@@ -594,7 +602,7 @@ pub fn load_clipboard_vault(
         )
         .map_err(|e| e.to_string())?;
         container
-            .save(path.to_str().unwrap())
+            .save(path.to_str().ok_or("Invalid path encoding".to_string())?)
             .map_err(|e| e.to_string())?;
     }
 
@@ -611,7 +619,7 @@ pub fn save_clipboard_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap();
+        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -620,7 +628,7 @@ pub fn save_clipboard_vault(
 
     let path = resolve_keychain_path(&app)?
         .parent()
-        .unwrap()
+        .ok_or("Keychain path has no parent directory".to_string())?
         .join("clipboard.qre");
     let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
 
@@ -635,7 +643,7 @@ pub fn save_clipboard_vault(
     .map_err(|e| e.to_string())?;
 
     container
-        .save(path.to_str().unwrap())
+        .save(path.to_str().ok_or("Invalid path encoding".to_string())?)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
