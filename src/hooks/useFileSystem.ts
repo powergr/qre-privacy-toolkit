@@ -52,6 +52,9 @@ export function useFileSystem(view: string) {
     currentPathRef.current = currentPath;
   }, [currentPath]);
 
+  // platform() is synchronous in @tauri-apps/plugin-os
+  const platformRef = useRef<string>(platform());
+
   // --- SORTING ---
   const entries = useMemo(() => {
     const sorted = [...rawEntries].sort((a, b) => {
@@ -157,7 +160,7 @@ export function useFileSystem(view: string) {
         }
 
         const contents = await readDir(path);
-        const isWin = platform() === "windows" || path.includes("\\");
+        const isWin = platformRef.current === "windows" || path.includes("\\");
         const separator = isWin ? "\\" : "/";
 
         const mapped = await Promise.all(
@@ -228,7 +231,7 @@ export function useFileSystem(view: string) {
       } catch (e) {}
     }
 
-    if (platform() !== "android") {
+    if (platformRef.current !== "android") {
       startWatcher();
     }
 
@@ -248,7 +251,7 @@ export function useFileSystem(view: string) {
 
   async function loadInitialPath() {
     try {
-      if (platform() === "android") {
+      if (platformRef.current === "android") {
         loadDir("/storage/emulated/0");
       } else {
         loadDir(await homeDir());
@@ -261,7 +264,7 @@ export function useFileSystem(view: string) {
 
   async function goHome() {
     try {
-      if (platform() === "android") {
+      if (platformRef.current === "android") {
         loadDir("/storage/emulated/0");
       } else {
         loadDir(await homeDir());
@@ -274,7 +277,8 @@ export function useFileSystem(view: string) {
   function goUp() {
     if (currentPath === "") return;
 
-    const isWin = platform() === "windows" || currentPath.includes("\\");
+    const isWin =
+      platformRef.current === "windows" || currentPath.includes("\\");
     const separator = isWin ? "\\" : "/";
 
     if (isWin && currentPath.length <= 3 && currentPath.includes(":")) {
@@ -282,7 +286,9 @@ export function useFileSystem(view: string) {
       return;
     }
     if (currentPath === "/" || currentPath === "/storage/emulated/0") {
-      if (platform() === "android") return;
+      if (platformRef.current === "android") return;
+      // On Linux/macOS, "/" is the real root — stay here, no drives view
+      if (platformRef.current !== "windows") return;
       loadDir("");
       return;
     }

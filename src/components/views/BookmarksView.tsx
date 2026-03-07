@@ -14,7 +14,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useBookmarks, BookmarkEntry } from "../../hooks/useBookmarks";
-import { EntryDeleteModal, InfoModal } from "../modals/AppModals";
+import { EntryDeleteModal, InfoModal, ErrorModal } from "../modals/AppModals";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
@@ -59,6 +59,8 @@ export function BookmarksView() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [downloadWarnUrl, setDownloadWarnUrl] = useState<string | null>(null);
   const [isAndroid, setIsAndroid] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -76,13 +78,33 @@ export function BookmarksView() {
 
   // --- ACTIONS ---
 
-  const openLink = async (url: string) => {
+  const DOWNLOAD_EXTENSIONS =
+    /\.(exe|msi|dmg|pkg|deb|rpm|bat|cmd|sh|ps1|apk|zip|tar|gz|rar|7z|iso)(\?.*)?$/i;
+
+  const doOpenLink = async (url: string) => {
     try {
+      const urlLower = url.toLowerCase();
+      const DANGEROUS_SCHEMES = ["javascript:", "data:", "file:", "vbscript:"];
+      if (DANGEROUS_SCHEMES.some((s) => urlLower.startsWith(s))) {
+        setErrMsg(
+          `This bookmark uses a blocked URL scheme.\n\nOnly http:// and https:// links can be opened.\n\nURL: ${url}`,
+        );
+        return;
+      }
       let target = url;
-      if (!target.startsWith("http")) target = "https://" + target;
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target))
+        target = "https://" + target;
       await openUrl(target);
     } catch (e) {
-      setMsg("Error opening link: " + e);
+      setErrMsg("Error opening link: " + String(e));
+    }
+  };
+
+  const openLink = (url: string) => {
+    if (DOWNLOAD_EXTENSIONS.test(url)) {
+      setDownloadWarnUrl(url);
+    } else {
+      doOpenLink(url);
     }
   };
 
@@ -95,7 +117,7 @@ export function BookmarksView() {
       refreshVault();
     } catch (e) {
       setShowImportModal(false);
-      setMsg("Import failed: " + e);
+      setErrMsg("Import failed: " + e);
     } finally {
       setImportLoading(false);
     }
@@ -830,6 +852,86 @@ export function BookmarksView() {
       )}
 
       {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
+
+      {errMsg && (
+        <ErrorModal message={errMsg} onClose={() => setErrMsg(null)} />
+      )}
+
+      {downloadWarnUrl && (
+        <div
+          className="modal-overlay"
+          style={{ zIndex: 100006 }}
+          onClick={() => setDownloadWarnUrl(null)}
+        >
+          <div
+            className="auth-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 440 }}
+          >
+            <div
+              className="modal-header"
+              style={{ borderBottomColor: "#f97316" }}
+            >
+              <AlertTriangle size={20} color="#f97316" />
+              <h2 style={{ color: "#f97316" }}>Download Warning</h2>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: "var(--text-main)", lineHeight: 1.5 }}>
+                This link points directly to a file download:
+              </p>
+              <div
+                style={{
+                  background: "rgba(0,0,0,0.3)",
+                  padding: "10px 14px",
+                  borderRadius: 6,
+                  fontFamily: "monospace",
+                  fontSize: "0.8rem",
+                  color: "var(--text-dim)",
+                  wordBreak: "break-all",
+                  margin: "12px 0",
+                }}
+              >
+                {downloadWarnUrl}
+              </div>
+              <div
+                style={{
+                  background: "rgba(249,115,22,0.1)",
+                  border: "1px solid rgba(249,115,22,0.3)",
+                  borderRadius: 6,
+                  padding: "10px 14px",
+                  fontSize: "0.85rem",
+                  color: "#f97316",
+                  marginBottom: 16,
+                }}
+              >
+                <strong>Security Warning:</strong> Only open downloads from
+                sources you fully trust. Executable files can harm your
+                computer.
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  className="secondary-btn"
+                  style={{ flex: 1 }}
+                  onClick={() => setDownloadWarnUrl(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="auth-btn"
+                  style={{ flex: 1, background: "#f97316", border: "none" }}
+                  onClick={() => {
+                    const url = downloadWarnUrl;
+                    setDownloadWarnUrl(null);
+                    doOpenLink(url);
+                  }}
+                >
+                  Open Anyway
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

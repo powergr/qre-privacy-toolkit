@@ -86,8 +86,11 @@ export function useBookmarks() {
       if (!isValidUrl(normalizedUrl)) throw new Error("Invalid URL format.");
 
       const urlLower = normalizedUrl.toLowerCase();
-      if (urlLower.startsWith("javascript:") || urlLower.startsWith("data:")) {
-        throw new Error("Dangerous URL scheme detected.");
+      const DANGEROUS_SCHEMES = ["javascript:", "data:", "file:", "vbscript:"];
+      if (DANGEROUS_SCHEMES.some((s) => urlLower.startsWith(s))) {
+        throw new Error(
+          `Dangerous URL scheme detected. Allowed schemes: http, https, ftp.`,
+        );
       }
 
       const sanitizedBookmark = {

@@ -242,13 +242,16 @@ fn parse_node(
                 }
 
                 // ------------------------------------------------------------
-                // SECURITY CHECK: Reject Executable URIs
+                // SECURITY CHECK: Reject Executable and Local-File URIs
                 // ------------------------------------------------------------
                 // Attackers sometimes hide malicious scripts in bookmarks (bookmarklets).
-                // If a user clicks an imported javascript: URI, it could execute XSS
-                // in the context of the React frontend.
+                // file: URIs can open local executables. javascript:/data: can execute XSS.
                 let url_lower = url.to_lowercase();
-                if url_lower.starts_with("javascript:") || url_lower.starts_with("data:") {
+                if url_lower.starts_with("javascript:")
+                    || url_lower.starts_with("data:")
+                    || url_lower.starts_with("file:")
+                    || url_lower.starts_with("vbscript:")
+                {
                     continue; // Silently drop malicious/executable bookmarklets
                 }
 
