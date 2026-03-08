@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -20,10 +20,10 @@ import {
   RefreshCw,
   FolderSearch,
   FileText,
+  XCircle,
 } from "lucide-react";
 import { PasswordInput } from "../common/PasswordInput";
 
-// ... [KEEP YOUR EXISTING sha1Hex AND getPasswordStrength FUNCTIONS HERE] ...
 async function sha1Hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -54,19 +54,39 @@ function getPasswordStrength(pwd: string) {
   return { label: "Strong", color: "#22c55e", score: 3 };
 }
 
+// Fix #2: Proper type instead of any[]
+interface SecretFinding {
+  filename: string;
+  path: string;
+  category: string;
+}
+
+// Fix #8: Properly typed tab definitions with as const
+const TABS = [
+  { id: "local" as const, label: "Local Scanner" },
+  { id: "password" as const, label: "Password Breach" },
+  { id: "email" as const, label: "Email Breach" },
+  { id: "network" as const, label: "Network Security" },
+] satisfies { id: "local" | "password" | "email" | "network"; label: string }[];
+
+type TabId = (typeof TABS)[number]["id"];
+
 export function BreachView() {
-  const [activeTab, setActiveTab] = useState<
-    "local" | "password" | "email" | "network"
-  >("local");
+  const [activeTab, setActiveTab] = useState<TabId>("local");
 
   // --- LOCAL SCANNER STATE ---
   const [localLoading, setLocalLoading] = useState(false);
-  const [localFindings, setLocalFindings] = useState<any[] | null>(null);
+  const [localFindings, setLocalFindings] = useState<SecretFinding[] | null>(
+    null,
+  );
   const [currentScanPath, setCurrentScanPath] =
     useState<string>("Initializing...");
+  const [scanError, setScanError] = useState<string | null>(null); // Fix #1
+  const [scanCancelled, setScanCancelled] = useState(false); // Cancel button
   const scanUnlisten = useRef<(() => void) | null>(null);
+  const scanCancelledRef = useRef(false); // Cancel flag for async code
 
-  // --- EXISTING STATES (Password, Email, Network) ---
+  // --- PASSWORD STATE ---
   const [password, setPassword] = useState("");
   const [passLoading, setPassLoading] = useState(false);
   const [passResult, setPassResult] = useState<{
@@ -76,18 +96,47 @@ export function BreachView() {
   const [passError, setPassError] = useState<string | null>(null);
   const [lastCheckTime, setLastCheckTime] = useState(0);
   const [autoClearPassword, setAutoClearPassword] = useState(true);
+  const clearTimerRef = useRef<number | null>(null); // Fix #4
 
+  // --- EMAIL STATE ---
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
 
+  // --- NETWORK STATE ---
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [isWarp, setIsWarp] = useState(false);
   const [ipLoading, setIpLoading] = useState(false);
   const [ipService, setIpService] = useState("");
   const [copiedIp, setCopiedIp] = useState(false);
 
+  // Fix #3 + #4: Clean up listener and timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scanUnlisten.current) {
+        scanUnlisten.current();
+        scanUnlisten.current = null;
+      }
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    };
+  }, []);
+
+  // --- CANCEL SCAN ---
+  function cancelScan() {
+    scanCancelledRef.current = true;
+    setScanCancelled(true);
+    if (scanUnlisten.current) {
+      scanUnlisten.current();
+      scanUnlisten.current = null;
+    }
+    // Tell Rust to stop — invoke is fire-and-forget here, no await needed
+    invoke("cancel_secret_scan").catch(() => {});
+    setLocalLoading(false);
+    setCurrentScanPath("Scan cancelled.");
+  }
+
   // --- LOCAL SCAN LOGIC ---
   async function runLocalScan() {
+    if (localLoading) return; // Fix #5: guard against concurrent scans
     try {
       const selected = await open({
         directory: true,
@@ -96,13 +145,14 @@ export function BreachView() {
       if (selected && typeof selected === "string") {
         setLocalLoading(true);
         setLocalFindings(null);
+        setScanError(null);
+        setScanCancelled(false);
+        scanCancelledRef.current = false;
         setCurrentScanPath("Starting scan...");
 
-        // Listen for live progress from Rust
         scanUnlisten.current = await listen<string>(
           "secret-scan-progress",
           (event) => {
-            // We slice the path so it doesn't break the UI layout
             const shortPath =
               event.payload.length > 50
                 ? "..." + event.payload.slice(-47)
@@ -112,17 +162,34 @@ export function BreachView() {
         );
 
         try {
-          const res = await invoke<any[]>("scan_local_secrets", {
+          const res = await invoke<SecretFinding[]>("scan_local_secrets", {
             dirPath: selected,
           });
-          setLocalFindings(res);
+          // Only update findings if not cancelled
+          if (!scanCancelledRef.current) {
+            setLocalFindings(res);
+          }
         } catch (backendError) {
-          alert(backendError); // Shows the "Protected system directory" error
+          if (!scanCancelledRef.current) {
+            // Fix #1: Don't expose raw Rust errors — show a safe summary
+            const msg = String(backendError);
+            if (
+              msg.toLowerCase().includes("permission") ||
+              msg.toLowerCase().includes("access")
+            ) {
+              setScanError(
+                "Access denied: the selected folder contains protected system files.",
+              );
+            } else {
+              setScanError("Scan failed. Please try a different folder.");
+            }
+          }
         }
       }
     } catch (e) {
-      console.error(e);
-      alert("Scan failed: " + e);
+      if (!scanCancelledRef.current) {
+        setScanError("Could not open folder. Please try again.");
+      }
     } finally {
       setLocalLoading(false);
       if (scanUnlisten.current) {
@@ -132,7 +199,7 @@ export function BreachView() {
     }
   }
 
-  // --- EXISTING LOGIC ---
+  // --- PASSWORD LOGIC ---
   async function checkPassword() {
     const trimmedPassword = password.trim();
     if (!trimmedPassword) {
@@ -159,7 +226,11 @@ export function BreachView() {
         { sha1Hash: hash },
       );
       setPassResult(res);
-      if (autoClearPassword && res) setTimeout(() => setPassword(""), 3000);
+      // Fix #4: track timer so it can be cancelled on unmount
+      if (autoClearPassword && res) {
+        if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+        clearTimerRef.current = window.setTimeout(() => setPassword(""), 3000);
+      }
     } catch (e) {
       setPassError("Connection failed: " + String(e));
     } finally {
@@ -184,7 +255,8 @@ export function BreachView() {
     );
   }
 
-  async function checkIp() {
+  // Fix #7: useCallback for stable reference in useEffect
+  const checkIp = useCallback(async () => {
     setIpLoading(true);
     try {
       const res = await invoke<{
@@ -201,7 +273,7 @@ export function BreachView() {
     } finally {
       setIpLoading(false);
     }
-  }
+  }, []);
 
   async function copyIpAddress() {
     if (publicIp && publicIp !== "Unknown (Service unavailable)") {
@@ -211,9 +283,10 @@ export function BreachView() {
     }
   }
 
+  // Fix #7: complete dependency array
   useEffect(() => {
     if (activeTab === "network" && !publicIp) checkIp();
-  }, [activeTab]);
+  }, [activeTab, publicIp, checkIp]);
 
   return (
     <div
@@ -246,15 +319,10 @@ export function BreachView() {
             padding: "4px",
           }}
         >
-          {[
-            { id: "local", label: "Local Scanner" },
-            { id: "password", label: "Password Breach" },
-            { id: "email", label: "Email Breach" },
-            { id: "network", label: "Network Security" },
-          ].map((tab) => (
+          {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => setActiveTab(tab.id)}
               style={{
                 padding: "8px 20px",
                 borderRadius: "6px",
@@ -272,7 +340,7 @@ export function BreachView() {
         </div>
       </div>
 
-      {/* --- TAB 1: LOCAL SECRET SCANNER (NEW PRIMARY TOOL) --- */}
+      {/* --- TAB 1: LOCAL SECRET SCANNER --- */}
       {activeTab === "local" && (
         <div
           style={{
@@ -282,7 +350,6 @@ export function BreachView() {
             animation: "fadeIn 0.3s ease",
             display: "flex",
             flexDirection: "column",
-            // If there are no findings, push the content to the absolute center of the available space
             justifyContent:
               !localFindings && !localLoading ? "center" : "flex-start",
             flex: 1,
@@ -296,7 +363,6 @@ export function BreachView() {
                 textAlign: "center",
                 cursor: "pointer",
                 borderColor: "var(--accent)",
-                // FIX: Force Horizontal Centering
                 margin: "0 auto",
                 width: "100%",
                 maxWidth: 500,
@@ -314,6 +380,26 @@ export function BreachView() {
                 your unencrypted folders (.txt, .csv, .env).
               </p>
               <button className="auth-btn">Select Folder to Scan</button>
+
+              {/* Fix #1: show scan error inline instead of alert() */}
+              {scanError && (
+                <div
+                  style={{
+                    marginTop: 15,
+                    padding: 10,
+                    borderRadius: 6,
+                    background: "rgba(239, 68, 68, 0.1)",
+                    border: "1px solid rgba(239, 68, 68, 0.3)",
+                    color: "var(--btn-danger)",
+                    fontSize: "0.9rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <AlertTriangle size={16} /> {scanError}
+                </div>
+              )}
             </div>
           )}
 
@@ -353,10 +439,52 @@ export function BreachView() {
               >
                 &gt; {currentScanPath}
               </div>
+
+              {/* Cancel button */}
+              <button
+                onClick={cancelScan}
+                style={{
+                  marginTop: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 20px",
+                  borderRadius: 8,
+                  border: "1px solid var(--btn-danger)",
+                  background: "rgba(239, 68, 68, 0.08)",
+                  color: "var(--btn-danger)",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  fontSize: "0.9rem",
+                }}
+              >
+                <XCircle size={18} /> Cancel Scan
+              </button>
             </div>
           )}
 
-          {localFindings && (
+          {scanCancelled && !localLoading && (
+            <div style={{ textAlign: "center", padding: 40 }}>
+              <XCircle
+                size={48}
+                color="var(--text-dim)"
+                style={{ marginBottom: 15 }}
+              />
+              <h3 style={{ color: "var(--text-dim)" }}>Scan Cancelled</h3>
+              <button
+                className="auth-btn"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  setScanCancelled(false);
+                  setScanError(null);
+                }}
+              >
+                Scan Again
+              </button>
+            </div>
+          )}
+
+          {localFindings && !scanCancelled && (
             <div style={{ paddingBottom: 40 }}>
               <div
                 style={{
@@ -373,7 +501,10 @@ export function BreachView() {
                 </h3>
                 <button
                   className="secondary-btn"
-                  onClick={() => setLocalFindings(null)}
+                  onClick={() => {
+                    setLocalFindings(null);
+                    setScanError(null);
+                  }}
                 >
                   Scan Again
                 </button>
@@ -466,6 +597,7 @@ export function BreachView() {
           )}
         </div>
       )}
+
       {/* --- TAB 2: PASSWORD BREACH --- */}
       {activeTab === "password" && (
         <div
@@ -508,7 +640,6 @@ export function BreachView() {
                 autoFocus
               />
 
-              {/* FIX: Auto-clear checkbox */}
               <label
                 style={{
                   fontSize: "0.85rem",
@@ -550,7 +681,6 @@ export function BreachView() {
               </button>
             </div>
 
-            {/* FIX: Inline error display */}
             {passError && (
               <div
                 style={{
@@ -571,7 +701,6 @@ export function BreachView() {
             )}
           </div>
 
-          {/* PASSWORD RESULTS */}
           {passResult && (
             <div
               className="modern-card"
@@ -614,8 +743,6 @@ export function BreachView() {
                   <p style={{ color: "var(--text-main)", marginBottom: 10 }}>
                     Not found in public leaks.
                   </p>
-
-                  {/* FIX: Password strength indicator */}
                   {password &&
                     (() => {
                       const strength = getPasswordStrength(password);
@@ -662,7 +789,7 @@ export function BreachView() {
         </div>
       )}
 
-      {/* --- TAB 3: EMAIL BREACH (Option 1: Redirect to Website) --- */}
+      {/* --- TAB 3: EMAIL BREACH --- */}
       {activeTab === "email" && (
         <div
           style={{
@@ -673,12 +800,7 @@ export function BreachView() {
           }}
         >
           <div className="modern-card" style={{ padding: 30 }}>
-            <div
-              style={{
-                textAlign: "center",
-                marginBottom: 20,
-              }}
-            >
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
               <Mail
                 size={48}
                 style={{ color: "var(--accent)", marginBottom: 10 }}
@@ -730,7 +852,8 @@ export function BreachView() {
                     setEmail(e.target.value);
                     setEmailError(null);
                   }}
-                  onKeyPress={(e) => {
+                  // Fix #6: onKeyPress deprecated → onKeyDown
+                  onKeyDown={(e) => {
                     if (e.key === "Enter") checkEmailOnWebsite();
                   }}
                 />
@@ -749,7 +872,7 @@ export function BreachView() {
                 }}
               >
                 <ExternalLink size={20} />
-                Check on haveibeenpwned.com (Free & Secure)
+                Check on haveibeenpwned.com (Free &amp; Secure)
               </button>
 
               <p
@@ -768,7 +891,6 @@ export function BreachView() {
               </p>
             </div>
 
-            {/* FIX: Inline error display */}
             {emailError && (
               <div
                 style={{
@@ -789,7 +911,6 @@ export function BreachView() {
             )}
           </div>
 
-          {/* Information Card */}
           <div
             className="modern-card"
             style={{
@@ -836,7 +957,6 @@ export function BreachView() {
             animation: "fadeIn 0.3s ease",
           }}
         >
-          {/* IP STATUS CARD */}
           <div
             className="modern-card"
             style={{
@@ -873,7 +993,6 @@ export function BreachView() {
               {isWarp ? "Secure Connection" : "Unverified Network"}
             </h3>
 
-            {/* IP ADDRESS with Copy Button */}
             <div
               style={{
                 display: "flex",
@@ -896,17 +1015,12 @@ export function BreachView() {
                   publicIp || "---"
                 )}
               </div>
-
-              {/* FIX: Copy IP button */}
               {publicIp && publicIp !== "Unknown (Service unavailable)" && (
                 <button
                   onClick={copyIpAddress}
                   className="icon-btn-ghost"
                   title="Copy IP Address"
-                  style={{
-                    padding: 6,
-                    borderRadius: 4,
-                  }}
+                  style={{ padding: 6, borderRadius: 4 }}
                 >
                   {copiedIp ? (
                     <Check size={18} color="var(--success)" />
@@ -954,23 +1068,18 @@ export function BreachView() {
               }}
             >
               <span>Source: {ipService}</span>
-              {/* FIX: Refresh button */}
               <button
                 onClick={checkIp}
                 disabled={ipLoading}
                 className="icon-btn-ghost"
                 title="Refresh IP"
-                style={{
-                  padding: 4,
-                  borderRadius: 4,
-                }}
+                style={{ padding: 4, borderRadius: 4 }}
               >
                 <RefreshCw size={14} className={ipLoading ? "spinner" : ""} />
               </button>
             </div>
           </div>
 
-          {/* WARP RECOMMENDATION CARD */}
           {!isWarp && (
             <div
               className="modern-card"
@@ -1062,7 +1171,6 @@ export function BreachView() {
             </div>
           )}
 
-          {/* DISCLAIMER */}
           <p
             style={{
               textAlign: "center",

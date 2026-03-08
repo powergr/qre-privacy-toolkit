@@ -173,6 +173,7 @@ pub fn run() {
             commands::tools::check_password_breach,
             commands::tools::get_public_ip_address,
             commands::tools::scan_local_secrets,
+            commands::tools::cancel_secret_scan,
             // Generator
             commands::tools::generate_passphrase,
         ])

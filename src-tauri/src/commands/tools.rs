@@ -246,7 +246,12 @@ pub fn generate_passphrase() -> String {
 }
 
 use regex::Regex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
+
+/// Global cancellation flag for the secret scanner.
+/// Reset to `false` at the start of every scan, set to `true` by `cancel_secret_scan`.
+static SCAN_CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 #[derive(serde::Serialize)]
 pub struct SecretFinding {
@@ -255,17 +260,61 @@ pub struct SecretFinding {
     pub category: String,
 }
 
-fn is_safe_to_scan(path_str: &str) -> bool {
-    let lower = path_str.to_lowercase();
-    if cfg!(target_os = "windows") {
-        if lower.starts_with("c:\\windows") || lower.starts_with("c:\\program files") {
+const MAX_FINDINGS: usize = 500;
+
+/// Checks whether the RESOLVED, CANONICAL path is safe to scan.
+/// Called on both the root input AND every directory encountered during the walk.
+fn is_safe_to_scan(path: &std::path::Path) -> bool {
+    // Sensitive subdirectories to block even inside user home — covers all drives on Windows
+    #[cfg(target_os = "windows")]
+    {
+        let lower = path.to_string_lossy().to_lowercase();
+        let blocked = [
+            "\\windows\\",
+            "\\program files\\",
+            "\\program files (x86)\\",
+            "\\programdata\\",
+            "\\system32\\",
+            "\\syswow64\\",
+            // Credential stores inside AppData
+            "\\appdata\\roaming\\microsoft\\credentials",
+            "\\appdata\\roaming\\microsoft\\vault",
+            "\\appdata\\local\\microsoft\\credentials",
+            "\\appdata\\roaming\\gnupg",
+            "\\.ssh\\",
+            "\\.aws\\",
+            "\\.gnupg\\",
+        ];
+        if blocked.iter().any(|&b| lower.contains(b)) {
             return false;
         }
-    } else {
-        let critical = [
-            "/bin", "/sbin", "/usr", "/etc", "/var", "/boot", "/proc", "/sys", "/dev",
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let lower = path.to_string_lossy().to_lowercase();
+        let blocked = [
+            "/bin",
+            "/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/etc",
+            "/var",
+            "/boot",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/.ssh",
+            "/.aws",
+            "/.gnupg",
+            "/.config/google-chrome",
+            "/.mozilla",
+            "/library/keychains",
         ];
-        if critical.iter().any(|&c| lower.starts_with(c)) {
+        if blocked
+            .iter()
+            .any(|&b| lower.starts_with(b) || lower.contains(b))
+        {
             return false;
         }
     }
@@ -273,84 +322,255 @@ fn is_safe_to_scan(path_str: &str) -> bool {
 }
 
 fn is_scannable_extension(path: &std::path::Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-        let lower = ext.to_lowercase();
-        // Restrict to files where humans actually type secrets.
-        // Skipping .log files prevents 99% of false positives.
-        matches!(
-            lower.as_str(),
+    match path.extension().and_then(|s| s.to_str()) {
+        Some(ext) => matches!(
+            ext.to_lowercase().as_str(),
             "txt" | "md" | "csv" | "env" | "pem" | "key" | "ini" | "conf" | "json"
-        )
-    } else {
-        true
+        ),
+        // Files without extension are skipped (e.g. SAM, NTUSER.DAT, HOSTS)
+        None => false,
     }
 }
+
+/// Returns true if the filename looks like a placeholder/example file.
+/// These files exist specifically to show fake values — never real secrets.
+fn is_example_filename(path: &std::path::Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    // .env.example, config.sample.js, secrets.template, etc.
+    name.contains(".example")
+        || name.contains(".sample")
+        || name.contains(".template")
+        || name.contains(".placeholder")
+        || name == ".env.example"
+        || name == ".env.sample"
+}
+
+/// Returns true if the line is a comment — these almost never contain real secrets.
+fn is_comment_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("//")
+        || t.starts_with('#')
+        || t.starts_with('*')
+        || t.starts_with("<!--")
+        || t.starts_with("```") // markdown code fence labels
+}
+
+/// Returns true if the extracted value looks like a documentation placeholder.
+fn looks_like_placeholder(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    [
+        "your_",
+        "your-",
+        "yourkey",
+        "example",
+        "placeholder",
+        "changeme",
+        "replace",
+        "enter_",
+        "_here",
+        "xxxx",
+        "test",
+        "dummy",
+        "sample",
+        "process.env",
+        "env.",
+        "<",
+        ">",
+        "todo",
+        "fixme",
+        "insert",
+        "put_your",
+    ]
+    .iter()
+    .any(|&p| lower.contains(p))
+}
+
+/// Computes Shannon entropy of a string.
+/// Real secrets (random tokens, keys) have entropy > 3.5.
+/// Dictionary words, type names, and placeholders have entropy < 3.5.
+fn value_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    let mut freq = [0usize; 256];
+    for b in s.bytes() {
+        freq[b as usize] += 1;
+    }
+    let len = s.len() as f64;
+    freq.iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / len;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// Quickly checks first 512 bytes for null bytes — reliable binary file detection.
+fn looks_like_binary(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut buf = [0u8; 512];
+    match std::fs::File::open(path).and_then(|mut f| f.read(&mut buf)) {
+        Ok(n) => buf[..n].contains(&0u8),
+        Err(_) => true, // If we can't read it, skip it
+    }
+}
+
+/// Developer tool directories that are never user-authored and always generate
+/// enormous false positives. Skipped entirely via filter_entry (never descended into).
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "dist",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    ".output",
+    "target", // Rust build output
+    "__pycache__",
+    ".cache",
+    ".parcel-cache",
+    "vendor", // PHP / Go dependencies
+    ".venv",
+    "venv",
+    ".tox",
+    "coverage",
+    ".terraform",
+    ".gradle",
+    ".m2",        // Maven local repo
+    "Pods",       // iOS CocoaPods
+    ".pub-cache", // Dart/Flutter
+];
 
 #[tauri::command]
 pub async fn scan_local_secrets(
     dir_path: String,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<SecretFinding>, String> {
-    if !is_safe_to_scan(&dir_path) {
+    // Reset cancel flag for this new scan
+    SCAN_CANCEL_FLAG.store(false, Ordering::Relaxed);
+
+    // Canonicalize to resolve any ".." traversal before security checks
+    let canonical = std::fs::canonicalize(&dir_path)
+        .map_err(|_| "Could not resolve the selected directory.".to_string())?;
+
+    if !is_safe_to_scan(&canonical) {
         return Err("Protected system directories cannot be scanned.".to_string());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
         let mut findings = Vec::new();
-        let path = std::path::Path::new(&dir_path);
 
-        if !path.exists() || !path.is_dir() {
+        if !canonical.exists() || !canonical.is_dir() {
             return Err("Invalid directory".to_string());
         }
 
-        // Compile regexes ONCE outside the loop for massive performance
-        // Looks for: password=..., secret:..., api_key "..."
+        // Compile regexes ONCE outside the loop.
+        // Whitespace quantifier capped at {0,5} to prevent ReDoS.
+        // Capture group 2 captures the value so we can entropy-check it.
         let regex_credentials = Regex::new(
-            r"(?i)(password|secret|api_key|token|access_key)[\s]*[:=][\s]*[a-zA-Z0-9\-_]{8,}",
-        )
-        .unwrap();
-        // Stripe / Standard API Keys
-        let regex_api = Regex::new(r"(sk_live_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36})").unwrap();
-        // Crypto Wallets / Seed Phrases (12 words)
-        // A very basic heuristic: 12 words separated by spaces on a single line.
+            r#"(?i)(password|secret|api_key|token|access_key)[\s]{0,5}[:=][\s]{0,5}['"]?([a-zA-Z0-9\-_]{16,})['"]?"#,
+        ).unwrap();
+        // High-confidence specific key formats — no entropy check needed, format is unique
+        let regex_api = Regex::new(
+            r"(sk_live_[0-9a-zA-Z]{24,}|sk_test_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|AKIA[0-9A-Z]{16}|eyJ[a-zA-Z0-9_-]{20,}[.][a-zA-Z0-9_-]{20,})",
+        ).unwrap();
+        // Crypto seed phrases: exactly 12 lowercase BIP-39 words on a single line
         let regex_seed = Regex::new(r"^(?:[a-z]{3,}\s){11}[a-z]{3,}$").unwrap();
 
-        for entry in walkdir::WalkDir::new(path)
+        for entry in walkdir::WalkDir::new(&canonical)
             .max_depth(5)
+            .follow_links(false) // Never follow symlinks — prevents scope escapes
             .into_iter()
+            .filter_entry(|e| {
+                // filter_entry prunes entire directory subtrees — far more efficient
+                // than filter_map which still lists every entry before skipping
+                if e.file_type().is_dir() {
+                    let name = e.file_name().to_string_lossy().to_lowercase();
+                    return !SKIP_DIRS.iter().any(|&d| name == d);
+                }
+                true
+            })
             .filter_map(|e| e.ok())
         {
             let p = entry.path();
 
+            // Check cancellation before every file
+            if SCAN_CANCEL_FLAG.load(Ordering::Relaxed) {
+                break;
+            }
+
+            // Cap total findings to prevent UI freeze
+            if findings.len() >= MAX_FINDINGS {
+                break;
+            }
+
             if !p.is_file() {
                 continue;
             }
+
+            // Skip blocked subdirectories encountered during the walk
+            if !is_safe_to_scan(p) {
+                continue;
+            }
+
             if !is_scannable_extension(p) {
+                continue;
+            }
+
+            // Skip example/template/sample files — they contain fake values by design
+            if is_example_filename(p) {
                 continue;
             }
 
             if let Ok(metadata) = entry.metadata() {
                 if metadata.len() > 1024 * 1024 {
                     continue;
-                } // Skip > 1MB
+                }
+            }
+
+            // Check for binary content before reading entire file into memory
+            if looks_like_binary(p) {
+                continue;
             }
 
             let _ = app_handle.emit("secret-scan-progress", p.to_string_lossy().to_string());
 
-            if let Ok(content) = std::fs::read_to_string(p) {
+            if let Ok(file_content) = std::fs::read_to_string(p) {
                 let mut found_category = None;
 
-                // Scan line by line for precise matching
-                for line in content.lines() {
+                for line in file_content.lines() {
+                    // Skip comment lines — documentation never contains real secrets
+                    if is_comment_line(line) {
+                        continue;
+                    }
+
+                    // High-confidence API key formats — match immediately
                     if regex_api.is_match(line) {
                         found_category = Some("API Key");
                         break;
                     }
-                    if regex_credentials.is_match(line) {
-                        found_category = Some("Credential Pair");
-                        break;
+
+                    // Credential pairs — require entropy check on the captured value
+                    if let Some(caps) = regex_credentials.captures(line) {
+                        if let Some(val) = caps.get(2) {
+                            let v = val.as_str();
+                            if !looks_like_placeholder(v) && value_entropy(v) > 3.5 {
+                                found_category = Some("Credential Pair");
+                                break;
+                            }
+                        }
                     }
-                    if regex_seed.is_match(line) {
+
+                    // Seed phrases — structure is highly specific, no entropy check needed
+                    if regex_seed.is_match(line.trim()) {
                         found_category = Some("Crypto Seed Phrase");
                         break;
                     }
@@ -369,6 +589,13 @@ pub async fn scan_local_secrets(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Signals the secret scanner to stop after the current file and return partial results.
+#[tauri::command]
+pub async fn cancel_secret_scan() -> CommandResult<()> {
+    SCAN_CANCEL_FLAG.store(true, Ordering::Relaxed);
+    Ok(())
 }
 
 // --- END OF FILE tools.rs ---
