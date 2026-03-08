@@ -18,6 +18,7 @@ mod keychain;
 mod notes;
 mod passwords;
 mod qr;
+mod registry_cleaner;
 mod shredder;
 mod state;
 mod system_cleaner;
@@ -151,6 +152,10 @@ pub fn run() {
             commands::tools::clean_system_junk,
             commands::tools::dry_run_clean,
             commands::tools::cancel_system_clean,
+            // Registry Cleaner
+            commands::tools::scan_registry,
+            commands::tools::backup_registry,
+            commands::tools::clean_registry,
             // File Analyzer
             commands::tools::scan_directory_targets,
             // Metadata Cleaner

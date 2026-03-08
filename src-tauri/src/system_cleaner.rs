@@ -1,12 +1,9 @@
-// --- START OF FILE system_cleaner.rs.txt ---
-
 use anyhow::Result;
 use directories::BaseDirs;
-use rayon::prelude::*; // Parallel iterators for massive speedups when calculating directory sizes
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-// Atomics allow safe, fast state sharing across multiple threads (e.g., UI cancellation, progress counting)
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -16,11 +13,10 @@ use walkdir::WalkDir;
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MAX_TOTAL_SIZE: u64 = 50 * 1024 * 1024 * 1024; // Security/Safety limit: 50 GB max deletion per operation
-const MAX_DEPTH: usize = 10; // Max directory depth to traverse (prevents infinite symlink loops or deep nesting DOS)
-const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // Warn the user if they are about to delete > 10 GB
+const MAX_TOTAL_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB hard safety limit
+const MAX_DEPTH: usize = 10;
+const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // Warn at 10 GB
 
-// Global thread-safe cancellation flag. If true, running loops exit early.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -32,14 +28,18 @@ static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 pub struct JunkItem {
     pub id: String,
     pub name: String,
-    pub path: String, // Can be a standard file path OR a special command identifier (e.g., `::DNS_CACHE::`)
-    pub category: String, // "System", "Browser", "Developer", "Logs", "Network"
+    /// A standard file path OR a special command identifier e.g. `::DNS_CACHE::`.
+    pub path: String,
+    /// "System" | "Browser" | "Developer" | "Logs" | "Network" | "Privacy"
+    pub category: String,
     pub size: u64,
     pub description: String,
-    pub warning: Option<String>, // e.g., "Will require logging into websites again"
+    pub warning: Option<String>,
+    /// When true, the UI shows a shield icon and warns that admin/root privileges
+    /// are required. The OS will reject the operation gracefully if not elevated.
+    pub elevation_required: bool,
 }
 
-/// Progress event emitted continuously to the frontend during the deletion process.
 #[derive(Clone, Serialize)]
 pub struct CleanProgress {
     pub files_processed: u64,
@@ -49,7 +49,6 @@ pub struct CleanProgress {
     pub percentage: u8,
 }
 
-/// Final summary report generated when a cleaning operation finishes.
 #[derive(Serialize)]
 pub struct CleanResult {
     pub bytes_freed: u64,
@@ -57,7 +56,6 @@ pub struct CleanResult {
     pub errors: Vec<String>,
 }
 
-/// Simulation report generated when a user requests a "Dry Run".
 #[derive(Serialize)]
 pub struct DryRunResult {
     pub total_files: u64,
@@ -70,82 +68,111 @@ pub struct DryRunResult {
 // PATH VALIDATION (CRITICAL SECURITY)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Generates a strict whitelist of base directories that are universally considered "safe" to clean.
-///
-/// SECURITY IMPLEMENTATION:
-/// Even if a bug in the frontend requests the deletion of `C:\Windows\System32`,
-/// the backend will refuse to delete it because it is not inside one of these whitelisted paths.
+/// Builds a strict whitelist of directories that are safe to delete from.
+/// Even if the frontend sends a malicious path, the backend will reject it.
 fn get_whitelist() -> Vec<PathBuf> {
     let mut whitelist = Vec::new();
 
     if let Some(base_dirs) = BaseDirs::new() {
-        // General Temp directories
+        let home = base_dirs.home_dir();
+
+        // ── Temp directories ──────────────────────────────────────────────
         #[cfg(target_os = "windows")]
         {
-            if let Ok(temp) = std::env::var("TEMP") {
-                if let Ok(canonical) = fs::canonicalize(&temp) {
-                    whitelist.push(canonical);
-                }
-            }
-            if let Ok(tmp) = std::env::var("TMP") {
-                if let Ok(canonical) = fs::canonicalize(&tmp) {
-                    whitelist.push(canonical);
+            for var in &["TEMP", "TMP"] {
+                if let Ok(val) = std::env::var(var) {
+                    if let Ok(c) = fs::canonicalize(&val) {
+                        whitelist.push(c);
+                    }
                 }
             }
         }
-
         #[cfg(not(target_os = "windows"))]
         {
-            if let Ok(canonical) = fs::canonicalize("/tmp") {
-                whitelist.push(canonical);
+            if let Ok(c) = fs::canonicalize("/tmp") {
+                whitelist.push(c);
             }
         }
 
-        // Standard OS application cache directories
-        if let Ok(canonical) = fs::canonicalize(base_dirs.cache_dir()) {
-            whitelist.push(canonical);
+        // OS standard cache directory
+        if let Ok(c) = fs::canonicalize(base_dirs.cache_dir()) {
+            whitelist.push(c);
         }
 
+        // ── Windows-specific ──────────────────────────────────────────────
         #[cfg(target_os = "windows")]
         {
-            // Windows local app data (often holds unneeded caches)
-            if let Ok(canonical) = fs::canonicalize(base_dirs.data_local_dir()) {
-                whitelist.push(canonical);
+            // %LOCALAPPDATA% — browser caches, thumbnail cache, WER, npm, pip, etc.
+            if let Ok(c) = fs::canonicalize(base_dirs.data_local_dir()) {
+                whitelist.push(c);
             }
-        }
-
-        // Developer caches (usually nested inside the Home directory)
-        let home = base_dirs.home_dir();
-        let dev_caches = vec![".npm", ".cache", ".cargo/registry"];
-
-        for cache_dir in dev_caches {
-            let path = home.join(cache_dir);
-            if path.exists() {
-                if let Ok(canonical) = fs::canonicalize(&path) {
-                    whitelist.push(canonical);
+            // %APPDATA% (roaming) — WER\ReportArchive, Jump Lists, Search history
+            if let Ok(c) = fs::canonicalize(base_dirs.data_dir()) {
+                whitelist.push(c);
+            }
+            // Windows Update download cache (requires elevation to clean)
+            let upd = PathBuf::from(r"C:\Windows\SoftwareDistribution\Download");
+            if upd.exists() {
+                if let Ok(c) = fs::canonicalize(&upd) {
+                    whitelist.push(c);
                 }
             }
         }
 
-        // OS-Specific Privacy targets
-        #[cfg(target_os = "windows")]
-        {
-            // Windows Recent Files History
-            let recent = base_dirs.data_dir().join("Microsoft/Windows/Recent");
-            if recent.exists() {
-                if let Ok(canonical) = fs::canonicalize(&recent) {
-                    whitelist.push(canonical);
-                }
-            }
-        }
-
+        // ── macOS-specific ────────────────────────────────────────────────
         #[cfg(target_os = "macos")]
         {
-            // macOS System and App Logs
+            // ~/Library/Logs
             let logs = home.join("Library/Logs");
             if logs.exists() {
-                if let Ok(canonical) = fs::canonicalize(&logs) {
-                    whitelist.push(canonical);
+                if let Ok(c) = fs::canonicalize(&logs) {
+                    whitelist.push(c);
+                }
+            }
+            // ~/Library/Application Support — browser/dev caches stored there
+            let app_support = home.join("Library/Application Support");
+            if app_support.exists() {
+                if let Ok(c) = fs::canonicalize(&app_support) {
+                    whitelist.push(c);
+                }
+            }
+            // ~/Library/Developer — Xcode DerivedData
+            let developer = home.join("Library/Developer");
+            if developer.exists() {
+                if let Ok(c) = fs::canonicalize(&developer) {
+                    whitelist.push(c);
+                }
+            }
+        }
+
+        // ── Linux-specific ────────────────────────────────────────────────
+        #[cfg(target_os = "linux")]
+        {
+            // /var/crash — system crash dumps (elevation required)
+            let crash = PathBuf::from("/var/crash");
+            if crash.exists() {
+                if let Ok(c) = fs::canonicalize(&crash) {
+                    whitelist.push(c);
+                }
+            }
+        }
+
+        // ── Developer cache directories (home-dir based, cross-platform) ──
+        let dev_dirs = [
+            ".npm",
+            ".cache",
+            ".cargo/registry",
+            ".gradle/caches",
+            ".m2/repository",
+            "go/pkg/mod/cache",
+            ".local/share/pnpm/store",
+            ".composer/cache",
+        ];
+        for d in &dev_dirs {
+            let p = home.join(d);
+            if p.exists() {
+                if let Ok(c) = fs::canonicalize(&p) {
+                    whitelist.push(c);
                 }
             }
         }
@@ -154,52 +181,34 @@ fn get_whitelist() -> Vec<PathBuf> {
     whitelist
 }
 
-/// Enforces the whitelist and checks for malicious filesystem tricks.
-///
-/// SECURITY CHECKS:
-/// 1. Path must exist.
-/// 2. Path must not be a symlink itself.
-/// 3. Canonical path must start with one of the predefined whitelisted base directories.
 fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, String> {
-    // Immediately allow "Virtual Commands" (e.g. DNS Flush) to bypass filesystem checks.
+    // Virtual commands (::DNS_CACHE::, etc.) bypass filesystem checks entirely
     if path_str.starts_with("::") {
         return Ok(PathBuf::from(path_str));
     }
 
     let path = Path::new(path_str);
 
-    // 1. Path must exist
     if !path.exists() {
         return Err(format!("Path does not exist: {}", path_str));
     }
 
-    // 2. Check if it's a symlink BEFORE canonicalizing
-    // Prevents an attacker from placing a symlink in a safe folder that points to an unsafe folder.
+    // Check if symlink BEFORE canonicalizing — prevents symlink-in-safe-folder attacks
     match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
-                return Err(format!("Symlinks not allowed: {}", path_str));
-            }
+        Ok(m) if m.file_type().is_symlink() => {
+            return Err(format!("Symlinks not allowed: {}", path_str));
         }
-        Err(e) => {
-            return Err(format!("Cannot read path metadata: {}", e));
-        }
+        Err(e) => return Err(format!("Cannot read path metadata: {}", e)),
+        _ => {}
     }
 
-    // 3. Canonicalize (Resolves relative markers like `..`, `.`, and nested symlinks)
-    let canonical = match fs::canonicalize(path) {
-        Ok(p) => p,
-        Err(e) => {
-            return Err(format!("Cannot canonicalize path: {}", e));
-        }
-    };
+    let canonical =
+        fs::canonicalize(path).map_err(|e| format!("Cannot canonicalize path: {}", e))?;
 
-    // 4. Verify canonical path securely resides inside the whitelist sandbox
-    let is_whitelisted = whitelist
+    if !whitelist
         .iter()
-        .any(|allowed| canonical.starts_with(allowed) || canonical == *allowed);
-
-    if !is_whitelisted {
+        .any(|a| canonical.starts_with(a) || canonical == *a)
+    {
         return Err(format!("Path not in whitelist: {}", canonical.display()));
     }
 
@@ -210,11 +219,10 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
 // SYSTEM TARGETS DETECTION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Scans the operating system to build a list of available cleanup targets for the UI.
 pub fn get_system_targets() -> Vec<JunkItem> {
     let mut targets = Vec::new();
 
-    // --- VIRTUAL TARGETS (Commands executed, not files deleted) ---
+    // ── NETWORK (Virtual commands) ────────────────────────────────────────
     targets.push(JunkItem {
         id: uuid::Uuid::new_v4().to_string(),
         name: "DNS Cache".to_string(),
@@ -222,23 +230,92 @@ pub fn get_system_targets() -> Vec<JunkItem> {
         category: "Network".to_string(),
         size: 0,
         description: "Flush OS DNS resolver cache to remove network traces.".to_string(),
-        warning: Some("May temporarily slow down first website loads.".to_string()),
+        warning: Some("May temporarily slow first website loads.".to_string()),
+        elevation_required: false,
     });
 
+    // ── PRIVACY (Virtual commands) ────────────────────────────────────────
     targets.push(JunkItem {
         id: uuid::Uuid::new_v4().to_string(),
         name: "System Clipboard".to_string(),
         path: "::CLIPBOARD::".to_string(),
-        category: "System".to_string(),
+        category: "Privacy".to_string(),
         size: 0,
         description: "Clear current copied text/data from memory.".to_string(),
         warning: None,
+        elevation_required: false,
+    });
+
+    targets.push(JunkItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "Bash History".to_string(),
+        path: "::CLEAR_BASH_HISTORY::".to_string(),
+        category: "Privacy".to_string(),
+        size: 0,
+        description: "Erase all recorded bash terminal command history.".to_string(),
+        warning: Some("Permanently erases your entire bash command history.".to_string()),
+        elevation_required: false,
+    });
+
+    targets.push(JunkItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "Zsh History".to_string(),
+        path: "::CLEAR_ZSH_HISTORY::".to_string(),
+        category: "Privacy".to_string(),
+        size: 0,
+        description: "Erase all recorded zsh terminal command history.".to_string(),
+        warning: Some("Permanently erases your entire zsh command history.".to_string()),
+        elevation_required: false,
+    });
+
+    // ── SYSTEM (OS-specific virtual commands) ─────────────────────────────
+    #[cfg(target_os = "windows")]
+    {
+        targets.push(JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Recycle Bin".to_string(),
+            path: "::RECYCLE_BIN::".to_string(),
+            category: "System".to_string(),
+            size: 0,
+            description: "Permanently empty the Windows Recycle Bin.".to_string(),
+            warning: Some("Deleted files cannot be recovered after emptying.".to_string()),
+            elevation_required: false,
+        });
+        targets.push(JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Thumbnail Cache".to_string(),
+            path: "::WINDOWS_THUMBNAIL_CACHE::".to_string(),
+            category: "System".to_string(),
+            size: 0,
+            description:
+                "Remove Explorer thumbcache_*.db files. Rebuilt automatically on next browse."
+                    .to_string(),
+            warning: None,
+            elevation_required: false,
+        });
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    targets.push(JunkItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "Trash".to_string(),
+        path: "::TRASH::".to_string(),
+        category: "System".to_string(),
+        size: 0,
+        description: "Permanently empty the system Trash.".to_string(),
+        warning: Some("Deleted files cannot be recovered after emptying.".to_string()),
+        elevation_required: false,
     });
 
     if let Some(base_dirs) = BaseDirs::new() {
-        // --- WINDOWS TARGETS ---
+        let home = base_dirs.home_dir();
+
+        // ── WINDOWS path-based targets ────────────────────────────────────
         #[cfg(target_os = "windows")]
         {
+            let local = base_dirs.data_local_dir();
+            let appdata = base_dirs.data_dir();
+
             let temp = std::env::var("TEMP").unwrap_or_default();
             if !temp.is_empty() {
                 add_target(
@@ -248,26 +325,92 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                     "System",
                     "Temporary system files",
                     None,
+                    false,
                 );
             }
 
-            let recent = base_dirs
-                .data_dir()
-                .join("Microsoft")
-                .join("Windows")
-                .join("Recent");
+            // Windows Error Reports
+            let wer_archive = appdata.join("Microsoft/Windows/WER/ReportArchive");
             add_target(
                 &mut targets,
-                "Recent Files",
-                recent.to_str().unwrap(),
+                "Error Report Archive",
+                wer_archive.to_str().unwrap(),
                 "System",
-                "File history shortcuts",
-                Some("Will clear jump list and recent file history.".to_string()),
+                "Archived Windows crash and error reports",
+                None,
+                false,
             );
 
-            // Browser Caches (Hardcoded standard installation paths)
-            let local_app_data = base_dirs.data_local_dir();
-            let browsers = vec![
+            let wer_queue = appdata.join("Microsoft/Windows/WER/ReportQueue");
+            add_target(
+                &mut targets,
+                "Error Report Queue",
+                wer_queue.to_str().unwrap(),
+                "System",
+                "Pending Windows crash and error reports",
+                None,
+                false,
+            );
+
+            // Windows Update download cache (elevation required)
+            let upd = PathBuf::from(r"C:\Windows\SoftwareDistribution\Download");
+            add_target(
+                &mut targets,
+                "Windows Update Cache",
+                upd.to_str().unwrap(),
+                "System",
+                "Downloaded update packages — safe to clean when Windows Update is idle",
+                Some("Do not clean while Windows Update is actively running.".to_string()),
+                true,
+            );
+
+            // Privacy targets
+            let recent = appdata.join("Microsoft/Windows/Recent");
+            add_target(
+                &mut targets,
+                "Recent Files (MRU)",
+                recent.to_str().unwrap(),
+                "Privacy",
+                "File history shortcuts tracked by Windows",
+                Some("Clears jump list and recent file history.".to_string()),
+                false,
+            );
+
+            let jump_auto = appdata.join("Microsoft/Windows/Recent/AutomaticDestinations");
+            add_target(
+                &mut targets,
+                "Jump List — Recent",
+                jump_auto.to_str().unwrap(),
+                "Privacy",
+                "Recently accessed documents tracked in taskbar jump lists",
+                None,
+                false,
+            );
+
+            let jump_custom = appdata.join("Microsoft/Windows/Recent/CustomDestinations");
+            add_target(
+                &mut targets,
+                "Jump List — Pinned",
+                jump_custom.to_str().unwrap(),
+                "Privacy",
+                "Pinned items in taskbar jump lists",
+                None,
+                false,
+            );
+
+            let search = local.join("Microsoft/Windows/Explorer");
+            add_target(
+                &mut targets,
+                "Search History",
+                search.to_str().unwrap(),
+                "Privacy",
+                "Windows Explorer search history entries",
+                None,
+                false,
+            );
+
+            // Browser caches (Windows)
+            let browsers = [
                 ("Google/Chrome/User Data/Default/Cache", "Chrome Cache"),
                 ("Microsoft/Edge/User Data/Default/Cache", "Edge Cache"),
                 (
@@ -275,25 +418,33 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                     "Brave Cache",
                 ),
                 ("Mozilla/Firefox/Profiles", "Firefox Cache"),
+                (
+                    "Opera Software/Opera Stable/Cache/Cache_Data",
+                    "Opera Cache",
+                ),
+                (
+                    "Opera Software/Opera GX Stable/Cache/Cache_Data",
+                    "Opera GX Cache",
+                ),
+                ("Vivaldi/User Data/Default/Cache", "Vivaldi Cache"),
             ];
-
-            for (subpath, name) in browsers {
-                let p = local_app_data.join(subpath);
+            for (subpath, name) in &browsers {
+                let p = local.join(subpath);
                 add_target(
                     &mut targets,
                     name,
                     p.to_str().unwrap(),
                     "Browser",
                     "Web browsing cache",
-                    Some("Close browser before cleaning.".to_string()),
+                    Some("Close the browser before cleaning.".to_string()),
+                    false,
                 );
             }
         }
 
-        // --- MACOS TARGETS ---
+        // ── MACOS path-based targets ──────────────────────────────────────
         #[cfg(target_os = "macos")]
         {
-            let home = base_dirs.home_dir();
             let cache = base_dirs.cache_dir();
 
             add_target(
@@ -303,6 +454,7 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                 "System",
                 "Application cache files",
                 None,
+                false,
             );
 
             let logs = home.join("Library/Logs");
@@ -311,103 +463,331 @@ pub fn get_system_targets() -> Vec<JunkItem> {
                 "User Logs",
                 logs.to_str().unwrap(),
                 "Logs",
-                "System and app log files",
-                Some("May affect troubleshooting.".to_string()),
+                "System and application log files",
+                Some("May affect troubleshooting ability.".to_string()),
+                false,
             );
 
-            let chrome = home.join("Library/Caches/Google/Chrome/Default/Cache");
+            let crash = home.join("Library/Application Support/CrashReporter");
             add_target(
                 &mut targets,
-                "Chrome Cache",
-                chrome.to_str().unwrap(),
-                "Browser",
-                "Web browsing cache",
-                Some("Close Chrome before cleaning.".to_string()),
+                "Crash Reports",
+                crash.to_str().unwrap(),
+                "System",
+                "Application crash logs and diagnostic reports",
+                None,
+                false,
             );
 
-            let safari = home.join("Library/Caches/com.apple.Safari");
+            // Privacy
+            let recent = home.join("Library/Application Support/com.apple.sharedfilelist");
             add_target(
                 &mut targets,
-                "Safari Cache",
-                safari.to_str().unwrap(),
-                "Browser",
-                "Web browsing cache",
-                Some("Close Safari before cleaning.".to_string()),
+                "Recent Items",
+                recent.to_str().unwrap(),
+                "Privacy",
+                "Recently opened files and apps tracked by macOS Finder",
+                Some("Clears the Recent Items menu in Finder and applications.".to_string()),
+                false,
+            );
+
+            // Browser caches (macOS)
+            let browsers: &[(&str, &str)] = &[
+                ("Library/Caches/Google/Chrome/Default/Cache", "Chrome Cache"),
+                ("Library/Caches/com.apple.Safari", "Safari Cache"),
+                ("Library/Caches/Firefox/Profiles", "Firefox Cache"),
+                (
+                    "Library/Application Support/BraveSoftware/Brave-Browser/Default/Cache",
+                    "Brave Cache",
+                ),
+                ("Library/Caches/com.operasoftware.Opera", "Opera Cache"),
+                (
+                    "Library/Application Support/Vivaldi/Default/Cache",
+                    "Vivaldi Cache",
+                ),
+                (
+                    "Library/Caches/Company/Arc/User Data/Default/Cache",
+                    "Arc Cache",
+                ),
+            ];
+            for (subpath, name) in browsers {
+                let p = home.join(subpath);
+                add_target(
+                    &mut targets,
+                    name,
+                    p.to_str().unwrap(),
+                    "Browser",
+                    "Web browsing cache",
+                    Some("Close the browser before cleaning.".to_string()),
+                    false,
+                );
+            }
+
+            // Developer — macOS-specific
+            let cocoapods = home.join("Library/Caches/CocoaPods");
+            add_target(
+                &mut targets,
+                "CocoaPods Cache",
+                cocoapods.to_str().unwrap(),
+                "Developer",
+                "CocoaPods dependency download cache",
+                Some("Will require re-fetching pods on next pod install.".to_string()),
+                false,
+            );
+
+            let homebrew = home.join("Library/Caches/Homebrew");
+            add_target(
+                &mut targets,
+                "Homebrew Cache",
+                homebrew.to_str().unwrap(),
+                "Developer",
+                "Homebrew package download cache",
+                Some("Will require re-downloading bottles on next brew install.".to_string()),
+                false,
+            );
+
+            let jetbrains = home.join("Library/Caches/JetBrains");
+            add_target(
+                &mut targets,
+                "JetBrains IDE Caches",
+                jetbrains.to_str().unwrap(),
+                "Developer",
+                "IntelliJ IDEA, WebStorm, PyCharm, etc. index caches",
+                Some("IDEs will re-index projects on next launch (may be slow).".to_string()),
+                false,
+            );
+
+            let xcode = home.join("Library/Developer/Xcode/DerivedData");
+            add_target(
+                &mut targets,
+                "Xcode DerivedData",
+                xcode.to_str().unwrap(),
+                "Developer",
+                "Xcode build output and intermediate compile files",
+                Some("Will require a full rebuild of all Xcode projects.".to_string()),
+                false,
             );
         }
 
-        // --- DEVELOPER CACHES (Cross-Platform) ---
-        let home = base_dirs.home_dir();
+        // ── LINUX path-based targets ──────────────────────────────────────
+        #[cfg(target_os = "linux")]
+        {
+            let crash = PathBuf::from("/var/crash");
+            add_target(
+                &mut targets,
+                "Crash Dumps",
+                crash.to_str().unwrap(),
+                "System",
+                "System-wide application crash dump files",
+                Some("Requires administrator privileges to delete.".to_string()),
+                true,
+            );
 
-        // NPM CACHE (Checks multiple common locations depending on OS and Node configuration)
-        let npm_locations = vec![
+            let linux_browsers: &[(&str, &str)] = &[
+                (".cache/google-chrome/Default/Cache", "Chrome Cache"),
+                (".cache/chromium/Default/Cache", "Chromium Cache"),
+                (".cache/mozilla/firefox", "Firefox Cache"),
+                (
+                    ".cache/BraveSoftware/Brave-Browser/Default/Cache",
+                    "Brave Cache",
+                ),
+                (".cache/opera/Cache", "Opera Cache"),
+                (".cache/vivaldi/Default/Cache", "Vivaldi Cache"),
+            ];
+            for (subpath, name) in linux_browsers {
+                let p = home.join(subpath);
+                add_target(
+                    &mut targets,
+                    name,
+                    p.to_str().unwrap(),
+                    "Browser",
+                    "Web browsing cache",
+                    Some("Close the browser before cleaning.".to_string()),
+                    false,
+                );
+            }
+
+            let jb = home.join(".cache/JetBrains");
+            add_target(
+                &mut targets,
+                "JetBrains IDE Caches",
+                jb.to_str().unwrap(),
+                "Developer",
+                "IntelliJ IDEA, WebStorm, PyCharm, etc. index caches",
+                Some("IDEs will re-index projects on next launch.".to_string()),
+                false,
+            );
+        }
+
+        // ── DEVELOPER CACHES (Cross-Platform) ────────────────────────────
+
+        // NPM — check multiple common locations
+        let npm_locations = [
             home.join(".npm"),
             base_dirs.data_dir().join("npm-cache"),
             base_dirs.data_local_dir().join("npm-cache"),
             base_dirs.cache_dir().join("npm"),
         ];
-
-        let mut npm_found = false;
-        for path in npm_locations {
-            if path.exists() && !npm_found {
+        for path in npm_locations.iter() {
+            if path.exists() {
                 add_target(
                     &mut targets,
                     "NPM Cache",
                     path.to_str().unwrap(),
                     "Developer",
-                    "Node.js package cache",
-                    Some("Will require re-downloading packages.".to_string()),
+                    "Node.js package download cache",
+                    Some("Will require re-downloading packages on next npm install.".to_string()),
+                    false,
                 );
-                npm_found = true;
+                break; // Only add once
             }
         }
 
-        // YARN CACHE
+        // YARN
         #[cfg(target_os = "windows")]
         let yarn = base_dirs.data_local_dir().join("Yarn/Cache");
         #[cfg(not(target_os = "windows"))]
         let yarn = home.join(".cache/yarn");
-
         add_target(
             &mut targets,
             "Yarn Cache",
             yarn.to_str().unwrap(),
             "Developer",
-            "Yarn package cache",
+            "Yarn package manager download cache",
             Some("Will slow down next yarn install.".to_string()),
+            false,
         );
 
-        // CARGO CACHE
+        // PNPM
+        #[cfg(target_os = "windows")]
+        let pnpm = base_dirs.data_local_dir().join("pnpm/store");
+        #[cfg(not(target_os = "windows"))]
+        let pnpm = home.join(".local/share/pnpm/store");
+        add_target(
+            &mut targets,
+            "pnpm Store",
+            pnpm.to_str().unwrap(),
+            "Developer",
+            "pnpm content-addressable package store",
+            Some("Will require re-downloading packages on next pnpm install.".to_string()),
+            false,
+        );
+
+        // CARGO
         let cargo = home.join(".cargo/registry");
         add_target(
             &mut targets,
             "Cargo Registry",
             cargo.to_str().unwrap(),
             "Developer",
-            "Rust crate registry cache",
-            Some("Will force re-downloading crates.".to_string()),
+            "Rust crate registry download cache",
+            Some("Will force re-downloading all crates on next cargo build.".to_string()),
+            false,
         );
 
-        // PIP CACHE
+        // PIP
         #[cfg(target_os = "windows")]
         let pip = base_dirs.data_local_dir().join("pip/Cache");
         #[cfg(not(target_os = "windows"))]
         let pip = home.join(".cache/pip");
-
         add_target(
             &mut targets,
             "Pip Cache",
             pip.to_str().unwrap(),
             "Developer",
-            "Python package cache",
+            "Python pip package download cache",
             Some("Will slow down next pip install.".to_string()),
+            false,
+        );
+
+        // GRADLE
+        let gradle = home.join(".gradle/caches");
+        add_target(
+            &mut targets,
+            "Gradle Cache",
+            gradle.to_str().unwrap(),
+            "Developer",
+            "Gradle build system dependency and transform cache",
+            Some("Will require re-downloading Gradle dependencies on next build.".to_string()),
+            false,
+        );
+
+        // MAVEN
+        let maven = home.join(".m2/repository");
+        add_target(
+            &mut targets,
+            "Maven Repository",
+            maven.to_str().unwrap(),
+            "Developer",
+            "Maven local artifact repository cache",
+            Some("Will require re-downloading all Maven artifacts.".to_string()),
+            false,
+        );
+
+        // GO MODULE CACHE
+        let go_mod = home.join("go/pkg/mod/cache");
+        add_target(
+            &mut targets,
+            "Go Module Cache",
+            go_mod.to_str().unwrap(),
+            "Developer",
+            "Go module download cache",
+            Some("Will require re-downloading Go modules on next go build.".to_string()),
+            false,
+        );
+
+        // COMPOSER (PHP)
+        #[cfg(target_os = "windows")]
+        let composer = base_dirs.data_local_dir().join("Composer/cache");
+        #[cfg(not(target_os = "windows"))]
+        let composer = home.join(".composer/cache");
+        add_target(
+            &mut targets,
+            "Composer Cache",
+            composer.to_str().unwrap(),
+            "Developer",
+            "PHP Composer dependency download cache",
+            Some("Will require re-downloading PHP packages on next composer install.".to_string()),
+            false,
+        );
+
+        // JETBRAINS — Windows (macOS and Linux handled above in platform blocks)
+        #[cfg(target_os = "windows")]
+        {
+            let jb = base_dirs.data_local_dir().join("JetBrains");
+            add_target(
+                &mut targets,
+                "JetBrains IDE Caches",
+                jb.to_str().unwrap(),
+                "Developer",
+                "IntelliJ IDEA, WebStorm, PyCharm, etc. index caches",
+                Some("IDEs will re-index projects on next launch (may be slow).".to_string()),
+                false,
+            );
+        }
+
+        // VS CODE WORKSPACE STORAGE
+        #[cfg(target_os = "windows")]
+        let vscode = base_dirs.data_dir().join("Code/User/workspaceStorage");
+        #[cfg(target_os = "macos")]
+        let vscode = home.join("Library/Application Support/Code/User/workspaceStorage");
+        #[cfg(target_os = "linux")]
+        let vscode = home.join(".config/Code/User/workspaceStorage");
+        add_target(
+            &mut targets,
+            "VS Code Workspace Storage",
+            vscode.to_str().unwrap(),
+            "Developer",
+            "Stale per-project VS Code extension data and caches",
+            Some("VS Code will recreate workspace storage on next project open.".to_string()),
+            false,
         );
     }
 
     targets
 }
 
-/// Helper function to build the Item and insert it into the targets vector if the path exists.
+/// Adds a target to the list only if the path exists and is not already present.
 fn add_target(
     list: &mut Vec<JunkItem>,
     name: &str,
@@ -415,20 +795,19 @@ fn add_target(
     cat: &str,
     desc: &str,
     warning: Option<String>,
+    elevation_required: bool,
 ) {
-    if Path::new(path).exists() {
-        // Prevent duplicate entries
-        if !list.iter().any(|x| x.path == path) {
-            list.push(JunkItem {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: name.to_string(),
-                path: path.to_string(),
-                category: cat.to_string(),
-                size: 0, // Calculated dynamically later
-                description: desc.to_string(),
-                warning,
-            });
-        }
+    if Path::new(path).exists() && !list.iter().any(|x| x.path == path) {
+        list.push(JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            path: path.to_string(),
+            category: cat.to_string(),
+            size: 0,
+            description: desc.to_string(),
+            warning,
+            elevation_required,
+        });
     }
 }
 
@@ -436,51 +815,33 @@ fn add_target(
 // SCANNING
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Runs heavily multi-threaded calculations to determine the byte size of all found targets.
 pub fn scan_targets() -> Vec<JunkItem> {
     let mut items = get_system_targets();
 
-    // PARALLEL EXECUTION: Rayon `par_iter_mut` automatically distributes the I/O bound
-    // `calculate_dir_size` function across all available CPU cores.
+    // Parallel size calculation across all CPU cores
     items.par_iter_mut().for_each(|item| {
-        if item.path.starts_with("::") {
-            item.size = 0;
+        item.size = if item.path.starts_with("::") {
+            0
         } else {
-            let path = Path::new(&item.path);
-            item.size = calculate_dir_size(path);
-        }
+            calculate_dir_size(Path::new(&item.path))
+        };
     });
 
-    // Filter: Remove targets that are already empty to keep the UI clean
+    // Remove already-empty targets to keep the UI clean
     items.retain(|i| i.size > 0 || i.path.starts_with("::"));
     items
 }
 
-/// Recursively calculates the total size of a directory.
-///
-/// SECURITY: Strictly refuses to follow symlinks to prevent the scanner from
-/// escaping the sandboxed path and scanning `C:\` forever.
 fn calculate_dir_size(path: &Path) -> u64 {
     WalkDir::new(path)
-        .follow_links(false) // CRITICAL: Never follow symlinks
+        .follow_links(false)
         .min_depth(1)
         .max_depth(MAX_DEPTH)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            // Re-verify symlink status on every single file just to be absolutely sure
-            match fs::symlink_metadata(e.path()) {
-                Ok(metadata) => {
-                    if metadata.file_type().is_symlink() {
-                        None // Skip
-                    } else if metadata.is_file() {
-                        Some(metadata.len())
-                    } else {
-                        None
-                    }
-                }
-                Err(_) => None,
-            }
+        .filter_map(|e| match fs::symlink_metadata(e.path()) {
+            Ok(m) if !m.file_type().is_symlink() && m.is_file() => Some(m.len()),
+            _ => None,
         })
         .sum()
 }
@@ -489,7 +850,6 @@ fn calculate_dir_size(path: &Path) -> u64 {
 // DRY RUN (Preview Before Delete)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Simulates the deletion process, returning exactly what will be deleted and how much space it will free.
 pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     let whitelist = get_whitelist();
     let mut total_files = 0u64;
@@ -498,13 +858,11 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     let mut warnings = Vec::new();
 
     for path_str in paths {
-        // Virtual commands don't have files to list
         if path_str.starts_with("::") {
             file_list.push(format!("[ACTION] {}", path_str));
             continue;
         }
 
-        // Enforce the sandbox whitelist
         let canonical = match validate_path(&path_str, &whitelist) {
             Ok(p) => p,
             Err(e) => {
@@ -514,19 +872,16 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
         };
 
         if canonical.is_dir() {
-            // Walk the directory and collect all nested files
             for entry in WalkDir::new(&canonical)
                 .follow_links(false)
                 .max_depth(MAX_DEPTH)
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
-                if let Ok(metadata) = fs::symlink_metadata(entry.path()) {
-                    if !metadata.file_type().is_symlink() && metadata.is_file() {
+                if let Ok(m) = fs::symlink_metadata(entry.path()) {
+                    if !m.file_type().is_symlink() && m.is_file() {
                         total_files += 1;
-                        total_size += metadata.len();
-
-                        // Prevent the UI from lagging by only sending the first 100 preview paths
+                        total_size += m.len();
                         if file_list.len() < 100 {
                             file_list.push(entry.path().display().to_string());
                         }
@@ -534,10 +889,10 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
                 }
             }
         } else if canonical.is_file() {
-            if let Ok(metadata) = fs::symlink_metadata(&canonical) {
-                if !metadata.file_type().is_symlink() {
+            if let Ok(m) = fs::symlink_metadata(&canonical) {
+                if !m.file_type().is_symlink() {
                     total_files += 1;
-                    total_size += metadata.len();
+                    total_size += m.len();
                     file_list.push(canonical.display().to_string());
                 }
             }
@@ -545,12 +900,11 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
     }
 
     if file_list.len() >= 100 {
-        warnings.push(format!("Showing first 100 of {} files", total_files));
+        warnings.push(format!("Showing first 100 of {} files.", total_files));
     }
-
     if total_size > LARGE_OPERATION_THRESHOLD {
         warnings.push(format!(
-            "Large operation: {} - proceed with caution",
+            "Large operation: {} — proceed with caution.",
             format_size(total_size)
         ));
     }
@@ -567,7 +921,6 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
 // CLEANING (With Progress & Security)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Executes the actual deletion of the selected caches/targets.
 pub fn clean_paths<R: tauri::Runtime>(
     paths: Vec<String>,
     app_handle: &tauri::AppHandle<R>,
@@ -576,93 +929,131 @@ pub fn clean_paths<R: tauri::Runtime>(
 
     let whitelist = get_whitelist();
     let mut errors = Vec::new();
-
-    // 1. Phase 1: Validations
     let mut validated_paths = Vec::new();
     let mut total_size = 0u64;
 
+    // Phase 1: Validate all paths
     for path_str in paths {
         if path_str.starts_with("::") {
             validated_paths.push(path_str);
         } else {
             match validate_path(&path_str, &whitelist) {
                 Ok(canonical) => {
-                    let path = Path::new(&canonical);
-                    let size = calculate_dir_size(path);
-                    total_size += size;
+                    total_size += calculate_dir_size(Path::new(&canonical));
                     validated_paths.push(canonical.display().to_string());
                 }
-                Err(e) => {
-                    errors.push(format!("Validation failed for {}: {}", path_str, e));
-                }
+                Err(e) => errors.push(format!("Validation failed for {}: {}", path_str, e)),
             }
         }
     }
 
-    // Safety limit check
     if total_size > MAX_TOTAL_SIZE {
         return Err(anyhow::anyhow!(
-            "Operation too large: {} exceeds maximum of {} (50 GB). Please select fewer items.",
-            format_size(total_size),
-            format_size(MAX_TOTAL_SIZE)
+            "Operation too large: {} exceeds the 50 GB safety limit. Please select fewer items.",
+            format_size(total_size)
         ));
     }
 
-    // 2. Pre-count all files so the progress bar is perfectly accurate
+    // Phase 2: Count files for accurate progress reporting
     let total_files = Arc::new(AtomicU64::new(0));
     let files_processed = Arc::new(AtomicU64::new(0));
     let bytes_freed = Arc::new(AtomicU64::new(0));
 
-    for path_str in &validated_paths {
-        if !path_str.starts_with("::") {
-            let path = Path::new(path_str);
-            let count = count_files(path);
-            total_files.fetch_add(count, Ordering::Relaxed);
+    for p in &validated_paths {
+        if !p.starts_with("::") {
+            total_files.fetch_add(count_files(Path::new(p)), Ordering::Relaxed);
         }
     }
 
-    // 3. Process the validated paths
+    // Phase 3: Execute
     let results: Vec<_> = validated_paths
         .into_iter()
         .map(|path_str| {
             if CANCEL_FLAG.load(Ordering::Relaxed) {
-                return (0, 0, vec!["Operation cancelled".to_string()]);
+                return (0u64, 0u64, vec!["Operation cancelled".to_string()]);
             }
 
-            // Route Virtual Commands
-            if path_str == "::DNS_CACHE::" {
-                match flush_dns() {
-                    Ok(_) => {
-                        emit_progress(
-                            app_handle,
-                            files_processed.load(Ordering::Relaxed),
-                            total_files.load(Ordering::Relaxed),
-                            bytes_freed.load(Ordering::Relaxed),
-                            "Flushing DNS cache".to_string(),
-                        );
-                        return (0, 0, vec![]);
-                    }
-                    Err(e) => return (0, 0, vec![e]),
+            // Route virtual commands to their specific handlers
+            match path_str.as_str() {
+                "::DNS_CACHE::" => {
+                    return virtual_result(
+                        flush_dns(),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Flushing DNS cache",
+                    );
                 }
-            }
-
-            if path_str == "::CLIPBOARD::" {
-                match clear_clipboard() {
-                    Ok(_) => {
-                        emit_progress(
-                            app_handle,
-                            files_processed.load(Ordering::Relaxed),
-                            total_files.load(Ordering::Relaxed),
-                            bytes_freed.load(Ordering::Relaxed),
-                            "Clearing clipboard".to_string(),
-                        );
-                        return (0, 0, vec![]);
-                    }
-                    Err(e) => return (0, 0, vec![e]),
+                "::CLIPBOARD::" => {
+                    return virtual_result(
+                        clear_clipboard(),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Clearing clipboard",
+                    );
                 }
+                "::CLEAR_BASH_HISTORY::" => {
+                    return virtual_result(
+                        clear_shell_history("bash"),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Clearing bash history",
+                    );
+                }
+                "::CLEAR_ZSH_HISTORY::" => {
+                    return virtual_result(
+                        clear_shell_history("zsh"),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Clearing zsh history",
+                    );
+                }
+                "::RECYCLE_BIN::" => {
+                    return virtual_result(
+                        empty_recycle_bin(),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Emptying Recycle Bin",
+                    );
+                }
+                "::TRASH::" => {
+                    return virtual_result(
+                        empty_trash(),
+                        app_handle,
+                        &files_processed,
+                        &total_files,
+                        &bytes_freed,
+                        "Emptying Trash",
+                    );
+                }
+                "::WINDOWS_THUMBNAIL_CACHE::" => {
+                    return match clean_thumbnail_cache() {
+                        Ok(freed) => {
+                            bytes_freed.fetch_add(freed, Ordering::Relaxed);
+                            emit_progress(
+                                app_handle,
+                                files_processed.load(Ordering::Relaxed),
+                                total_files.load(Ordering::Relaxed),
+                                bytes_freed.load(Ordering::Relaxed),
+                                "Cleaning thumbnail cache".to_string(),
+                            );
+                            (freed, 0, vec![])
+                        }
+                        Err(e) => (0, 0, vec![e]),
+                    };
+                }
+                _ => {} // Fall through to standard file deletion
             }
 
-            // Standard File Deletion Route
             clean_single_path(
                 &path_str,
                 app_handle,
@@ -673,17 +1064,15 @@ pub fn clean_paths<R: tauri::Runtime>(
         })
         .collect();
 
-    // 4. Aggregate all results from the various execution paths
+    // Phase 4: Aggregate results
     let mut total_bytes_freed = 0u64;
     let mut total_files_deleted = 0u64;
-
     for (bytes, files, errs) in results {
         total_bytes_freed += bytes;
         total_files_deleted += files;
         errors.extend(errs);
     }
 
-    // Ensure progress bar hits exactly 100% on completion
     emit_progress(
         app_handle,
         files_processed.load(Ordering::Relaxed),
@@ -699,28 +1088,47 @@ pub fn clean_paths<R: tauri::Runtime>(
     })
 }
 
-/// Helper function to count files for the progress bar calculation
+/// Helper to cleanly handle virtual command results and emit progress.
+fn virtual_result<R: tauri::Runtime>(
+    result: Result<(), String>,
+    app_handle: &tauri::AppHandle<R>,
+    files_processed: &Arc<AtomicU64>,
+    total_files: &Arc<AtomicU64>,
+    bytes_freed: &Arc<AtomicU64>,
+    label: &str,
+) -> (u64, u64, Vec<String>) {
+    match result {
+        Ok(_) => {
+            emit_progress(
+                app_handle,
+                files_processed.load(Ordering::Relaxed),
+                total_files.load(Ordering::Relaxed),
+                bytes_freed.load(Ordering::Relaxed),
+                label.to_string(),
+            );
+            (0, 0, vec![])
+        }
+        Err(e) => (0, 0, vec![e]),
+    }
+}
+
 fn count_files(path: &Path) -> u64 {
     if path.is_file() {
         return 1;
     }
-
     WalkDir::new(path)
         .follow_links(false)
         .max_depth(MAX_DEPTH)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            if let Ok(metadata) = fs::symlink_metadata(e.path()) {
-                !metadata.file_type().is_symlink() && metadata.is_file()
-            } else {
-                false
-            }
+            fs::symlink_metadata(e.path())
+                .map(|m| !m.file_type().is_symlink() && m.is_file())
+                .unwrap_or(false)
         })
         .count() as u64
 }
 
-/// The core loop that deletes files while maintaining Atomic variables for thread-safe UI progress updates.
 fn clean_single_path<R: tauri::Runtime>(
     path_str: &str,
     app_handle: &tauri::AppHandle<R>,
@@ -731,7 +1139,6 @@ fn clean_single_path<R: tauri::Runtime>(
     let mut local_freed = 0u64;
     let mut local_files = 0u64;
     let mut local_errors = Vec::new();
-
     let path = Path::new(path_str);
 
     if path.is_dir() {
@@ -740,14 +1147,11 @@ fn clean_single_path<R: tauri::Runtime>(
                 if CANCEL_FLAG.load(Ordering::Relaxed) {
                     break;
                 }
-
                 let p = entry.path();
-
-                if let Ok(metadata) = fs::symlink_metadata(&p) {
-                    if metadata.file_type().is_symlink() {
-                        continue; // Safely skip over symlinks
+                if let Ok(m) = fs::symlink_metadata(&p) {
+                    if m.file_type().is_symlink() {
+                        continue;
                     }
-
                     emit_progress(
                         app_handle,
                         files_processed.load(Ordering::Relaxed),
@@ -755,11 +1159,8 @@ fn clean_single_path<R: tauri::Runtime>(
                         bytes_freed.load(Ordering::Relaxed),
                         p.display().to_string(),
                     );
-
                     if p.is_dir() {
                         let size = calculate_dir_size(&p);
-
-                        // Try to recursively wipe the directory
                         match fs::remove_dir_all(&p) {
                             Ok(_) => {
                                 local_freed += size;
@@ -767,18 +1168,14 @@ fn clean_single_path<R: tauri::Runtime>(
                                 files_processed.fetch_add(1, Ordering::Relaxed);
                                 bytes_freed.fetch_add(size, Ordering::Relaxed);
                             }
-                            Err(e) => {
-                                local_errors.push(format!(
-                                    "Failed to delete {}: {}",
-                                    p.display(),
-                                    e
-                                ));
-                            }
+                            Err(e) => local_errors.push(format!(
+                                "Failed to delete {}: {}",
+                                p.display(),
+                                e
+                            )),
                         }
-                    } else if metadata.is_file() {
-                        let size = metadata.len();
-
-                        // Delete the specific file
+                    } else if m.is_file() {
+                        let size = m.len();
                         match fs::remove_file(&p) {
                             Ok(_) => {
                                 local_freed += size;
@@ -786,24 +1183,20 @@ fn clean_single_path<R: tauri::Runtime>(
                                 files_processed.fetch_add(1, Ordering::Relaxed);
                                 bytes_freed.fetch_add(size, Ordering::Relaxed);
                             }
-                            Err(e) => {
-                                local_errors.push(format!(
-                                    "Failed to delete {}: {}",
-                                    p.display(),
-                                    e
-                                ));
-                            }
+                            Err(e) => local_errors.push(format!(
+                                "Failed to delete {}: {}",
+                                p.display(),
+                                e
+                            )),
                         }
                     }
                 }
             }
         }
     } else if path.is_file() {
-        // Fallback for single file targets
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            if !metadata.file_type().is_symlink() {
-                let size = metadata.len();
-
+        if let Ok(m) = fs::symlink_metadata(path) {
+            if !m.file_type().is_symlink() {
+                let size = m.len();
                 match fs::remove_file(path) {
                     Ok(_) => {
                         local_freed += size;
@@ -812,7 +1205,7 @@ fn clean_single_path<R: tauri::Runtime>(
                         bytes_freed.fetch_add(size, Ordering::Relaxed);
                     }
                     Err(e) => {
-                        local_errors.push(format!("Failed to delete {}: {}", path.display(), e));
+                        local_errors.push(format!("Failed to delete {}: {}", path.display(), e))
                     }
                 }
             }
@@ -830,20 +1223,20 @@ fn emit_progress<R: tauri::Runtime>(
     current_file: String,
 ) {
     let percentage = if total_files > 0 {
-        ((files_processed as f64 / total_files as f64) * 100.0) as u8
+        ((files_processed as f64 / total_files as f64) * 100.0).min(100.0) as u8
     } else {
-        0
+        100
     };
-
-    let progress = CleanProgress {
-        files_processed,
-        total_files,
-        bytes_freed,
-        current_file,
-        percentage,
-    };
-
-    let _ = app_handle.emit("clean-progress", progress);
+    let _ = app_handle.emit(
+        "clean-progress",
+        CleanProgress {
+            files_processed,
+            total_files,
+            bytes_freed,
+            current_file,
+            percentage,
+        },
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -855,110 +1248,194 @@ pub fn cancel_cleaning() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SYSTEM COMMANDS (With Error Handling)
+// SYSTEM COMMANDS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Executes standard OS terminal commands to wipe the DNS cache.
-/// Because this is highly OS-specific, conditional compilation is required.
 fn flush_dns() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        Command::new("ipconfig")
+        std::process::Command::new("ipconfig")
             .arg("/flushdns")
             .output()
             .map_err(|e| format!("Failed to flush DNS: {}", e))?;
         Ok(())
     }
-
     #[cfg(target_os = "macos")]
     {
-        use std::process::Command;
-        Command::new("killall")
-            .arg("-HUP")
-            .arg("mDNSResponder")
+        std::process::Command::new("killall")
+            .args(["-HUP", "mDNSResponder"])
             .output()
             .map_err(|e| format!("Failed to flush DNS: {}", e))?;
         Ok(())
     }
-
     #[cfg(target_os = "linux")]
     {
-        use std::process::Command;
-        // Try modern systemd-resolved first, if it fails, fall back to legacy systemctl
-        if Command::new("resolvectl")
+        if std::process::Command::new("resolvectl")
             .arg("flush-caches")
             .output()
             .is_err()
         {
-            let _ = Command::new("systemctl")
-                .args(&["restart", "systemd-resolved"])
+            let _ = std::process::Command::new("systemctl")
+                .args(["restart", "systemd-resolved"])
                 .output();
         }
         Ok(())
     }
-
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        Err("DNS flush not supported on this platform".to_string())
-    }
+    Err("DNS flush not supported on this platform".to_string())
 }
 
-/// Overwrites the system clipboard by piping empty data/null into the OS clipboard buffer tool.
 fn clear_clipboard() -> Result<(), String> {
-    // If the arboard cross-platform clipboard crate is configured via Cargo features, use it.
     #[cfg(feature = "clipboard")]
     {
         use arboard::Clipboard;
-        let mut clipboard = Clipboard::new().map_err(|e| format!("Clipboard error: {}", e))?;
-        clipboard
-            .clear()
+        let mut cb = Clipboard::new().map_err(|e| format!("Clipboard error: {}", e))?;
+        cb.clear()
             .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
         return Ok(());
     }
-
-    // Fallback logic using raw system commands
     #[cfg(not(feature = "clipboard"))]
     {
         #[cfg(target_os = "windows")]
         {
-            use std::process::Command;
-            Command::new("cmd")
+            std::process::Command::new("cmd")
                 .args(["/C", "echo off | clip"])
                 .output()
                 .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
             Ok(())
         }
-
         #[cfg(target_os = "macos")]
         {
-            use std::process::Command;
-            Command::new("pbcopy")
+            std::process::Command::new("pbcopy")
                 .stdin(std::process::Stdio::null())
                 .output()
                 .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
             Ok(())
         }
-
         #[cfg(target_os = "linux")]
         {
-            use std::process::Command;
-            // Try xsel first, then xclip as a fallback
-            if Command::new("xsel").arg("-bc").output().is_err() {
-                Command::new("xclip")
-                    .args(&["-selection", "clipboard", "-i"])
+            if std::process::Command::new("xsel")
+                .arg("-bc")
+                .output()
+                .is_err()
+            {
+                std::process::Command::new("xclip")
+                    .args(["-selection", "clipboard", "-i"])
                     .stdin(std::process::Stdio::null())
                     .output()
                     .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
             }
             Ok(())
         }
-
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-        {
-            Err("Clipboard clear not supported on this platform".to_string())
-        }
+        Err("Clipboard clear not supported on this platform".to_string())
     }
+}
+
+/// Truncates the shell history file to zero bytes (safer than deleting).
+fn clear_shell_history(shell: &str) -> Result<(), String> {
+    let base_dirs = BaseDirs::new().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let history_path = match shell {
+        "bash" => base_dirs.home_dir().join(".bash_history"),
+        "zsh" => base_dirs.home_dir().join(".zsh_history"),
+        _ => return Err(format!("Unknown shell: {}", shell)),
+    };
+    if !history_path.exists() {
+        return Ok(());
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&history_path)
+        .map_err(|e| format!("Failed to clear {} history: {}", shell, e))?;
+    Ok(())
+}
+
+fn empty_recycle_bin() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Clear-RecycleBin -Force -ErrorAction SilentlyContinue",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to empty Recycle Bin: {}", e))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("Recycle Bin is a Windows-only feature".to_string())
+}
+
+fn empty_trash() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("osascript")
+            .args(["-e", "tell application \"Finder\" to empty trash"])
+            .output()
+            .map_err(|e| format!("Failed to empty Trash: {}", e))?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(base_dirs) = BaseDirs::new() {
+            let trash = base_dirs.home_dir().join(".local/share/Trash");
+            for sub in &["files", "info"] {
+                let dir = trash.join(sub);
+                if dir.exists() {
+                    if let Ok(entries) = fs::read_dir(&dir) {
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                let _ = fs::remove_dir_all(&p);
+                            } else {
+                                let _ = fs::remove_file(&p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    Err("Trash empty not supported on this platform".to_string())
+}
+
+/// Cleans only thumbcache_*.db and iconcache_*.db files from the Explorer directory.
+/// Uses a targeted approach to avoid deleting unrelated Explorer state files.
+fn clean_thumbnail_cache() -> Result<u64, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let base_dirs =
+            BaseDirs::new().ok_or_else(|| "Cannot determine LocalAppData".to_string())?;
+        let dir = base_dirs
+            .data_local_dir()
+            .join("Microsoft/Windows/Explorer");
+        if !dir.exists() {
+            return Ok(0);
+        }
+        let mut freed = 0u64;
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    if (name.starts_with("thumbcache_") || name.starts_with("iconcache_"))
+                        && name.ends_with(".db")
+                    {
+                        if let Ok(meta) = fs::metadata(&p) {
+                            freed += meta.len();
+                        }
+                        let _ = fs::remove_file(&p);
+                    }
+                }
+            }
+        }
+        Ok(freed)
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok(0)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -969,7 +1446,6 @@ fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
-
     if bytes >= GB {
         format!("{:.2} GB", bytes as f64 / GB as f64)
     } else if bytes >= MB {
@@ -981,85 +1457,87 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-// ==========================================
-// --- TESTS ---
-// ==========================================
+// ═══════════════════════════════════════════════════════════════════════════
+// TESTS
+// ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::io::Write;
 
-    // Helper to create a temporary test file inside the OS Temp directory
-    // (which is usually whitelisted by default)
     fn create_temp_target(name: &str) -> PathBuf {
-        let temp_dir = std::env::temp_dir().join("qre_system_cleaner_tests");
-        fs::create_dir_all(&temp_dir).unwrap();
-        let path = temp_dir.join(name);
-        let mut file = fs::File::create(&path).unwrap();
-        file.write_all(b"junk data").unwrap();
+        let dir = std::env::temp_dir().join("qre_system_cleaner_tests");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        fs::File::create(&path)
+            .unwrap()
+            .write_all(b"junk data")
+            .unwrap();
         path
     }
 
-    // --- Validation & Sandbox Tests ---
-
     #[test]
     fn test_validate_path_virtual_commands_allowed() {
-        let whitelist = get_whitelist();
-        // Virtual commands like DNS flush must bypass the filesystem checks
-        assert!(validate_path("::DNS_CACHE::", &whitelist).is_ok());
-        assert!(validate_path("::CLIPBOARD::", &whitelist).is_ok());
+        let wl = get_whitelist();
+        for cmd in &[
+            "::DNS_CACHE::",
+            "::CLIPBOARD::",
+            "::RECYCLE_BIN::",
+            "::TRASH::",
+            "::CLEAR_BASH_HISTORY::",
+            "::CLEAR_ZSH_HISTORY::",
+            "::WINDOWS_THUMBNAIL_CACHE::",
+        ] {
+            assert!(
+                validate_path(cmd, &wl).is_ok(),
+                "Virtual command {} should be allowed",
+                cmd
+            );
+        }
     }
 
     #[test]
     fn test_validate_path_rejects_missing_files() {
-        let whitelist = get_whitelist();
-        let result = validate_path("/path/that/definitely/does/not/exist/999", &whitelist);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("does not exist"));
+        let wl = get_whitelist();
+        let r = validate_path("/path/that/definitely/does/not/exist/999", &wl);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("does not exist"));
     }
 
     #[test]
-    fn test_validate_path_rejects_non_whitelisted_system_paths() {
-        let whitelist = get_whitelist();
-
-        // Construct a path that exists on almost every system, but should NEVER be in the cache whitelist
+    fn test_validate_path_rejects_system_paths() {
+        let wl = get_whitelist();
         #[cfg(target_os = "windows")]
-        let dangerous_path = "C:\\Windows\\System32\\cmd.exe";
-
-        #[cfg(target_os = "macos")]
-        let dangerous_path = "/bin/sh";
-
-        #[cfg(target_os = "linux")]
-        let dangerous_path = "/bin/sh";
-
-        // Fallback for Android or weird test environments where the above might not exist
-        if Path::new(dangerous_path).exists() {
-            let result = validate_path(dangerous_path, &whitelist);
-            assert!(result.is_err());
-            assert!(result.unwrap_err().contains("not in whitelist"));
+        let dangerous = "C:\\Windows\\System32\\cmd.exe";
+        #[cfg(not(target_os = "windows"))]
+        let dangerous = "/bin/sh";
+        if Path::new(dangerous).exists() {
+            let r = validate_path(dangerous, &wl);
+            assert!(r.is_err());
+            assert!(r.unwrap_err().contains("not in whitelist"));
         }
     }
 
     #[test]
-    fn test_validate_path_allows_whitelisted_paths() {
-        let whitelist = get_whitelist();
-
-        // We create a temp file. `std::env::temp_dir()` is usually included in our `get_whitelist()`
-        // output via `std::env::var("TEMP")` or `/tmp`.
-        let target = create_temp_target("safe_to_delete.tmp");
-
-        // This test will only execute if the temp dir was successfully whitelisted on the host OS
-        if whitelist.iter().any(|w| target.starts_with(w)) {
-            let result = validate_path(target.to_str().unwrap(), &whitelist);
-            assert!(result.is_ok(), "Target inside whitelist should be allowed");
+    fn test_validate_path_allows_whitelisted() {
+        let wl = get_whitelist();
+        let target = create_temp_target("safe.tmp");
+        if wl.iter().any(|w| target.starts_with(w)) {
+            assert!(validate_path(target.to_str().unwrap(), &wl).is_ok());
         }
-
         let _ = fs::remove_file(target);
     }
 
-    // --- Logic & Formatting Tests ---
+    #[test]
+    fn test_elevation_required_field_present() {
+        let targets = get_system_targets();
+        // Confirm the field exists and virtual commands don't require elevation
+        assert!(!targets
+            .iter()
+            .filter(|t| t.path.starts_with("::"))
+            .any(|t| t.elevation_required));
+    }
 
     #[test]
     fn test_format_size_logic() {
@@ -1068,29 +1546,19 @@ mod tests {
         assert_eq!(format_size(1536), "1.50 KB");
         assert_eq!(format_size(1024 * 1024), "1.00 MB");
         assert_eq!(format_size(1024 * 1024 * 1024), "1.00 GB");
-
-        // 50 GB Limit Format Check
         assert_eq!(format_size(50 * 1024 * 1024 * 1024), "50.00 GB");
     }
 
     #[test]
     fn test_count_files() {
-        let test_dir = std::env::temp_dir().join("qre_count_tests");
-        fs::create_dir_all(&test_dir).unwrap();
-
-        // Create 3 dummy files
-        fs::File::create(test_dir.join("1.txt")).unwrap();
-        fs::File::create(test_dir.join("2.txt")).unwrap();
-
-        let subdir = test_dir.join("sub");
-        fs::create_dir_all(&subdir).unwrap();
-        fs::File::create(subdir.join("3.txt")).unwrap();
-
-        let count = count_files(&test_dir);
-        assert_eq!(count, 3, "Should correctly count files in subdirectories");
-
-        let _ = fs::remove_dir_all(test_dir);
+        let dir = std::env::temp_dir().join("qre_count_tests");
+        fs::create_dir_all(&dir).unwrap();
+        fs::File::create(dir.join("1.txt")).unwrap();
+        fs::File::create(dir.join("2.txt")).unwrap();
+        let sub = dir.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::File::create(sub.join("3.txt")).unwrap();
+        assert_eq!(count_files(&dir), 3);
+        let _ = fs::remove_dir_all(dir);
     }
 }
-
-// --- END OF FILE system_cleaner.rs.txt ---

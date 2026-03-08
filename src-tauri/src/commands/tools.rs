@@ -5,6 +5,7 @@ use crate::breach;
 use crate::cleaner::{self};
 use crate::hasher;
 use crate::qr;
+use crate::registry_cleaner;
 use crate::system_cleaner;
 use crate::wordlist::WORDLIST;
 use rand::RngCore;
@@ -596,6 +597,23 @@ pub async fn scan_local_secrets(
 pub async fn cancel_secret_scan() -> CommandResult<()> {
     SCAN_CANCEL_FLAG.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+#[tauri::command]
+pub fn scan_registry() -> Vec<registry_cleaner::RegistryItem> {
+    registry_cleaner::scan_registry()
+}
+
+#[tauri::command]
+pub fn backup_registry() -> registry_cleaner::RegistryBackupResult {
+    registry_cleaner::backup_registry()
+}
+
+#[tauri::command]
+pub fn clean_registry(
+    entries: Vec<registry_cleaner::RegistryCleanEntry>,
+) -> registry_cleaner::RegistryCleanResult {
+    registry_cleaner::clean_registry_entries(entries)
 }
 
 // --- END OF FILE tools.rs ---
