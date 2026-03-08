@@ -1086,4 +1086,182 @@ mod tests {
         let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "sub\\dir.txt".into());
         assert!(r.is_err(), "Name containing '\\' must be rejected");
     }
+
+    // =========================================================================
+    // SECTION 6 — VAULTS (Passwords, Notes, Bookmarks)
+    // =========================================================================
+
+    #[test]
+    fn test_password_vault_validation() {
+        use crate::passwords::{PasswordVault, VaultEntry};
+        let mut vault = PasswordVault::new();
+        assert!(vault.validate().is_ok());
+
+        // Test Empty ID Rejection
+        let mut bad_entry = VaultEntry {
+            id: "".to_string(),
+            service: "Test".to_string(),
+            username: "user".to_string(),
+            password: "pwd".to_string(),
+            notes: "".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            url: "".to_string(),
+            color: "".to_string(),
+            is_pinned: false,
+        };
+        vault.entries.push(bad_entry.clone());
+        assert!(vault.validate().is_err(), "Empty ID must fail");
+
+        // Test Duplicate ID Rejection
+        bad_entry.id = "duplicate-123".to_string();
+        vault.entries.clear();
+        vault.entries.push(bad_entry.clone());
+        vault.entries.push(bad_entry);
+        assert!(vault.validate().is_err(), "Duplicate IDs must fail");
+    }
+
+    #[test]
+    fn test_notes_vault_validation() {
+        use crate::notes::{NoteEntry, NotesVault};
+        let mut vault = NotesVault::new();
+
+        let mut note = NoteEntry {
+            id: "note-1".to_string(),
+            title: "T".to_string(),
+            content: "C".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            is_pinned: false,
+            tags: vec![],
+        };
+
+        // Exceeding 10 tags must fail
+        note.tags = (0..15).map(|i| format!("tag{}", i)).collect();
+        vault.entries.push(note);
+        assert!(vault.validate().is_err(), "Too many tags must fail");
+    }
+
+    // =========================================================================
+    // SECTION 7 — CLIPBOARD STORE (Heuristics & Redaction)
+    // =========================================================================
+
+    #[test]
+    fn test_clipboard_heuristics() {
+        use crate::clipboard_store::{analyze_content, create_entry};
+
+        // Test Categorization
+        assert_eq!(
+            analyze_content("4111 2222 3333 4444").unwrap(),
+            "Credit Card"
+        );
+        assert_eq!(
+            analyze_content("sk-live-1234567890abcdef").unwrap(),
+            "API Key"
+        );
+        assert_eq!(analyze_content("P@ssw0rd123!").unwrap(), "Password");
+        assert_eq!(analyze_content("admin@example.com").unwrap(), "Email");
+
+        // Test UI Redaction (Safety)
+        let cc_entry = create_entry("4111 2222 3333 4444");
+        assert_eq!(
+            cc_entry.preview, "4111 **** **** **** 4444",
+            "Credit cards must be masked"
+        );
+
+        let pwd_entry = create_entry("SuperSecretPassword1");
+        assert_eq!(
+            pwd_entry.preview, "SuperS...",
+            "Passwords must be truncated/masked"
+        );
+    }
+
+    // =========================================================================
+    // SECTION 8 — HASHER & QR GENERATOR
+    // =========================================================================
+
+    #[test]
+    fn test_hasher_text_vectors() {
+        use crate::hasher::calculate_text_hashes;
+        let result = calculate_text_hashes("hello world");
+        assert_eq!(
+            result.sha256,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+        assert_eq!(result.md5, "5eb63bbbe01eeed093cb22bb8f5acdc3");
+    }
+
+    #[test]
+    fn test_qr_generator_validation() {
+        use crate::qr::validate_qr_input;
+
+        let ok_res = validate_qr_input("https://projectqre.com");
+        assert!(ok_res.valid);
+        assert!(ok_res.warnings.is_empty());
+
+        let empty_res = validate_qr_input("");
+        assert!(!empty_res.valid, "Empty QR input must fail");
+
+        let http_res = validate_qr_input("http://insecure.com");
+        assert!(http_res.valid); // Valid string...
+        assert!(!http_res.warnings.is_empty(), "...but must warn about HTTP"); // ...but warns
+    }
+
+    // =========================================================================
+    // SECTION 9 — SYSTEM SECURITY (Cleaner & Shredder Guards)
+    // =========================================================================
+
+    #[test]
+    fn test_shredder_dry_run_blocks_system_paths() {
+        use crate::shredder::dry_run;
+
+        // Test providing highly dangerous paths to the shredder
+        let paths = vec!["C:\\Windows\\System32".to_string(), "/bin/sh".to_string()];
+
+        let result = dry_run(paths).unwrap();
+
+        // The Dry Run should place these in the 'blocked' array, refusing to touch them
+        assert!(
+            !result.blocked.is_empty(),
+            "Shredder must block system paths"
+        );
+    }
+
+    #[test]
+    fn test_system_cleaner_blocks_outside_whitelist() {
+        use crate::system_cleaner::dry_run;
+
+        // Try to pass a dangerous path to the system cleaner
+        let paths = vec!["C:\\Windows".to_string(), "/etc".to_string()];
+
+        let result = dry_run(paths).unwrap();
+        // Should emit a warning/error and skip them, NOT add them to file_list
+        assert!(
+            result.file_list.is_empty(),
+            "System cleaner must ignore non-whitelisted paths"
+        );
+    }
+
+    // =========================================================================
+    // SECTION 10 — BREACH CHECKER
+    // =========================================================================
+
+    #[test]
+    fn test_breach_api_input_validation() {
+        use crate::breach::check_pwned_by_prefix;
+
+        tauri::async_runtime::block_on(async {
+            // Prefix must be exactly 5 hex characters
+            let res1 = check_pwned_by_prefix("1234", "1E4C9B93F3F0682250B6CF8331B7EE68FD8").await;
+            assert!(res1.is_err(), "Short prefix must fail");
+
+            // Suffix must be exactly 35 hex characters
+            let res2 = check_pwned_by_prefix("5BAA6", "SHORT").await;
+            assert!(res2.is_err(), "Short suffix must fail");
+
+            // Must contain only Hex
+            let res3 = check_pwned_by_prefix("ZZZZZ", "1E4C9B93F3F0682250B6CF8331B7EE68FD8").await;
+            assert!(res3.is_err(), "Non-hex characters must fail");
+        });
+    }
 }

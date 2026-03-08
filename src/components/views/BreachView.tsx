@@ -1,5 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ShieldCheck,
   ShieldAlert,
@@ -15,11 +18,12 @@ import {
   Copy,
   Check,
   RefreshCw,
+  FolderSearch,
+  FileText,
 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { PasswordInput } from "../common/PasswordInput";
 
-// --- CLIENT SIDE HASHING (Zero-Knowledge) ---
+// ... [KEEP YOUR EXISTING sha1Hex AND getPasswordStrength FUNCTIONS HERE] ...
 async function sha1Hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -31,46 +35,38 @@ async function sha1Hex(text: string): Promise<string> {
     .toUpperCase();
 }
 
-// --- PASSWORD STRENGTH ANALYZER ---
-function getPasswordStrength(pwd: string): {
-  label: string;
-  color: string;
-  score: number;
-} {
+function getPasswordStrength(pwd: string) {
   const hasUpper = /[A-Z]/.test(pwd);
   const hasLower = /[a-z]/.test(pwd);
   const hasDigit = /[0-9]/.test(pwd);
   const hasSpecial = /[^A-Za-z0-9]/.test(pwd);
-
   let score = 0;
   if (hasUpper) score++;
   if (hasLower) score++;
   if (hasDigit) score++;
   if (hasSpecial) score++;
-
-  // Length bonus
   if (pwd.length >= 12) score++;
   if (pwd.length >= 16) score++;
-
-  if (pwd.length < 8) {
-    return { label: "Very Weak", color: "#ef4444", score: 0 };
-  }
-  if (score <= 2) {
-    return { label: "Weak", color: "#f97316", score: 1 };
-  }
-  if (score === 3 || score === 4) {
+  if (pwd.length < 8) return { label: "Very Weak", color: "#ef4444", score: 0 };
+  if (score <= 2) return { label: "Weak", color: "#f97316", score: 1 };
+  if (score === 3 || score === 4)
     return { label: "Medium", color: "#eab308", score: 2 };
-  }
   return { label: "Strong", color: "#22c55e", score: 3 };
 }
 
 export function BreachView() {
-  // Tabs: Password | Email | Network
-  const [activeTab, setActiveTab] = useState<"password" | "email" | "network">(
-    "password",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "local" | "password" | "email" | "network"
+  >("local");
 
-  // --- PASSWORD STATE ---
+  // --- LOCAL SCANNER STATE ---
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localFindings, setLocalFindings] = useState<any[] | null>(null);
+  const [currentScanPath, setCurrentScanPath] =
+    useState<string>("Initializing...");
+  const scanUnlisten = useRef<(() => void) | null>(null);
+
+  // --- EXISTING STATES (Password, Email, Network) ---
   const [password, setPassword] = useState("");
   const [passLoading, setPassLoading] = useState(false);
   const [passResult, setPassResult] = useState<{
@@ -81,43 +77,74 @@ export function BreachView() {
   const [lastCheckTime, setLastCheckTime] = useState(0);
   const [autoClearPassword, setAutoClearPassword] = useState(true);
 
-  // --- EMAIL STATE (Simplified - No API) ---
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
 
-  // --- NETWORK STATE ---
   const [publicIp, setPublicIp] = useState<string | null>(null);
   const [isWarp, setIsWarp] = useState(false);
   const [ipLoading, setIpLoading] = useState(false);
   const [ipService, setIpService] = useState("");
   const [copiedIp, setCopiedIp] = useState(false);
 
-  // --- PASSWORD CHECK ---
-  async function checkPassword() {
-    // FIX: Comprehensive input validation
-    const trimmedPassword = password.trim();
+  // --- LOCAL SCAN LOGIC ---
+  async function runLocalScan() {
+    try {
+      const selected = await open({
+        directory: true,
+        title: "Select folder to scan for exposed secrets",
+      });
+      if (selected && typeof selected === "string") {
+        setLocalLoading(true);
+        setLocalFindings(null);
+        setCurrentScanPath("Starting scan...");
 
+        // Listen for live progress from Rust
+        scanUnlisten.current = await listen<string>(
+          "secret-scan-progress",
+          (event) => {
+            // We slice the path so it doesn't break the UI layout
+            const shortPath =
+              event.payload.length > 50
+                ? "..." + event.payload.slice(-47)
+                : event.payload;
+            setCurrentScanPath(shortPath);
+          },
+        );
+
+        try {
+          const res = await invoke<any[]>("scan_local_secrets", {
+            dirPath: selected,
+          });
+          setLocalFindings(res);
+        } catch (backendError) {
+          alert(backendError); // Shows the "Protected system directory" error
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Scan failed: " + e);
+    } finally {
+      setLocalLoading(false);
+      if (scanUnlisten.current) {
+        scanUnlisten.current();
+        scanUnlisten.current = null;
+      }
+    }
+  }
+
+  // --- EXISTING LOGIC ---
+  async function checkPassword() {
+    const trimmedPassword = password.trim();
     if (!trimmedPassword) {
       setPassError("Please enter a password.");
       return;
     }
-
-    // FIX: Max length validation (prevent memory exhaustion)
     if (trimmedPassword.length > 1000) {
-      setPassError("Password is too long (max 1000 characters).");
+      setPassError("Password is too long.");
       return;
     }
-
-    // FIX: Character validation (reject binary data / control characters)
-    if (!/^[\x20-\x7E]+$/.test(trimmedPassword)) {
-      setPassError("Password contains invalid characters.");
-      return;
-    }
-
-    // FIX: Rate limiting (2 second cooldown)
     if (Date.now() - lastCheckTime < 2000) {
-      const remaining = Math.ceil((2000 - (Date.now() - lastCheckTime)) / 1000);
-      setPassError(`Please wait ${remaining} second(s) before checking again.`);
+      setPassError("Please wait before checking again.");
       return;
     }
 
@@ -125,76 +152,38 @@ export function BreachView() {
     setPassResult(null);
     setPassError(null);
     setLastCheckTime(Date.now());
-
     try {
-      // SECURITY: Hash password locally (zero-knowledge)
       const hash = await sha1Hex(trimmedPassword);
-
-      // Send ONLY the hash to backend
       const res = await invoke<{ found: boolean; count: number }>(
         "check_password_breach",
         { sha1Hash: hash },
       );
-
       setPassResult(res);
-
-      // FIX: Auto-clear password after successful check (optional)
-      if (autoClearPassword && res) {
-        setTimeout(() => {
-          setPassword("");
-        }, 3000);
-      }
+      if (autoClearPassword && res) setTimeout(() => setPassword(""), 3000);
     } catch (e) {
-      const errorMsg = String(e);
-      if (errorMsg.toLowerCase().includes("network")) {
-        setPassError(
-          "Cannot reach HIBP database. Please check your internet connection.",
-        );
-      } else if (errorMsg.toLowerCase().includes("timeout")) {
-        setPassError("Request timed out. Please try again.");
-      } else if (errorMsg.toLowerCase().includes("429")) {
-        setPassError(
-          "Rate limit exceeded. Please wait a moment and try again.",
-        );
-      } else {
-        setPassError("Connection failed: " + errorMsg);
-      }
+      setPassError("Connection failed: " + String(e));
     } finally {
       setPassLoading(false);
     }
   }
 
-  // --- EMAIL CHECK (Option 1: Redirect to HIBP Website) ---
   function checkEmailOnWebsite() {
-    // FIX: Improved email validation
     const trimmedEmail = email.trim();
-
     if (!trimmedEmail) {
       setEmailError("Please enter an email address.");
       return;
     }
-
-    // FIX: Max length validation (RFC 5321 max email length)
-    if (trimmedEmail.length > 254) {
-      setEmailError("Email address is too long.");
-      return;
-    }
-
-    // FIX: Proper email regex validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
       setEmailError("Invalid email address format.");
       return;
     }
-
-    // Clear error and open HIBP website
     setEmailError(null);
     openUrl(
       `https://haveibeenpwned.com/account/${encodeURIComponent(trimmedEmail)}`,
     );
   }
 
-  // --- IP CHECK ---
   async function checkIp() {
     setIpLoading(true);
     try {
@@ -209,30 +198,21 @@ export function BreachView() {
     } catch (e) {
       setPublicIp("Unknown (Service unavailable)");
       setIpService("Error");
-      console.error("IP check failed:", e);
     } finally {
       setIpLoading(false);
     }
   }
 
-  // FIX: Copy IP to clipboard
   async function copyIpAddress() {
     if (publicIp && publicIp !== "Unknown (Service unavailable)") {
-      try {
-        await navigator.clipboard.writeText(publicIp);
-        setCopiedIp(true);
-        setTimeout(() => setCopiedIp(false), 2000);
-      } catch (e) {
-        console.error("Failed to copy IP:", e);
-      }
+      await navigator.clipboard.writeText(publicIp);
+      setCopiedIp(true);
+      setTimeout(() => setCopiedIp(false), 2000);
     }
   }
 
-  // Auto-check IP when Network tab is opened
   useEffect(() => {
-    if (activeTab === "network" && !publicIp) {
-      checkIp();
-    }
+    if (activeTab === "network" && !publicIp) checkIp();
   }, [activeTab]);
 
   return (
@@ -249,7 +229,7 @@ export function BreachView() {
       <div style={{ textAlign: "center", marginBottom: 30 }}>
         <h2 style={{ margin: 0, fontSize: "1.8rem" }}>Privacy Check</h2>
         <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
-          Verify your digital identity and network exposure.
+          Detect sensitive data leaks locally and online.
         </p>
       </div>
 
@@ -267,6 +247,7 @@ export function BreachView() {
           }}
         >
           {[
+            { id: "local", label: "Local Scanner" },
             { id: "password", label: "Password Breach" },
             { id: "email", label: "Email Breach" },
             { id: "network", label: "Network Security" },
@@ -291,7 +272,201 @@ export function BreachView() {
         </div>
       </div>
 
-      {/* --- TAB 1: PASSWORD BREACH --- */}
+      {/* --- TAB 1: LOCAL SECRET SCANNER (NEW PRIMARY TOOL) --- */}
+      {activeTab === "local" && (
+        <div
+          style={{
+            maxWidth: 800,
+            width: "100%",
+            margin: "0 auto",
+            animation: "fadeIn 0.3s ease",
+            display: "flex",
+            flexDirection: "column",
+            // If there are no findings, push the content to the absolute center of the available space
+            justifyContent:
+              !localFindings && !localLoading ? "center" : "flex-start",
+            flex: 1,
+          }}
+        >
+          {!localFindings && !localLoading && (
+            <div
+              className="shred-zone"
+              style={{
+                padding: 40,
+                textAlign: "center",
+                cursor: "pointer",
+                borderColor: "var(--accent)",
+                // FIX: Force Horizontal Centering
+                margin: "0 auto",
+                width: "100%",
+                maxWidth: 500,
+              }}
+              onClick={runLocalScan}
+            >
+              <FolderSearch
+                size={64}
+                color="var(--accent)"
+                style={{ marginBottom: 20 }}
+              />
+              <h3>Scan for Exposed Secrets</h3>
+              <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
+                Find plaintext passwords, API keys, and Crypto Wallets hiding in
+                your unencrypted folders (.txt, .csv, .env).
+              </p>
+              <button className="auth-btn">Select Folder to Scan</button>
+            </div>
+          )}
+
+          {localLoading && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                flex: 1,
+              }}
+            >
+              <Search
+                size={48}
+                className="spinner"
+                color="var(--accent)"
+                style={{ marginBottom: 20 }}
+              />
+              <h3>Scanning local files...</h3>
+              <div
+                style={{
+                  background: "#0a0a0a",
+                  padding: "8px 15px",
+                  borderRadius: 6,
+                  fontFamily: "monospace",
+                  fontSize: "0.8rem",
+                  color: "#4ade80",
+                  marginTop: 15,
+                  width: "100%",
+                  maxWidth: 500,
+                  textAlign: "left",
+                  border: "1px solid #333",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                }}
+              >
+                &gt; {currentScanPath}
+              </div>
+            </div>
+          )}
+
+          {localFindings && (
+            <div style={{ paddingBottom: 40 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 20,
+                }}
+              >
+                <h3 style={{ margin: 0 }}>
+                  {localFindings.length === 0
+                    ? "No secrets exposed!"
+                    : `${localFindings.length} Exposed Secrets Found`}
+                </h3>
+                <button
+                  className="secondary-btn"
+                  onClick={() => setLocalFindings(null)}
+                >
+                  Scan Again
+                </button>
+              </div>
+
+              {localFindings.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: 40,
+                    background: "rgba(34, 197, 94, 0.05)",
+                    borderRadius: 12,
+                    border: "1px solid rgba(34, 197, 94, 0.3)",
+                  }}
+                >
+                  <ShieldCheck
+                    size={48}
+                    color="var(--btn-success)"
+                    style={{ marginBottom: 15 }}
+                  />
+                  <p style={{ color: "var(--text-main)", fontSize: "1.1rem" }}>
+                    Your local files are clean.
+                  </p>
+                  <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
+                    No plaintext passwords or API keys detected.
+                  </p>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    background: "var(--bg-card)",
+                    borderRadius: 10,
+                    border: "1px solid var(--btn-danger)",
+                    overflow: "hidden",
+                  }}
+                >
+                  {localFindings.map((f, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: 15,
+                        borderBottom: "1px solid var(--border)",
+                      }}
+                    >
+                      <FileText
+                        size={20}
+                        color="#f59e0b"
+                        style={{ marginRight: 15, flexShrink: 0 }}
+                      />
+                      <div
+                        style={{
+                          flex: 1,
+                          overflow: "hidden",
+                          paddingRight: 10,
+                        }}
+                      >
+                        <div style={{ fontWeight: "bold" }}>{f.filename}</div>
+                        <div
+                          style={{
+                            fontSize: "0.8rem",
+                            color: "var(--text-dim)",
+                            whiteSpace: "nowrap",
+                            textOverflow: "ellipsis",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {f.path}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          background: "rgba(239, 68, 68, 0.1)",
+                          color: "var(--btn-danger)",
+                          padding: "4px 10px",
+                          borderRadius: 4,
+                          fontSize: "0.8rem",
+                          fontWeight: "bold",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {f.category}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {/* --- TAB 2: PASSWORD BREACH --- */}
       {activeTab === "password" && (
         <div
           style={{
@@ -487,7 +662,7 @@ export function BreachView() {
         </div>
       )}
 
-      {/* --- TAB 2: EMAIL BREACH (Option 1: Redirect to Website) --- */}
+      {/* --- TAB 3: EMAIL BREACH (Option 1: Redirect to Website) --- */}
       {activeTab === "email" && (
         <div
           style={{
@@ -651,7 +826,7 @@ export function BreachView() {
         </div>
       )}
 
-      {/* --- TAB 3: NETWORK SECURITY --- */}
+      {/* --- TAB 4: NETWORK SECURITY --- */}
       {activeTab === "network" && (
         <div
           style={{

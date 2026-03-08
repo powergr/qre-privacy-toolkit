@@ -245,4 +245,130 @@ pub fn generate_passphrase() -> String {
         .join("-") // Join the 6 randomly selected words with hyphens (e.g., "correct-horse-battery-staple-apple-tree").
 }
 
+use regex::Regex;
+use tauri::Emitter;
+
+#[derive(serde::Serialize)]
+pub struct SecretFinding {
+    pub filename: String,
+    pub path: String,
+    pub category: String,
+}
+
+fn is_safe_to_scan(path_str: &str) -> bool {
+    let lower = path_str.to_lowercase();
+    if cfg!(target_os = "windows") {
+        if lower.starts_with("c:\\windows") || lower.starts_with("c:\\program files") {
+            return false;
+        }
+    } else {
+        let critical = [
+            "/bin", "/sbin", "/usr", "/etc", "/var", "/boot", "/proc", "/sys", "/dev",
+        ];
+        if critical.iter().any(|&c| lower.starts_with(c)) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_scannable_extension(path: &std::path::Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        let lower = ext.to_lowercase();
+        // Restrict to files where humans actually type secrets.
+        // Skipping .log files prevents 99% of false positives.
+        matches!(
+            lower.as_str(),
+            "txt" | "md" | "csv" | "env" | "pem" | "key" | "ini" | "conf" | "json"
+        )
+    } else {
+        true
+    }
+}
+
+#[tauri::command]
+pub async fn scan_local_secrets(
+    dir_path: String,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<SecretFinding>, String> {
+    if !is_safe_to_scan(&dir_path) {
+        return Err("Protected system directories cannot be scanned.".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut findings = Vec::new();
+        let path = std::path::Path::new(&dir_path);
+
+        if !path.exists() || !path.is_dir() {
+            return Err("Invalid directory".to_string());
+        }
+
+        // Compile regexes ONCE outside the loop for massive performance
+        // Looks for: password=..., secret:..., api_key "..."
+        let regex_credentials = Regex::new(
+            r"(?i)(password|secret|api_key|token|access_key)[\s]*[:=][\s]*[a-zA-Z0-9\-_]{8,}",
+        )
+        .unwrap();
+        // Stripe / Standard API Keys
+        let regex_api = Regex::new(r"(sk_live_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36})").unwrap();
+        // Crypto Wallets / Seed Phrases (12 words)
+        // A very basic heuristic: 12 words separated by spaces on a single line.
+        let regex_seed = Regex::new(r"^(?:[a-z]{3,}\s){11}[a-z]{3,}$").unwrap();
+
+        for entry in walkdir::WalkDir::new(path)
+            .max_depth(5)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let p = entry.path();
+
+            if !p.is_file() {
+                continue;
+            }
+            if !is_scannable_extension(p) {
+                continue;
+            }
+
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.len() > 1024 * 1024 {
+                    continue;
+                } // Skip > 1MB
+            }
+
+            let _ = app_handle.emit("secret-scan-progress", p.to_string_lossy().to_string());
+
+            if let Ok(content) = std::fs::read_to_string(p) {
+                let mut found_category = None;
+
+                // Scan line by line for precise matching
+                for line in content.lines() {
+                    if regex_api.is_match(line) {
+                        found_category = Some("API Key");
+                        break;
+                    }
+                    if regex_credentials.is_match(line) {
+                        found_category = Some("Credential Pair");
+                        break;
+                    }
+                    if regex_seed.is_match(line) {
+                        found_category = Some("Crypto Seed Phrase");
+                        break;
+                    }
+                }
+
+                if let Some(category) = found_category {
+                    findings.push(SecretFinding {
+                        filename: entry.file_name().to_string_lossy().to_string(),
+                        path: p.to_string_lossy().to_string(),
+                        category: category.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(findings)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // --- END OF FILE tools.rs ---
