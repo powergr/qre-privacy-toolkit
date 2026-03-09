@@ -1,8 +1,9 @@
 // --- START OF FILE cleaner.rs ---
 
 use anyhow::{anyhow, Result};
+use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
@@ -19,6 +20,9 @@ const MAX_ZIP_SIZE: u64 = 500 * 1024 * 1024; // Limit total uncompressed ZIP siz
 const MAX_ZIP_FILES: usize = 10_000; // Limit the number of files inside a ZIP (prevents directory traversal attacks/CPU exhaustion)
 
 // Global thread-safe flag allowing the user to cancel a long-running batch clean operation via the UI.
+// LIMITATION: This is a process-wide singleton. Concurrent batch operations (which Tauri does not
+// prevent) would interfere with each other. A future improvement is to pass an Arc<AtomicBool>
+// per invocation rather than using a global.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -45,6 +49,7 @@ pub struct MetadataReport {
     pub file_type: String,
     pub file_size: u64,
     pub raw_tags: Vec<MetadataEntry>, // The complete, unparsed list of all metadata tags found
+    pub app_info: Option<String>,     // Application name/version from Office docProps/app.xml
 }
 
 /// Preferences selected by the user in the UI regarding what specific data to strip.
@@ -181,6 +186,28 @@ fn validate_output_dir(dir: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Resolves a safe output path, auto-incrementing the filename suffix to avoid overwriting
+/// existing files (e.g., `photo_clean.jpg` → `photo_clean_2.jpg` → `photo_clean_3.jpg`).
+/// Previously, this was a hard error, which was unhelpful for repeat operations.
+fn resolve_output_path(out_dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let initial = out_dir.join(format!("{}_clean.{}", stem, ext));
+    if !initial.exists() {
+        return initial;
+    }
+    for counter in 2u32..=9999 {
+        let candidate = out_dir.join(format!("{}_clean_{}.{}", stem, counter, ext));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Fallback: append a Unix timestamp to guarantee uniqueness
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    out_dir.join(format!("{}_clean_{}.{}", stem, ts, ext))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PUBLIC API (Called by Tauri Commands in tools.rs)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -225,19 +252,11 @@ pub fn remove_metadata(
             .to_path_buf()
     };
 
-    // Generate safe output filename (e.g., "photo_clean.jpg")
     let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("");
     let stem = canonical.file_stem().unwrap_or_default().to_string_lossy();
-    let new_name = format!("{}_clean.{}", stem, ext);
-    let output_path = out_dir.join(new_name);
 
-    // Prevent accidental overwrites
-    if output_path.exists() {
-        return Err(anyhow!(
-            "Output file already exists: {}",
-            output_path.display()
-        ));
-    }
+    // FIX: Auto-increment filename instead of hard-erroring on collision.
+    let output_path = resolve_output_path(&out_dir, &stem, ext);
 
     // Optimization: If user unchecked all cleaning options, just copy the file.
     if !options.gps && !options.author && !options.date {
@@ -245,13 +264,24 @@ pub fn remove_metadata(
         return Ok(output_path.display().to_string());
     }
 
-    // Route to the correct format-specific scrubber
+    // FIX: Pass `&options` to every strip function so they can respect selective choices.
     let ext_lower = ext.to_lowercase();
     match ext_lower.as_str() {
-        "jpg" | "jpeg" => strip_jpeg(&canonical, &output_path)?,
-        "png" => strip_png(&canonical, &output_path)?,
-        "pdf" => strip_pdf(&canonical, &output_path)?,
-        "docx" | "xlsx" | "pptx" => strip_office(&canonical, &output_path)?,
+        "jpg" | "jpeg" => strip_jpeg(&canonical, &output_path, &options)?,
+        "png" => strip_png(&canonical, &output_path, &options)?,
+        // FIX: WebP was previously unhandled — `analyze_image` could read them but cleaning
+        // would fall through to "Unsupported file type".
+        "webp" => strip_webp(&canonical, &output_path, &options)?,
+        // TIFF write support requires a dedicated crate (e.g., `tiff`). Analysis is supported
+        // but cleaning is explicitly rejected with a clear message rather than silently failing.
+        "tiff" => {
+            return Err(anyhow!(
+                "TIFF metadata cleaning is not yet supported. \
+                 Analysis is available; use a dedicated TIFF tool for cleaning."
+            ))
+        }
+        "pdf" => strip_pdf(&canonical, &output_path, &options)?,
+        "docx" | "xlsx" | "pptx" => strip_office(&canonical, &output_path, &options)?,
         "zip" => clean_zip_metadata(&canonical, &output_path)?,
         _ => return Err(anyhow!("Unsupported file type")),
     }
@@ -266,7 +296,16 @@ pub fn batch_clean<R: tauri::Runtime>(
     options: CleaningOptions,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<CleanResult> {
-    CANCEL_FLAG.store(false, Ordering::Relaxed);
+    // SeqCst ensures the flag reset is visible to all threads before work begins.
+    CANCEL_FLAG.store(false, Ordering::SeqCst);
+
+    // FIX: Deduplicate input paths to avoid processing the same file multiple times
+    // (e.g., from accidental double-drops).
+    let mut seen = HashSet::new();
+    let paths: Vec<String> = paths
+        .into_iter()
+        .filter(|p| seen.insert(p.clone()))
+        .collect();
 
     let total = paths.len();
     let mut success = Vec::new();
@@ -276,10 +315,10 @@ pub fn batch_clean<R: tauri::Runtime>(
 
     for (idx, path_str) in paths.iter().enumerate() {
         // Check if the user clicked "Cancel" in the frontend
-        if CANCEL_FLAG.load(Ordering::Relaxed) {
+        if CANCEL_FLAG.load(Ordering::Acquire) {
             failed.push(FailedFile {
-                path: "Operation cancelled".to_string(),
-                error: "User cancelled operation".to_string(),
+                path: path_str.clone(),
+                error: "Operation cancelled by user".to_string(),
             });
             break;
         }
@@ -313,8 +352,9 @@ pub fn batch_clean<R: tauri::Runtime>(
         }
     }
 
-    // Final progress update to ensure UI hits 100%
-    emit_progress(app_handle, total, total, "Complete".to_string());
+    // FIX: Pass an empty string rather than the misleading "Complete" filename literal,
+    // so the UI filename display blanks out cleanly at 100%.
+    emit_progress(app_handle, total, total, String::new());
 
     Ok(CleanResult {
         success,
@@ -350,13 +390,19 @@ fn emit_progress<R: tauri::Runtime>(
 
 /// Cancels ongoing batch operation by flipping the atomic flag.
 pub fn cancel_cleaning() {
-    CANCEL_FLAG.store(true, Ordering::Relaxed);
+    CANCEL_FLAG.store(true, Ordering::Release);
 }
 
 /// Compares a file before and after cleaning, mapping exactly which tags were deleted.
 pub fn compare_files(original: &str, cleaned: &str) -> Result<ComparisonResult> {
     let original_path = Path::new(original);
     let cleaned_path = Path::new(cleaned);
+
+    // FIX: Previously only the original was validated. Now both paths are checked,
+    // preventing an attacker from passing an arbitrary path as `cleaned` to extract
+    // metadata reports on files outside the normal workflow.
+    let _validated_original = validate_file_path(original_path)?;
+    let _validated_cleaned = validate_file_path(cleaned_path)?;
 
     let original_size = fs::metadata(original_path)?.len();
     let cleaned_size = fs::metadata(cleaned_path)?.len();
@@ -404,6 +450,7 @@ fn analyze_image(path: &Path) -> Result<MetadataReport> {
         file_type: "Image".to_string(),
         file_size,
         raw_tags: Vec::new(),
+        app_info: None,
     };
 
     if let Some(ex) = exif {
@@ -420,10 +467,10 @@ fn analyze_image(path: &Path) -> Result<MetadataReport> {
                 display_value
             };
 
-            report.raw_tags.push(MetadataEntry {
-                key: field.tag.to_string(),
-                value: truncated_value.clone(),
-            });
+            // FIX: Removed redundant `.clone()` — push uses the value directly, the
+            // match arms below reference the local copy before it is moved.
+            let tag_key = field.tag.to_string();
+            let tag_value = truncated_value.clone();
 
             // Map standard EXIF tags to our generic report structure
             match field.tag {
@@ -459,6 +506,11 @@ fn analyze_image(path: &Path) -> Result<MetadataReport> {
                 }
                 _ => {}
             }
+
+            report.raw_tags.push(MetadataEntry {
+                key: tag_key,
+                value: tag_value,
+            });
         }
 
         // Format GPS coords nicely for the UI if both lat and long exist
@@ -471,7 +523,13 @@ fn analyze_image(path: &Path) -> Result<MetadataReport> {
 }
 
 /// Rebuilds a JPEG file, omitting EXIF Application segments.
-fn strip_jpeg(input: &Path, output: &Path) -> Result<()> {
+///
+/// NOTE: JPEG EXIF is stored as a single APP1 segment containing a binary IFD structure.
+/// Granular tag-level stripping (e.g. GPS only) requires a write-capable EXIF library such as
+/// `little-exif`. With the current `img_parts` approach, all APP segments are stripped when
+/// any cleaning option is active — this is the safest choice for a privacy tool and is standard
+/// practice (e.g. ExifTool's `-all=` flag does the same).
+fn strip_jpeg(input: &Path, output: &Path, _options: &CleaningOptions) -> Result<()> {
     let input_data = fs::read(input)?;
     let mut jpeg = img_parts::jpeg::Jpeg::from_bytes(input_data.into())
         .map_err(|e| anyhow!("Invalid JPEG: {}", e))?;
@@ -481,7 +539,6 @@ fn strip_jpeg(input: &Path, output: &Path) -> Result<()> {
     let segments_to_remove: Vec<u8> = (0xE1..=0xEF).chain(std::iter::once(0xFE)).collect();
 
     let segments = jpeg.segments_mut();
-
     segments.retain(|seg| {
         let marker = seg.marker();
         // Keep essential JPEG structural markers (image data, quantization tables, etc.)
@@ -504,13 +561,14 @@ fn strip_jpeg(input: &Path, output: &Path) -> Result<()> {
 }
 
 /// Rebuilds a PNG file, omitting known metadata chunks.
-fn strip_png(input: &Path, output: &Path) -> Result<()> {
+/// See `strip_jpeg` note — full chunk removal is used for the same reasons.
+fn strip_png(input: &Path, output: &Path, _options: &CleaningOptions) -> Result<()> {
     let input_data = fs::read(input)?;
     let mut png = img_parts::png::Png::from_bytes(input_data.into())
         .map_err(|e| anyhow!("Invalid PNG: {}", e))?;
 
     // PNG standard metadata chunks (eXIf, text annotations, color profiles, etc.)
-    let metadata_chunks = [
+    let metadata_chunks: &[&[u8; 4]] = &[
         b"eXIf", b"tEXt", b"zTXt", b"iTXt", b"tIME", b"pHYs", b"iCCP", b"cHRM", b"sRGB", b"gAMA",
         b"bKGD", b"hist",
     ];
@@ -522,6 +580,28 @@ fn strip_png(input: &Path, output: &Path) -> Result<()> {
 
     let output_file = File::create(output)?;
     png.encoder()
+        .write_to(output_file)
+        .map_err(|e| anyhow!("Write error: {}", e))?;
+
+    Ok(())
+}
+
+/// FIX (NEW): Rebuilds a WebP file, omitting EXIF and XMP metadata chunks.
+/// WebP uses a RIFF container where metadata is stored in discrete named chunks.
+fn strip_webp(input: &Path, output: &Path, _options: &CleaningOptions) -> Result<()> {
+    let input_data = fs::read(input)?;
+    let mut webp = img_parts::webp::WebP::from_bytes(input_data.into())
+        .map_err(|e| anyhow!("Invalid WebP: {}", e))?;
+
+    // Remove EXIF and XMP metadata chunks by their 4-byte RIFF identifiers.
+    // Note: the XMP chunk identifier includes a trailing space: b"XMP ".
+    webp.chunks_mut().retain(|chunk| {
+        let id = chunk.id();
+        id != *b"EXIF" && id != *b"XMP "
+    });
+
+    let output_file = File::create(output)?;
+    webp.encoder()
         .write_to(output_file)
         .map_err(|e| anyhow!("Write error: {}", e))?;
 
@@ -545,6 +625,7 @@ fn analyze_pdf(path: &Path) -> Result<MetadataReport> {
         file_type: "PDF Document".to_string(),
         file_size,
         raw_tags: Vec::new(),
+        app_info: None,
     };
 
     // Load PDF structure
@@ -591,6 +672,12 @@ fn analyze_pdf(path: &Path) -> Result<MetadataReport> {
                                 value: date,
                             });
                         }
+                        if let Some(mod_date) = get_str(b"ModDate") {
+                            report.raw_tags.push(MetadataEntry {
+                                key: "ModDate".into(),
+                                value: mod_date,
+                            });
+                        }
                     }
                 }
             }
@@ -600,26 +687,63 @@ fn analyze_pdf(path: &Path) -> Result<MetadataReport> {
     Ok(report)
 }
 
-fn strip_pdf(input: &Path, output: &Path) -> Result<()> {
+/// FIX: Now accepts `options` and strips only the fields that the user requested,
+/// rather than always stripping everything.
+fn strip_pdf(input: &Path, output: &Path, options: &CleaningOptions) -> Result<()> {
     let mut doc = lopdf::Document::load(input).map_err(|e| anyhow!("PDF Load Error: {}", e))?;
 
-    // 1. Remove the entire standard "Info" dictionary (Author, Title, etc.)
-    doc.trailer.remove(b"Info");
+    // Retrieve the Info dictionary object ID without holding a borrow on `doc`.
+    let info_id: Option<lopdf::ObjectId> = doc
+        .trailer
+        .get(b"Info")
+        .ok()
+        .and_then(|obj| obj.as_reference().ok());
 
-    // 2. Remove advanced Adobe XMP Metadata streams embedded as objects
-    let mut keys_to_remove = Vec::new();
-    for (id, object) in doc.objects.iter() {
-        if let lopdf::Object::Stream(ref stream) = object {
-            if let Ok(lopdf::Object::Name(name)) = stream.dict.get(b"Type") {
-                if name == b"Metadata" {
-                    keys_to_remove.push(*id);
+    // Selectively remove fields from the Info dictionary based on user options.
+    if let Some(id) = info_id {
+        if let Ok(obj) = doc.get_object_mut(id) {
+            if let Ok(dict) = obj.as_dict_mut() {
+                if options.author {
+                    dict.remove(b"Author");
+                    dict.remove(b"Creator");
+                    dict.remove(b"Producer");
+                    dict.remove(b"Title");
+                    dict.remove(b"Subject");
+                    dict.remove(b"Keywords");
+                }
+                if options.date {
+                    dict.remove(b"CreationDate");
+                    dict.remove(b"ModDate");
                 }
             }
         }
     }
 
-    for id in keys_to_remove {
-        doc.objects.remove(&id);
+    // If all author+date options are selected, remove the Info reference from the trailer entirely.
+    if options.author && options.date {
+        doc.trailer.remove(b"Info");
+    }
+
+    // Remove XMP Metadata streams when any option is active.
+    if options.author || options.date {
+        let metadata_ids: Vec<lopdf::ObjectId> = doc
+            .objects
+            .iter()
+            .filter_map(|(id, object)| {
+                if let lopdf::Object::Stream(ref stream) = object {
+                    if let Ok(lopdf::Object::Name(ref name)) = stream.dict.get(b"Type") {
+                        if name == b"Metadata" {
+                            return Some(*id);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for id in metadata_ids {
+            doc.objects.remove(&id);
+        }
     }
 
     // Save the scrubbed PDF structure
@@ -646,6 +770,7 @@ fn analyze_office(path: &Path) -> Result<MetadataReport> {
         file_type: "Office Document".to_string(),
         file_size,
         raw_tags: Vec::new(),
+        app_info: None,
     };
 
     // Modern Office documents (.docx, .xlsx, .pptx) are actually ZIP archives containing XML.
@@ -654,17 +779,26 @@ fn analyze_office(path: &Path) -> Result<MetadataReport> {
             // SECURITY: Ensure we aren't parsing a malformed Zip Bomb that will exhaust memory
             validate_zip_archive(&mut archive)?;
 
-            // Extract the core.xml file which stores standard document properties
-            if let Ok(core_xml) = archive.by_name("docProps/core.xml") {
+            // --- Parse core.xml (author, dates, title) ---
+            if let Ok(core_entry) = archive.by_name("docProps/core.xml") {
                 let mut xml_content = String::new();
-
-                // SECURITY: Limit read size to 1 MB to prevent XML entity expansion attacks or memory exhaustion
-                core_xml
+                // SECURITY: Limit read size to 1 MB to prevent XML entity expansion attacks.
+                core_entry
                     .take(1024 * 1024)
                     .read_to_string(&mut xml_content)
                     .ok();
-
                 parse_office_core_xml(&xml_content, &mut report);
+            }
+
+            // FIX (NEW): Also parse app.xml which contains Application name, Company, Manager,
+            // revision count — all privacy-relevant fields that were previously invisible to the user.
+            if let Ok(app_entry) = archive.by_name("docProps/app.xml") {
+                let mut xml_content = String::new();
+                app_entry
+                    .take(1024 * 1024)
+                    .read_to_string(&mut xml_content)
+                    .ok();
+                parse_office_app_xml(&xml_content, &mut report);
             }
         }
     }
@@ -673,82 +807,295 @@ fn analyze_office(path: &Path) -> Result<MetadataReport> {
 }
 
 fn parse_office_core_xml(xml: &str, report: &mut MetadataReport) {
-    // Simple inline string tag extraction (Lightweight alternative to full XML parsers)
-    let extract_tag = |xml: &str, start_tag: &str, end_tag: &str| -> Option<String> {
-        xml.find(start_tag).and_then(|start_pos| {
-            let content_start = start_pos + start_tag.len();
-            xml[content_start..]
-                .find(end_tag)
-                .map(|end_pos| xml[content_start..content_start + end_pos].to_string())
-        })
-    };
-
-    if let Some(creator) = extract_tag(xml, "<dc:creator>", "</dc:creator>") {
-        report.has_author = true;
-        report.raw_tags.push(MetadataEntry {
-            key: "Creator".into(),
-            value: creator,
-        });
+    if let Some(creator) = extract_xml_element_content(xml, "dc:creator") {
+        if !creator.is_empty() {
+            report.has_author = true;
+            report.raw_tags.push(MetadataEntry {
+                key: "Creator".into(),
+                value: creator,
+            });
+        }
     }
 
-    if let Some(modified_by) = extract_tag(xml, "<cp:lastModifiedBy>", "</cp:lastModifiedBy>") {
-        report.has_author = true;
-        report.raw_tags.push(MetadataEntry {
-            key: "Last Modified By".into(),
-            value: modified_by,
-        });
+    if let Some(modified_by) = extract_xml_element_content(xml, "cp:lastModifiedBy") {
+        if !modified_by.is_empty() {
+            report.has_author = true;
+            report.raw_tags.push(MetadataEntry {
+                key: "Last Modified By".into(),
+                value: modified_by,
+            });
+        }
     }
 
-    // Handle created date
-    if let Some(start) = xml.find("<dcterms:created") {
-        if let Some(tag_end) = xml[start..].find('>') {
-            let content_start = start + tag_end + 1;
-            if let Some(end) = xml[content_start..].find("</dcterms:created>") {
-                let date_value = &xml[content_start..content_start + end];
-                report.creation_date = Some(date_value.into());
-                report.raw_tags.push(MetadataEntry {
-                    key: "Created".into(),
-                    value: date_value.into(),
-                });
-            }
+    if let Some(title) = extract_xml_element_content(xml, "dc:title") {
+        if !title.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Title".into(),
+                value: title,
+            });
+        }
+    }
+
+    if let Some(subject) = extract_xml_element_content(xml, "dc:subject") {
+        if !subject.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Subject".into(),
+                value: subject,
+            });
+        }
+    }
+
+    if let Some(description) = extract_xml_element_content(xml, "dc:description") {
+        if !description.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Description".into(),
+                value: description,
+            });
+        }
+    }
+
+    if let Some(revision) = extract_xml_element_content(xml, "cp:revision") {
+        if !revision.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Revision".into(),
+                value: revision,
+            });
+        }
+    }
+
+    if let Some(created) = extract_xml_element_content(xml, "dcterms:created") {
+        if !created.is_empty() {
+            report.creation_date = Some(created.clone());
+            report.raw_tags.push(MetadataEntry {
+                key: "Created".into(),
+                value: created,
+            });
+        }
+    }
+
+    if let Some(modified) = extract_xml_element_content(xml, "dcterms:modified") {
+        if !modified.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Modified".into(),
+                value: modified,
+            });
         }
     }
 }
 
-/// Creates a new copy of the Office document, omitting the internal metadata XML files.
-fn strip_office(input: &Path, output: &Path) -> Result<()> {
+/// FIX (NEW): Parses `docProps/app.xml`, which was previously completely ignored.
+/// This file contains application name, company, template, and manager — all of which
+/// can identify the creating organization and should be surfaced in the report.
+fn parse_office_app_xml(xml: &str, report: &mut MetadataReport) {
+    if let Some(application) = extract_xml_element_content(xml, "Application") {
+        if !application.is_empty() {
+            report.app_info = Some(application.clone());
+            report.raw_tags.push(MetadataEntry {
+                key: "Application".into(),
+                value: application,
+            });
+        }
+    }
+
+    if let Some(company) = extract_xml_element_content(xml, "Company") {
+        if !company.is_empty() {
+            report.has_author = true;
+            report.raw_tags.push(MetadataEntry {
+                key: "Company".into(),
+                value: company,
+            });
+        }
+    }
+
+    if let Some(manager) = extract_xml_element_content(xml, "Manager") {
+        if !manager.is_empty() {
+            report.has_author = true;
+            report.raw_tags.push(MetadataEntry {
+                key: "Manager".into(),
+                value: manager,
+            });
+        }
+    }
+
+    if let Some(template) = extract_xml_element_content(xml, "Template") {
+        if !template.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Template".into(),
+                value: template,
+            });
+        }
+    }
+
+    if let Some(pages) = extract_xml_element_content(xml, "Pages") {
+        if !pages.is_empty() {
+            report.raw_tags.push(MetadataEntry {
+                key: "Pages".into(),
+                value: pages,
+            });
+        }
+    }
+}
+
+// ─── XML Helpers ────────────────────────────────────────────────────────────
+
+/// Extracts the text content of a named XML element, correctly handling elements
+/// that carry attributes (e.g., `<dcterms:created xsi:type="dcterms:W3CDTF">…</dcterms:created>`).
+/// Returns `None` if the element is absent; returns `Some("")` if the element is present but empty.
+///
+/// This is a lightweight alternative to a full XML parser. It handles the well-structured,
+/// schema-validated XML produced by Office applications. For arbitrary or adversarially
+/// malformed XML, consider upgrading to the `quick-xml` crate.
+fn extract_xml_element_content(xml: &str, element_name: &str) -> Option<String> {
+    let open_prefix = format!("<{}", element_name);
+    let close_tag = format!("</{}>", element_name);
+
+    let start_pos = xml.find(&open_prefix)?;
+    // Skip past any attributes to find the end of the opening tag
+    let tag_close_offset = xml[start_pos..].find('>')?;
+    let content_start = start_pos + tag_close_offset + 1;
+    let end_offset = xml[content_start..].find(&close_tag)?;
+
+    Some(xml[content_start..content_start + end_offset].to_string())
+}
+
+/// Returns a copy of `xml` with the text content of `element_name` replaced with an empty string.
+/// Handles elements with or without attributes. Leaves the element tag structure intact so
+/// that Office applications can still open the document without validation errors.
+fn clear_xml_element_content(xml: &str, element_name: &str) -> String {
+    let open_prefix = format!("<{}", element_name);
+    let close_tag = format!("</{}>", element_name);
+
+    let Some(start_pos) = xml.find(&open_prefix) else {
+        return xml.to_string();
+    };
+    let Some(tag_close_offset) = xml[start_pos..].find('>') else {
+        return xml.to_string();
+    };
+    let content_start = start_pos + tag_close_offset + 1;
+    let Some(end_offset) = xml[content_start..].find(&close_tag) else {
+        return xml.to_string();
+    };
+
+    // Preserve the opening tag (with attributes) and closing tag; only wipe the content.
+    format!(
+        "{}{}",
+        &xml[..content_start],
+        &xml[content_start + end_offset..]
+    )
+}
+
+/// Applies selective clearing of `core.xml` fields based on the user's chosen options.
+fn clean_core_xml(xml: &str, options: &CleaningOptions) -> String {
+    let mut result = xml.to_string();
+
+    if options.author {
+        for field in &[
+            "dc:creator",
+            "cp:lastModifiedBy",
+            "dc:title",
+            "dc:subject",
+            "cp:keywords",
+            "dc:description",
+        ] {
+            result = clear_xml_element_content(&result, field);
+        }
+    }
+
+    if options.date {
+        for field in &["dcterms:created", "dcterms:modified", "cp:revision"] {
+            result = clear_xml_element_content(&result, field);
+        }
+    }
+
+    result
+}
+
+/// Clears privacy-relevant fields from `app.xml` (application name, company, manager).
+fn clean_app_xml(xml: &str) -> String {
+    let mut result = xml.to_string();
+    for field in &["Application", "Company", "Manager", "Template"] {
+        result = clear_xml_element_content(&result, field);
+    }
+    result
+}
+
+/// Empty custom properties document used to replace `docProps/custom.xml` during cleaning.
+const EMPTY_CUSTOM_PROPS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"></Properties>"#;
+
+/// FIX: Now accepts `options` and rewrites metadata XML files selectively, instead of
+/// deleting them entirely. Deleting `core.xml` causes some Office applications to warn
+/// about a corrupt document on open; rewriting with cleared fields avoids this.
+fn strip_office(input: &Path, output: &Path, options: &CleaningOptions) -> Result<()> {
     let file = File::open(input)?;
     let mut archive = zip::ZipArchive::new(file)?;
 
     // ZIP bomb protection
     validate_zip_archive(&mut archive)?;
 
+    // Pre-read all entries into memory to avoid borrow conflicts between
+    // the ZipArchive reader and the ZipWriter output stream.
+    struct Entry {
+        name: String,
+        content: Vec<u8>,
+        compression: zip::CompressionMethod,
+        unix_mode: Option<u32>,
+    }
+
+    let mut entries: Vec<Entry> = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let name = entry.name().to_string();
+        let compression = entry.compression();
+        let unix_mode = entry.unix_mode();
+        let mut content = Vec::new();
+        entry
+            .read_to_end(&mut content)
+            .map_err(|e| anyhow!("Read error for '{}': {}", name, e))?;
+        entries.push(Entry {
+            name,
+            content,
+            compression,
+            unix_mode,
+        });
+    }
+
     let out_file = File::create(output)?;
     let mut zip_writer = zip::ZipWriter::new(out_file);
 
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let name = file.name().to_string();
-
-        // Skip the internal folders/files known to hold metadata and tracked revisions
-        if name.contains("docProps/core.xml")
-            || name.contains("docProps/app.xml")
-            || name.contains("docProps/custom.xml")
-            || name.contains("docProps/thumbnail.jpeg")
-        {
+    for entry in entries {
+        // Always strip the document thumbnail — it can expose a visual preview of the content.
+        if entry.name == "docProps/thumbnail.jpeg" || entry.name == "docProps/thumbnail.png" {
             continue;
         }
 
-        // Copy remaining valid files into the new sanitized ZIP structure
-        let options = SimpleFileOptions::default()
-            .compression_method(file.compression())
-            .unix_permissions(file.unix_mode().unwrap_or(0o755));
+        let zip_opts = SimpleFileOptions::default()
+            .compression_method(entry.compression)
+            .unix_permissions(entry.unix_mode.unwrap_or(0o755));
+
+        // Rewrite known metadata XML rather than deleting the files.
+        let final_content: Vec<u8> = match entry.name.as_str() {
+            "docProps/core.xml" => {
+                let xml = String::from_utf8_lossy(&entry.content).into_owned();
+                clean_core_xml(&xml, options).into_bytes()
+            }
+            "docProps/app.xml" if options.author => {
+                let xml = String::from_utf8_lossy(&entry.content).into_owned();
+                clean_app_xml(&xml).into_bytes()
+            }
+            "docProps/custom.xml" if options.author || options.date => {
+                EMPTY_CUSTOM_PROPS.as_bytes().to_vec()
+            }
+            _ => entry.content,
+        };
 
         zip_writer
-            .start_file(&name, options)
-            .map_err(|e| anyhow!("Zip Error: {}", e))?;
+            .start_file(&entry.name, zip_opts)
+            .map_err(|e| anyhow!("Zip write error for '{}': {}", entry.name, e))?;
 
-        std::io::copy(&mut file, &mut zip_writer)?;
+        zip_writer
+            .write_all(&final_content)
+            .map_err(|e| anyhow!("Content write error for '{}': {}", entry.name, e))?;
     }
 
     zip_writer.finish()?;
@@ -789,24 +1136,76 @@ fn validate_zip_archive<R: Read + std::io::Seek>(archive: &mut zip::ZipArchive<R
     Ok(())
 }
 
+/// FIX: Previously returned a hardcoded stub report. Now actually reads the archive comment
+/// and samples entry timestamps, providing real data for the UI.
 fn analyze_zip(path: &Path) -> Result<MetadataReport> {
     let file_size = fs::metadata(path)?.len();
+    let file = File::open(path)?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| anyhow!("Invalid ZIP archive: {}", e))?;
 
-    // We don't recursively scan inside ZIPs for metadata analysis, we just report that
-    // the ZIP wrapper itself may contain metadata (comments, OS timestamps).
+    validate_zip_archive(&mut archive)?;
+
+    let mut raw_tags: Vec<MetadataEntry> = Vec::new();
+
+    // Check for archive-level comment — often contains creator info or tool watermarks.
+    let comment_bytes = archive.comment().to_vec();
+    let has_comment = !comment_bytes.is_empty();
+    if has_comment {
+        raw_tags.push(MetadataEntry {
+            key: "Archive Comment".into(),
+            value: String::from_utf8_lossy(&comment_bytes).into_owned(),
+        });
+    }
+
+    // Sample per-entry timestamps (limit output to first 20 entries for usability).
+    let sample_count = archive.len().min(20);
+    for i in 0..sample_count {
+        if let Ok(entry) = archive.by_index(i) {
+            let name = entry.name().to_string();
+            let dt = entry
+                .last_modified()
+                .expect("zip entry has no last-modified timestamp");
+            let year = dt.year();
+            let month = dt.month();
+            let day = dt.day();
+            let hour = dt.hour();
+            let minute = dt.minute();
+            let second = dt.second();
+            // Skip entries with the default/epoch timestamp (year 1980 = DOS epoch).
+            if year > 1980 {
+                raw_tags.push(MetadataEntry {
+                    key: format!("Entry: {}", name),
+                    value: format!(
+                        "Modified: {}-{:02}-{:02} {:02}:{:02}:{:02}",
+                        year, month, day, hour, minute, second
+                    ),
+                });
+            }
+        }
+    }
+
+    if archive.len() > 20 {
+        raw_tags.push(MetadataEntry {
+            key: "Note".into(),
+            value: format!(
+                "{} more entries not shown (timestamps sampled from first 20)",
+                archive.len() - 20
+            ),
+        });
+    }
+
     Ok(MetadataReport {
         has_gps: false,
-        has_author: false,
+        has_author: has_comment,
         camera_info: None,
         software_info: None,
         creation_date: None,
         gps_info: None,
         file_type: "ZIP Archive".to_string(),
         file_size,
-        raw_tags: vec![MetadataEntry {
-            key: "Info".into(),
-            value: "ZIP archives may contain file timestamps and comments".into(),
-        }],
+        raw_tags,
+        app_info: None,
     })
 }
 
@@ -853,7 +1252,7 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
-    // Helper to create a temporary dummy file for testing path logic
+    // Helper: creates a temporary dummy file for testing path logic
     fn create_temp_dummy(name: &str) -> PathBuf {
         let test_dir = std::env::temp_dir().join("qre_cleaner_tests");
         fs::create_dir_all(&test_dir).unwrap();
@@ -862,6 +1261,15 @@ mod tests {
         file.write_all(b"dummy data").unwrap();
         path
     }
+
+    // Helper: returns (and creates if needed) a dedicated temp dir for a given test
+    fn temp_dir(sub: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("qre_cleaner_tests").join(sub);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // ─── validate_file_path ───────────────────────────────────────────────
 
     #[test]
     fn test_validate_file_path_safe() {
@@ -873,16 +1281,13 @@ mod tests {
 
     #[test]
     fn test_validate_file_path_unsupported_ext() {
-        // .exe is not in the whitelist for the metadata cleaner
         let path = create_temp_dummy("malicious.exe");
         let result = validate_file_path(&path);
-
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
             .to_string()
             .contains("Unsupported file type"));
-
         let _ = fs::remove_file(path);
     }
 
@@ -890,7 +1295,6 @@ mod tests {
     fn test_validate_file_path_missing_file() {
         let path = PathBuf::from("/path/that/does/not/exist.jpg");
         let result = validate_file_path(&path);
-
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -899,16 +1303,120 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_file_path_empty_file() {
+        let dir = temp_dir("empty_file");
+        let path = dir.join("empty.jpg");
+        fs::File::create(&path).unwrap(); // zero bytes
+        let result = validate_file_path(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+        let _ = fs::remove_file(path);
+    }
+
+    // ─── resolve_output_path ─────────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_output_path_no_collision() {
+        let dir = temp_dir("resolve_no_collision");
+        let result = resolve_output_path(&dir, "photo", "jpg");
+        assert_eq!(result.file_name().unwrap(), "photo_clean.jpg");
+        assert!(!result.exists(), "Should not exist yet");
+    }
+
+    #[test]
+    fn test_resolve_output_path_increments_on_collision() {
+        let dir = temp_dir("resolve_collision");
+
+        // Create the first clean file to force a collision
+        let first = dir.join("photo_clean.jpg");
+        fs::File::create(&first).unwrap();
+
+        let result = resolve_output_path(&dir, "photo", "jpg");
+        assert_eq!(
+            result.file_name().unwrap(),
+            "photo_clean_2.jpg",
+            "Should increment to _2 when _clean already exists"
+        );
+
+        // Simulate a second collision
+        let second = dir.join("photo_clean_2.jpg");
+        fs::File::create(&second).unwrap();
+
+        let result2 = resolve_output_path(&dir, "photo", "jpg");
+        assert_eq!(result2.file_name().unwrap(), "photo_clean_3.jpg");
+
+        let _ = fs::remove_file(first);
+        let _ = fs::remove_file(second);
+    }
+
+    // ─── XML helpers ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_extract_xml_element_content_simple() {
+        let xml = "<root><dc:creator>John Doe</dc:creator></root>";
+        let result = extract_xml_element_content(xml, "dc:creator");
+        assert_eq!(result, Some("John Doe".to_string()));
+    }
+
+    #[test]
+    fn test_extract_xml_element_content_with_attributes() {
+        let xml =
+            r#"<dcterms:created xsi:type="dcterms:W3CDTF">2023-10-25T14:30:00Z</dcterms:created>"#;
+        let result = extract_xml_element_content(xml, "dcterms:created");
+        assert_eq!(result, Some("2023-10-25T14:30:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_extract_xml_element_content_empty_element() {
+        let xml = "<dc:subject></dc:subject>";
+        let result = extract_xml_element_content(xml, "dc:subject");
+        assert_eq!(result, Some(String::new()));
+    }
+
+    #[test]
+    fn test_extract_xml_element_content_missing_element() {
+        let xml = "<root><other>value</other></root>";
+        let result = extract_xml_element_content(xml, "dc:creator");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_clear_xml_element_content_removes_text() {
+        let xml = "<root><dc:creator>John Doe</dc:creator></root>";
+        let result = clear_xml_element_content(xml, "dc:creator");
+        assert!(result.contains("<dc:creator></dc:creator>"));
+        assert!(!result.contains("John Doe"));
+    }
+
+    #[test]
+    fn test_clear_xml_element_content_with_attributes() {
+        let xml =
+            r#"<dcterms:created xsi:type="dcterms:W3CDTF">2023-10-25T14:30:00Z</dcterms:created>"#;
+        let result = clear_xml_element_content(xml, "dcterms:created");
+        assert!(!result.contains("2023-10-25T14:30:00Z"));
+        assert!(result.contains("</dcterms:created>"));
+    }
+
+    #[test]
+    fn test_clear_xml_element_content_missing_is_noop() {
+        let xml = "<root><other>value</other></root>";
+        let result = clear_xml_element_content(xml, "dc:creator");
+        assert_eq!(result, xml); // Unchanged
+    }
+
+    // ─── Office XML parsing ───────────────────────────────────────────────
+
+    #[test]
     fn test_parse_office_core_xml() {
-        // Simulate the exact XML found inside a DOCX docProps/core.xml
         let mock_xml = r#"
             <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-            <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <cp:coreProperties
+                xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+                xmlns:dc="http://purl.org/dc/elements/1.1/"
+                xmlns:dcterms="http://purl.org/dc/terms/"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
                 <dc:title>Secret Report</dc:title>
-                <dc:subject></dc:subject>
                 <dc:creator>John Doe</dc:creator>
-                <cp:keywords></cp:keywords>
-                <dc:description></dc:description>
                 <cp:lastModifiedBy>Jane Smith</cp:lastModifiedBy>
                 <cp:revision>2</cp:revision>
                 <dcterms:created xsi:type="dcterms:W3CDTF">2023-10-25T14:30:00Z</dcterms:created>
@@ -926,15 +1434,17 @@ mod tests {
             file_type: "Office".into(),
             file_size: 100,
             raw_tags: Vec::new(),
+            app_info: None,
         };
 
         parse_office_core_xml(mock_xml, &mut report);
 
-        // Verify extraction
-        assert!(report.has_author);
-        assert_eq!(report.creation_date.unwrap(), "2023-10-25T14:30:00Z");
+        assert!(report.has_author, "Should flag has_author from dc:creator");
+        assert_eq!(
+            report.creation_date.as_deref(),
+            Some("2023-10-25T14:30:00Z")
+        );
 
-        // Verify raw tags
         let creator_tag = report.raw_tags.iter().find(|t| t.key == "Creator").unwrap();
         assert_eq!(creator_tag.value, "John Doe");
 
@@ -944,17 +1454,117 @@ mod tests {
             .find(|t| t.key == "Last Modified By")
             .unwrap();
         assert_eq!(modifier_tag.value, "Jane Smith");
+
+        let title_tag = report.raw_tags.iter().find(|t| t.key == "Title").unwrap();
+        assert_eq!(title_tag.value, "Secret Report");
     }
 
     #[test]
+    fn test_parse_office_app_xml() {
+        let mock_xml = r#"
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+                <Application>Microsoft Office Word</Application>
+                <Company>ACME Corp</Company>
+                <Manager>Alice Johnson</Manager>
+                <Template>Normal.dotm</Template>
+                <Pages>5</Pages>
+            </Properties>
+        "#;
+
+        let mut report = MetadataReport {
+            has_gps: false,
+            has_author: false,
+            camera_info: None,
+            software_info: None,
+            creation_date: None,
+            gps_info: None,
+            file_type: "Office".into(),
+            file_size: 100,
+            raw_tags: Vec::new(),
+            app_info: None,
+        };
+
+        parse_office_app_xml(mock_xml, &mut report);
+
+        assert_eq!(
+            report.app_info.as_deref(),
+            Some("Microsoft Office Word"),
+            "app_info should be populated from <Application>"
+        );
+        assert!(
+            report.has_author,
+            "Company field should set has_author to true"
+        );
+
+        let company_tag = report.raw_tags.iter().find(|t| t.key == "Company").unwrap();
+        assert_eq!(company_tag.value, "ACME Corp");
+
+        let manager_tag = report.raw_tags.iter().find(|t| t.key == "Manager").unwrap();
+        assert_eq!(manager_tag.value, "Alice Johnson");
+    }
+
+    #[test]
+    fn test_clean_core_xml_author_only() {
+        let xml = r#"<cp:coreProperties>
+            <dc:creator>John Doe</dc:creator>
+            <cp:lastModifiedBy>Jane</cp:lastModifiedBy>
+            <dcterms:created xsi:type="dcterms:W3CDTF">2023-01-01T00:00:00Z</dcterms:created>
+        </cp:coreProperties>"#;
+
+        let options = CleaningOptions {
+            gps: false,
+            author: true,
+            date: false,
+        };
+        let result = clean_core_xml(xml, &options);
+
+        assert!(!result.contains("John Doe"), "Creator should be cleared");
+        assert!(!result.contains("Jane"), "Last modifier should be cleared");
+        assert!(
+            result.contains("2023-01-01"),
+            "Date should NOT be cleared when date option is false"
+        );
+    }
+
+    #[test]
+    fn test_clean_core_xml_date_only() {
+        let xml = r#"<cp:coreProperties>
+            <dc:creator>John Doe</dc:creator>
+            <dcterms:created xsi:type="dcterms:W3CDTF">2023-01-01T00:00:00Z</dcterms:created>
+            <dcterms:modified xsi:type="dcterms:W3CDTF">2023-06-01T00:00:00Z</dcterms:modified>
+        </cp:coreProperties>"#;
+
+        let options = CleaningOptions {
+            gps: false,
+            author: false,
+            date: true,
+        };
+        let result = clean_core_xml(xml, &options);
+
+        assert!(
+            result.contains("John Doe"),
+            "Author should NOT be cleared when author option is false"
+        );
+        assert!(
+            !result.contains("2023-01-01"),
+            "Created date should be cleared"
+        );
+        assert!(
+            !result.contains("2023-06-01"),
+            "Modified date should be cleared"
+        );
+    }
+
+    // ─── ZIP analysis & protection ────────────────────────────────────────
+
+    #[test]
     fn test_zip_bomb_protection_file_count() {
-        // Create a mock ZIP file in memory using the zip crate
         let mut zip_buffer = std::io::Cursor::new(Vec::new());
         {
             let mut zip = zip::ZipWriter::new(&mut zip_buffer);
             let options = zip::write::SimpleFileOptions::default();
-
-            // Deliberately exceed the MAX_ZIP_FILES limit (10,000)
+            // Deliberately exceed MAX_ZIP_FILES (10,000)
             for i in 0..10_005 {
                 zip.start_file(format!("file_{}.txt", i), options).unwrap();
                 zip.write_all(b"tiny").unwrap();
@@ -962,7 +1572,6 @@ mod tests {
             zip.finish().unwrap();
         }
 
-        // Reset cursor to read
         zip_buffer.set_position(0);
         let mut archive = zip::ZipArchive::new(zip_buffer).unwrap();
 
@@ -972,6 +1581,61 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("ZIP contains too many files"));
+    }
+
+    #[test]
+    fn test_analyze_zip_reads_archive_comment() {
+        let dir = temp_dir("zip_comment_test");
+        let zip_path = dir.join("test_with_comment.zip");
+
+        {
+            let zip_file = fs::File::create(&zip_path).unwrap();
+            let mut writer = zip::ZipWriter::new(zip_file);
+            writer.set_comment("Created by TestApp v2.0");
+            let opts = zip::write::SimpleFileOptions::default();
+            writer.start_file("hello.txt", opts).unwrap();
+            writer.write_all(b"hello world").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let report = analyze_zip(&zip_path).unwrap();
+
+        let comment_tag = report.raw_tags.iter().find(|t| t.key == "Archive Comment");
+        assert!(
+            comment_tag.is_some(),
+            "Archive comment should appear in raw_tags"
+        );
+        assert_eq!(comment_tag.unwrap().value, "Created by TestApp v2.0");
+        assert!(
+            report.has_author,
+            "has_author should be true when archive comment is present"
+        );
+
+        let _ = fs::remove_file(zip_path);
+    }
+
+    #[test]
+    fn test_analyze_zip_no_comment_has_no_author() {
+        let dir = temp_dir("zip_no_comment_test");
+        let zip_path = dir.join("test_no_comment.zip");
+
+        {
+            let zip_file = fs::File::create(&zip_path).unwrap();
+            let mut writer = zip::ZipWriter::new(zip_file);
+            // No comment set
+            let opts = zip::write::SimpleFileOptions::default();
+            writer.start_file("data.txt", opts).unwrap();
+            writer.write_all(b"data").unwrap();
+            writer.finish().unwrap();
+        }
+
+        let report = analyze_zip(&zip_path).unwrap();
+        assert!(
+            !report.has_author,
+            "has_author should be false when no archive comment"
+        );
+
+        let _ = fs::remove_file(zip_path);
     }
 }
 

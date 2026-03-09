@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   ScanSearch,
@@ -19,10 +19,16 @@ import {
   Folder,
   Info,
   TrendingDown,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
+  List,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useDragDrop } from "../../hooks/useDragDrop";
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface MetaTag {
   key: string;
@@ -39,6 +45,7 @@ interface MetaReport {
   file_type: string;
   file_size: number;
   raw_tags: MetaTag[];
+  app_info?: string;
 }
 
 interface CleanProgress {
@@ -61,7 +68,16 @@ interface FailedFile {
   error: string;
 }
 
-const formatSize = (bytes: number): string => {
+interface ComparisonResult {
+  original_size: number;
+  cleaned_size: number;
+  removed_tags: string[];
+  size_reduction: number;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+export const formatSize = (bytes: number): string => {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
@@ -69,9 +85,42 @@ const formatSize = (bytes: number): string => {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 };
 
+/**
+ * Computes a 0–3 privacy risk score for a file based on its report.
+ * 0 = clean, 1 = low (camera/software info), 2 = medium (author), 3 = high (GPS)
+ */
+const getRiskLevel = (report: MetaReport): 0 | 1 | 2 | 3 => {
+  if (report.has_gps) return 3;
+  if (report.has_author) return 2;
+  if (report.camera_info || report.creation_date) return 1;
+  return 0;
+};
+
+const RISK_COLOR: Record<number, string> = {
+  0: "#4ade80",
+  1: "#facc15",
+  2: "#f97316",
+  3: "#ef4444",
+};
+
+const RISK_LABEL: Record<number, string> = {
+  0: "Clean",
+  1: "Low",
+  2: "Medium",
+  3: "High",
+};
+
+const RiskIcon = ({ level }: { level: 0 | 1 | 2 | 3 }) => {
+  const color = RISK_COLOR[level];
+  if (level === 0) return <ShieldCheck size={14} color={color} />;
+  if (level === 3) return <ShieldAlert size={14} color={color} />;
+  return <ShieldQuestion size={14} color={color} />;
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export function CleanerView() {
   const [files, setFiles] = useState<string[]>([]);
-  const [loading] = useState(false);
   const [result, setResult] = useState<CleanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,14 +128,29 @@ export function CleanerView() {
   const [previewReport, setPreviewReport] = useState<MetaReport | null>(null);
   const [analyzingPreview, setAnalyzingPreview] = useState(false);
 
+  // Cache analysis results to avoid redundant backend calls when navigating between files.
+  const analyzeCache = useRef<Map<string, MetaReport>>(new Map());
+
   const [showRaw, setShowRaw] = useState(false);
+  const [rawFilter, setRawFilter] = useState("");
   const [opts, setOpts] = useState({ gps: true, author: true, date: true });
 
   const [outputDir, setOutputDir] = useState<string | null>(null);
 
-  // Progress tracking
+  // Progress & loading
   const [cleaning, setCleaning] = useState(false);
   const [progress, setProgress] = useState<CleanProgress | null>(null);
+
+  // Comparison state: populated after a successful batch clean.
+  // Maps output_path → ComparisonResult, loaded lazily on demand.
+  const [comparisons, setComparisons] = useState<Map<string, ComparisonResult>>(
+    new Map(),
+  );
+  const [loadingComparison, setLoadingComparison] = useState<string | null>(
+    null,
+  );
+  // Keeps the original input paths so we can run compare_files after cleaning clears `files`.
+  const cleanInputPaths = useRef<string[]>([]);
 
   const { isDragging } = useDragDrop(async (newFiles) => {
     addFiles(newFiles);
@@ -112,14 +176,19 @@ export function CleanerView() {
     };
   }, []);
 
+  // ─── File management ───────────────────────────────────────────────────
+
   const addFiles = (newPaths: string[]) => {
     setError(null);
-    const unique = [...new Set([...files, ...newPaths])];
-    setFiles(unique);
-    if (files.length === 0 && newPaths.length > 0) {
-      setPreviewIndex(0);
-      analyze(newPaths[0]);
-    }
+    setFiles((prev) => {
+      const unique = [...new Set([...prev, ...newPaths])];
+      if (prev.length === 0 && newPaths.length > 0) {
+        // Auto-analyze the first file when the list was previously empty
+        analyze(newPaths[0]);
+      }
+      return unique;
+    });
+    setPreviewIndex(0);
   };
 
   async function handleBrowse() {
@@ -167,60 +236,10 @@ export function CleanerView() {
     }
   }
 
-  async function analyze(path: string) {
-    setAnalyzingPreview(true);
-    setPreviewReport(null);
-    setError(null);
-    try {
-      const res = await invoke<MetaReport>("analyze_file_metadata", { path });
-      setPreviewReport(res);
-    } catch (e) {
-      setError("Analysis failed: " + e);
-    } finally {
-      setAnalyzingPreview(false);
-    }
-  }
-
-  async function cleanAll() {
-    if (files.length === 0) return;
-
-    setCleaning(true);
-    setError(null);
-    setResult(null);
-    setProgress(null);
-
-    try {
-      const res = await invoke<CleanResult>("batch_clean_metadata", {
-        paths: files,
-        outputDir: outputDir,
-        options: opts,
-      });
-      setResult(res);
-      setFiles([]);
-      setPreviewReport(null);
-      setPreviewIndex(0);
-      setShowRaw(false);
-    } catch (e) {
-      setError("Cleaning failed: " + e);
-    } finally {
-      setCleaning(false);
-      setProgress(null);
-    }
-  }
-
-  async function cancelClean() {
-    try {
-      await invoke("cancel_metadata_clean");
-      setError("Cleaning cancelled by user");
-      setCleaning(false);
-    } catch (e) {
-      console.error("Failed to cancel:", e);
-    }
-  }
-
   function removeFile(path: string) {
     const idxToRemove = files.indexOf(path);
     const newFiles = files.filter((f) => f !== path);
+    analyzeCache.current.delete(path);
     setFiles(newFiles);
 
     if (newFiles.length === 0) {
@@ -254,6 +273,109 @@ export function CleanerView() {
     }
   };
 
+  // ─── Analysis ──────────────────────────────────────────────────────────
+
+  async function analyze(path: string) {
+    // Return cached result immediately to avoid redundant backend round-trips.
+    if (analyzeCache.current.has(path)) {
+      setPreviewReport(analyzeCache.current.get(path)!);
+      return;
+    }
+
+    setAnalyzingPreview(true);
+    setPreviewReport(null);
+    setError(null);
+    try {
+      const res = await invoke<MetaReport>("analyze_file_metadata", { path });
+      analyzeCache.current.set(path, res);
+      setPreviewReport(res);
+    } catch (e) {
+      setError("Analysis failed: " + e);
+    } finally {
+      setAnalyzingPreview(false);
+    }
+  }
+
+  // ─── Cleaning ──────────────────────────────────────────────────────────
+
+  async function cleanAll() {
+    if (files.length === 0) return;
+
+    // Snapshot input paths before `files` is cleared on success.
+    cleanInputPaths.current = [...files];
+
+    setCleaning(true);
+    setError(null);
+    setResult(null);
+    setProgress(null);
+    setComparisons(new Map());
+
+    try {
+      const res = await invoke<CleanResult>("batch_clean_metadata", {
+        paths: files,
+        outputDir: outputDir,
+        options: opts,
+      });
+      setResult(res);
+      setFiles([]);
+      setPreviewReport(null);
+      setPreviewIndex(0);
+      setShowRaw(false);
+      setRawFilter("");
+      analyzeCache.current.clear();
+    } catch (e) {
+      setError("Cleaning failed: " + e);
+    } finally {
+      setCleaning(false);
+      setProgress(null);
+    }
+  }
+
+  async function cancelClean() {
+    try {
+      await invoke("cancel_metadata_clean");
+      setError("Cleaning cancelled by user");
+      setCleaning(false);
+    } catch (e) {
+      console.error("Failed to cancel:", e);
+    }
+  }
+
+  // ─── Comparison ────────────────────────────────────────────────────────
+
+  /**
+   * Lazily fetches the comparison between an original input file and its cleaned output.
+   * Input→output mapping is reconstructed by filtering the failed files from the original list.
+   */
+  async function fetchComparison(outputPath: string) {
+    if (comparisons.has(outputPath) || loadingComparison === outputPath) return;
+
+    // Reconstruct original path from the snapshot taken before cleaning.
+    const failedPaths = new Set(result?.failed.map((f) => f.path) ?? []);
+    const successfulInputs = cleanInputPaths.current.filter(
+      (p) => !failedPaths.has(p),
+    );
+    const outputIndex = result?.success.indexOf(outputPath) ?? -1;
+    const originalPath = successfulInputs[outputIndex];
+
+    if (!originalPath) return;
+
+    setLoadingComparison(outputPath);
+    try {
+      const cmp = await invoke<ComparisonResult>("compare_file_metadata", {
+        original: originalPath,
+        cleaned: outputPath,
+      });
+      setComparisons((prev) => new Map(prev).set(outputPath, cmp));
+    } catch (e) {
+      console.error("Comparison failed:", e);
+    } finally {
+      setLoadingComparison(null);
+    }
+  }
+
+  // ─── Derived state ─────────────────────────────────────────────────────
+
   const currentFileName = files[previewIndex]
     ? files[previewIndex].split(/[/\\]/).pop()
     : "Unknown";
@@ -264,6 +386,15 @@ export function CleanerView() {
       previewReport.has_author ||
       previewReport.camera_info ||
       previewReport.creation_date);
+
+  const filteredRawTags = previewReport?.raw_tags.filter(
+    (t) =>
+      rawFilter === "" ||
+      t.key.toLowerCase().includes(rawFilter.toLowerCase()) ||
+      t.value.toLowerCase().includes(rawFilter.toLowerCase()),
+  );
+
+  // ─── Render ────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -374,7 +505,7 @@ export function CleanerView() {
                 marginTop: 20,
               }}
             >
-              Supports: JPG, PNG, PDF, DOCX, XLSX, PPTX, ZIP
+              Supports: JPG, PNG, WebP, TIFF, PDF, DOCX, XLSX, PPTX, ZIP
             </p>
             <p
               style={{
@@ -432,19 +563,21 @@ export function CleanerView() {
               </div>
 
               <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                {progress.percentage}% - {progress.current} of {progress.total}{" "}
+                {progress.percentage}% — {progress.current} of {progress.total}{" "}
                 files
               </p>
-              <p
-                style={{
-                  color: "var(--text-dim)",
-                  fontSize: "0.85rem",
-                  marginTop: 10,
-                  wordBreak: "break-all",
-                }}
-              >
-                {progress.current_file}
-              </p>
+              {progress.current_file && (
+                <p
+                  style={{
+                    color: "var(--text-dim)",
+                    fontSize: "0.85rem",
+                    marginTop: 10,
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {progress.current_file}
+                </p>
+              )}
 
               <button
                 className="secondary-btn"
@@ -550,6 +683,137 @@ export function CleanerView() {
                 </div>
               )}
 
+              {/* PER-FILE COMPARISON — lazy-loaded on demand */}
+              {result.success.length > 0 && (
+                <div style={{ marginTop: 20, textAlign: "left" }}>
+                  <div
+                    style={{
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                      marginBottom: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <List size={14} />
+                    Cleaned Files
+                  </div>
+                  <div
+                    style={{
+                      maxHeight: 200,
+                      overflowY: "auto",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {result.success.map((outputPath, i) => {
+                      const cmp = comparisons.get(outputPath);
+                      const isLoading = loadingComparison === outputPath;
+                      const filename = outputPath.split(/[/\\]/).pop();
+                      return (
+                        <div
+                          key={outputPath}
+                          style={{
+                            padding: "10px 14px",
+                            borderBottom:
+                              i < result.success.length - 1
+                                ? "1px solid var(--border)"
+                                : "none",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 10,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: "0.85rem",
+                                fontFamily: "monospace",
+                                flex: 1,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {filename}
+                            </span>
+                            {!cmp && (
+                              <button
+                                className="secondary-btn"
+                                onClick={() => fetchComparison(outputPath)}
+                                disabled={isLoading}
+                                style={{
+                                  fontSize: "0.75rem",
+                                  padding: "4px 10px",
+                                }}
+                              >
+                                {isLoading ? (
+                                  <Loader2 size={12} className="spinner" />
+                                ) : (
+                                  "What was removed?"
+                                )}
+                              </button>
+                            )}
+                          </div>
+                          {cmp && (
+                            <div
+                              style={{
+                                marginTop: 8,
+                                fontSize: "0.75rem",
+                                color: "var(--text-dim)",
+                              }}
+                            >
+                              {cmp.removed_tags.length === 0 ? (
+                                <span style={{ color: "#4ade80" }}>
+                                  ✓ No tags found to remove
+                                </span>
+                              ) : (
+                                <>
+                                  <span
+                                    style={{
+                                      color: "#4ade80",
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {cmp.removed_tags.length} tag
+                                    {cmp.removed_tags.length !== 1
+                                      ? "s"
+                                      : ""}{" "}
+                                    removed
+                                    {cmp.size_reduction > 0 &&
+                                      ` · saved ${formatSize(cmp.size_reduction)}`}
+                                  </span>
+                                  <div
+                                    style={{
+                                      marginTop: 4,
+                                      maxHeight: 80,
+                                      overflowY: "auto",
+                                      fontFamily: "monospace",
+                                    }}
+                                  >
+                                    {cmp.removed_tags.map((tag, ti) => (
+                                      <div key={ti} style={{ marginBottom: 2 }}>
+                                        • {tag}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* FAILURES */}
               {result.failed.length > 0 && (
                 <div
                   style={{
@@ -608,6 +872,7 @@ export function CleanerView() {
                 onClick={() => {
                   setResult(null);
                   setOutputDir(null);
+                  setComparisons(new Map());
                 }}
                 style={{ marginTop: 20 }}
               >
@@ -637,6 +902,7 @@ export function CleanerView() {
                   <button
                     className="icon-btn-ghost"
                     onClick={() => {
+                      analyzeCache.current.clear();
                       setFiles([]);
                       setPreviewReport(null);
                       setPreviewIndex(0);
@@ -655,75 +921,96 @@ export function CleanerView() {
                     overflowY: "auto",
                   }}
                 >
-                  {files.map((file, idx) => (
-                    <div
-                      key={file}
-                      onClick={() => {
-                        setPreviewIndex(idx);
-                        analyze(file);
-                      }}
-                      style={{
-                        padding: "12px 15px",
-                        borderBottom:
-                          idx < files.length - 1
-                            ? "1px solid var(--border)"
-                            : "none",
-                        cursor: "pointer",
-                        background:
-                          idx === previewIndex
-                            ? "rgba(0, 122, 204, 0.1)"
-                            : "transparent",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        transition: "background 0.2s",
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                  {files.map((file, idx) => {
+                    const cachedReport = analyzeCache.current.get(file);
+                    const risk = cachedReport ? getRiskLevel(cachedReport) : -1;
+
+                    return (
+                      <div
+                        key={file}
+                        onClick={() => {
+                          setPreviewIndex(idx);
+                          analyze(file);
+                        }}
+                        style={{
+                          padding: "12px 15px",
+                          borderBottom:
+                            idx < files.length - 1
+                              ? "1px solid var(--border)"
+                              : "none",
+                          cursor: "pointer",
+                          background:
+                            idx === previewIndex
+                              ? "rgba(0, 122, 204, 0.1)"
+                              : "transparent",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          transition: "background 0.2s",
+                        }}
+                      >
                         <div
                           style={{
-                            fontSize: "0.9rem",
-                            fontWeight: idx === previewIndex ? 600 : 400,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                            flex: 1,
+                            minWidth: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
                           }}
                         >
-                          {file.split(/[/\\]/).pop()}
+                          {/* Risk badge — shown once the file has been analyzed */}
+                          {risk >= 0 && (
+                            <span title={`Risk: ${RISK_LABEL[risk]}`}>
+                              <RiskIcon level={risk as 0 | 1 | 2 | 3} />
+                            </span>
+                          )}
+                          <div
+                            style={{
+                              fontSize: "0.9rem",
+                              fontWeight: idx === previewIndex ? 600 : 400,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {file.split(/[/\\]/).pop()}
+                          </div>
                         </div>
+                        <button
+                          className="icon-btn-ghost"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFile(file);
+                          }}
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
-                      <button
-                        className="icon-btn-ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeFile(file);
-                        }}
-                        style={{ marginLeft: 10 }}
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
+                {/* Browse more */}
                 <button
                   className="secondary-btn"
                   onClick={handleBrowse}
                   style={{
-                    width: "100%",
                     marginTop: 10,
+                    width: "100%",
+                    fontSize: "0.85rem",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    gap: 8,
+                    gap: 6,
                   }}
                 >
-                  <Upload size={16} /> Add More Files
+                  <Upload size={14} /> Add More Files
                 </button>
               </div>
 
-              {/* RIGHT: Preview */}
-              <div style={{ flex: 2 }}>
+              {/* RIGHT: Metadata Preview */}
+              <div style={{ flex: 1 }}>
                 <div
                   style={{
                     display: "flex",
@@ -732,42 +1019,52 @@ export function CleanerView() {
                     marginBottom: 10,
                   }}
                 >
-                  <h3 style={{ margin: 0, fontSize: "1rem" }}>Preview</h3>
-                  <div style={{ display: "flex", gap: 5 }}>
-                    <button
-                      className="icon-btn-ghost"
-                      onClick={handlePrev}
-                      disabled={previewIndex === 0}
-                      title="Previous"
+                  <h3 style={{ margin: 0, fontSize: "1rem" }}>
+                    Metadata Preview
+                  </h3>
+                  {files.length > 1 && (
+                    <div
+                      style={{ display: "flex", gap: 4, alignItems: "center" }}
                     >
-                      <ChevronLeft size={16} />
-                    </button>
-                    <button
-                      className="icon-btn-ghost"
-                      onClick={handleNext}
-                      disabled={previewIndex >= files.length - 1}
-                      title="Next"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
+                      <button
+                        className="icon-btn-ghost"
+                        onClick={handlePrev}
+                        disabled={previewIndex === 0}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <span
+                        style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}
+                      >
+                        {previewIndex + 1} / {files.length}
+                      </span>
+                      <button
+                        className="icon-btn-ghost"
+                        onClick={handleNext}
+                        disabled={previewIndex === files.length - 1}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                <div className="modern-card" style={{ padding: 20 }}>
+                <div
+                  className="modern-card"
+                  style={{ padding: 20, minHeight: 200 }}
+                >
                   {analyzingPreview && (
                     <div
                       style={{
-                        textAlign: "center",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
                         padding: 40,
                       }}
                     >
                       <Loader2 size={32} className="spinner" />
-                      <p
-                        style={{
-                          color: "var(--text-dim)",
-                          marginTop: 10,
-                        }}
-                      >
+                      <p style={{ color: "var(--text-dim)", marginTop: 10 }}>
                         Analyzing...
                       </p>
                     </div>
@@ -790,10 +1087,30 @@ export function CleanerView() {
                           style={{
                             fontSize: "0.8rem",
                             color: "var(--text-dim)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
                           }}
                         >
                           {previewReport.file_type} •{" "}
                           {formatSize(previewReport.file_size)}
+                          {/* Inline risk badge in the header */}
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              color: RISK_COLOR[getRiskLevel(previewReport)],
+                              fontWeight: 600,
+                            }}
+                          >
+                            <RiskIcon
+                              level={
+                                getRiskLevel(previewReport) as 0 | 1 | 2 | 3
+                              }
+                            />
+                            {RISK_LABEL[getRiskLevel(previewReport)]} risk
+                          </span>
                         </div>
                       </div>
 
@@ -982,14 +1299,57 @@ export function CleanerView() {
                                 </div>
                               </div>
                             )}
+
+                            {previewReport.app_info && (
+                              <div
+                                style={{
+                                  background: "rgba(20, 184, 166, 0.1)",
+                                  border: "1px solid rgba(20, 184, 166, 0.3)",
+                                  borderRadius: 8,
+                                  padding: 12,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    marginBottom: 5,
+                                  }}
+                                >
+                                  <Info size={16} color="#14b8a6" />
+                                  <span
+                                    style={{
+                                      fontSize: "0.85rem",
+                                      fontWeight: 600,
+                                      color: "#14b8a6",
+                                    }}
+                                  >
+                                    Application
+                                  </span>
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: "0.75rem",
+                                    color: "var(--text-dim)",
+                                    marginTop: 5,
+                                  }}
+                                >
+                                  {previewReport.app_info}
+                                </div>
+                              </div>
+                            )}
                           </div>
 
-                          {/* Raw Tags Toggle */}
+                          {/* Raw Tags Toggle with search filter */}
                           {previewReport.raw_tags.length > 0 && (
                             <div style={{ marginTop: 15 }}>
                               <button
                                 className="secondary-btn"
-                                onClick={() => setShowRaw(!showRaw)}
+                                onClick={() => {
+                                  setShowRaw(!showRaw);
+                                  setRawFilter("");
+                                }}
                                 style={{
                                   width: "100%",
                                   display: "flex",
@@ -1005,33 +1365,68 @@ export function CleanerView() {
                               </button>
 
                               {showRaw && (
-                                <div
-                                  style={{
-                                    marginTop: 10,
-                                    maxHeight: "200px",
-                                    overflowY: "auto",
-                                    background: "var(--bg-color)",
-                                    border: "1px solid var(--border)",
-                                    borderRadius: 6,
-                                    padding: 10,
-                                  }}
-                                >
-                                  {previewReport.raw_tags.map((tag, i) => (
-                                    <div
-                                      key={i}
-                                      style={{
-                                        fontSize: "0.75rem",
-                                        marginBottom: 5,
-                                        color: "var(--text-dim)",
-                                        fontFamily: "monospace",
-                                      }}
-                                    >
-                                      <span style={{ color: "var(--accent)" }}>
-                                        {tag.key}:
-                                      </span>{" "}
-                                      {tag.value}
-                                    </div>
-                                  ))}
+                                <div style={{ marginTop: 10 }}>
+                                  <input
+                                    type="text"
+                                    placeholder="Filter tags…"
+                                    value={rawFilter}
+                                    onChange={(e) =>
+                                      setRawFilter(e.target.value)
+                                    }
+                                    style={{
+                                      width: "100%",
+                                      marginBottom: 6,
+                                      padding: "6px 10px",
+                                      border: "1px solid var(--border)",
+                                      borderRadius: 4,
+                                      background: "var(--bg-color)",
+                                      color: "var(--text-main)",
+                                      fontSize: "0.8rem",
+                                      boxSizing: "border-box",
+                                    }}
+                                  />
+                                  <div
+                                    style={{
+                                      maxHeight: "200px",
+                                      overflowY: "auto",
+                                      background: "var(--bg-color)",
+                                      border: "1px solid var(--border)",
+                                      borderRadius: 6,
+                                      padding: 10,
+                                    }}
+                                  >
+                                    {(filteredRawTags ?? []).length === 0 ? (
+                                      <div
+                                        style={{
+                                          fontSize: "0.75rem",
+                                          color: "var(--text-dim)",
+                                          textAlign: "center",
+                                          padding: 10,
+                                        }}
+                                      >
+                                        No tags match "{rawFilter}"
+                                      </div>
+                                    ) : (
+                                      (filteredRawTags ?? []).map((tag, i) => (
+                                        <div
+                                          key={i}
+                                          style={{
+                                            fontSize: "0.75rem",
+                                            marginBottom: 5,
+                                            color: "var(--text-dim)",
+                                            fontFamily: "monospace",
+                                          }}
+                                        >
+                                          <span
+                                            style={{ color: "var(--accent)" }}
+                                          >
+                                            {tag.key}:
+                                          </span>{" "}
+                                          {tag.value}
+                                        </div>
+                                      ))
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -1196,11 +1591,12 @@ export function CleanerView() {
               </div>
             </div>
 
-            {/* Action Button */}
+            {/* FIX: Was `disabled={loading}` where `loading` setter was never called.
+                Now uses `cleaning` which is correctly set during the async operation. */}
             <button
               className="auth-btn"
               onClick={cleanAll}
-              disabled={loading}
+              disabled={cleaning}
               style={{
                 padding: "12px 30px",
                 display: "flex",
