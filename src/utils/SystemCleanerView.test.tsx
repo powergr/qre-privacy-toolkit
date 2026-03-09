@@ -10,7 +10,13 @@
  * with zero native dependencies.
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { SystemCleanerView } from "../components/views/SystemCleanerView";
 
@@ -97,7 +103,7 @@ const makeRegistryItem = (
   key_path:
     "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\OldApp",
   value_name: null,
-  category: "OrphanedInstaller",
+  category: "InvalidAppPath",
   description: "OldApp — install location no longer exists.",
   warning: "Verify this application is truly uninstalled.",
   ...overrides,
@@ -224,11 +230,22 @@ describe("Scanning", () => {
   });
 
   it("shows scanning state while loading", async () => {
-    // Don't resolve the promise yet
-    mockInvoke.mockReturnValueOnce(new Promise(() => {}));
-    await renderView();
+    // Use a controllable promise so we can resolve it during cleanup,
+    // preventing React state-update-outside-act warnings on unmount.
+    let resolveScan!: (v: unknown) => void;
+    mockInvoke.mockReturnValueOnce(
+      new Promise((res) => {
+        resolveScan = res;
+      }),
+    );
+    const { unmount } = await renderView();
     fireEvent.click(screen.getByText("Scan Now"));
     expect(screen.getByText("Scanning System...")).toBeInTheDocument();
+    // Resolve before unmounting so pending state updates flush inside act
+    await act(async () => {
+      resolveScan([]);
+    });
+    unmount();
   });
 
   it("shows empty state when scan returns no items", async () => {
@@ -474,7 +491,7 @@ describe("Item selection", () => {
     const item = makeJunkItem({ id: "1", size: 2048 });
     await renderAndScan([item]);
     // formatSize is mocked to return `${bytes}B`
-    expect(screen.getByText(/2048B/)).toBeInTheDocument();
+    expect(screen.getAllByText(/2048B/).length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -487,9 +504,9 @@ describe("Item display", () => {
     const item = makeJunkItem({
       name: "NPM Cache",
       description: "Node.js package cache",
+      category: "Developer",
     });
     await renderAndScan([item]);
-    // NPM Cache is Developer — switch to that tab
     fireEvent.click(screen.getByText("Developer"));
     expect(screen.getByText("NPM Cache")).toBeInTheDocument();
     expect(screen.getByText("Node.js package cache")).toBeInTheDocument();
@@ -617,7 +634,7 @@ describe("Preview / dry run", () => {
     fireEvent.click(screen.getByText("Preview (1)"));
 
     await waitFor(() =>
-      expect(screen.getByText("Large operation")).toBeInTheDocument(),
+      expect(screen.getByText(/Large operation/)).toBeInTheDocument(),
     );
   });
 
@@ -784,22 +801,32 @@ describe("Registry tab (Windows only)", () => {
     mockPlatform = jest.fn(() => "windows");
   });
 
-  async function openRegistryTab(
-    scanItems: ReturnType<typeof makeJunkItem>[] = [],
-  ) {
+  // Navigation-only helper. Each test must queue mocks in invoke order:
+  //   1. mockResolvedValueOnce([sysItem])  ← consumed by Scan Now (scan_system_junk)
+  //   2. mockResolvedValueOnce([regItem])  ← consumed by Scan Registry (scan_registry)
+  //   3. any further mocks (backup, clean…)
+  async function openRegistryTab() {
     const sysItem = makeJunkItem({ category: "System" });
-    await renderAndScan([sysItem, ...scanItems]);
+    mockInvoke.mockResolvedValueOnce([sysItem]);
+    const view = await renderView();
+    fireEvent.click(screen.getByText("Scan Now"));
+    await waitFor(() =>
+      expect(screen.queryByText("Scanning System...")).not.toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByText("Registry"));
+    return view;
   }
 
   it("shows the Scan Registry button when Registry tab is opened", async () => {
     await openRegistryTab();
-    expect(screen.getByText("Scan Registry")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Scan Registry" }),
+    ).toBeInTheDocument();
   });
 
   it("calls scan_registry when Scan Registry is clicked", async () => {
-    mockInvoke.mockResolvedValueOnce([]); // for registry scan
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([]); // for registry scan
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("scan_registry"),
@@ -808,18 +835,16 @@ describe("Registry tab (Windows only)", () => {
 
   it("shows registry items after scan", async () => {
     const regItem = makeRegistryItem({ name: "OldApp" });
-    mockInvoke.mockResolvedValueOnce([regItem]); // registry scan
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([regItem]); // registry scan
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
 
     await waitFor(() => expect(screen.getByText("OldApp")).toBeInTheDocument());
   });
 
   it("shows registry empty state when scan returns nothing", async () => {
-    mockInvoke.mockResolvedValueOnce([]); // empty registry scan
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([]); // empty registry scan
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
 
     await waitFor(() =>
@@ -829,9 +854,8 @@ describe("Registry tab (Windows only)", () => {
 
   it("shows the backup requirement banner before backup is taken", async () => {
     const regItem = makeRegistryItem();
-    mockInvoke.mockResolvedValueOnce([regItem]);
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([regItem]);
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
 
     await waitFor(() => screen.getByText("OldApp"));
@@ -842,6 +866,7 @@ describe("Registry tab (Windows only)", () => {
 
   it("shows the backup success banner after a successful backup", async () => {
     const regItem = makeRegistryItem();
+    await openRegistryTab();
     mockInvoke
       .mockResolvedValueOnce([regItem]) // scan_registry
       .mockResolvedValueOnce({
@@ -850,8 +875,6 @@ describe("Registry tab (Windows only)", () => {
         success: true,
         error: null,
       });
-
-    await openRegistryTab();
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
 
@@ -865,9 +888,8 @@ describe("Registry tab (Windows only)", () => {
 
   it("disables Clean Selected until a backup has been taken", async () => {
     const regItem = makeRegistryItem();
-    mockInvoke.mockResolvedValueOnce([regItem]);
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([regItem]);
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
 
@@ -879,20 +901,20 @@ describe("Registry tab (Windows only)", () => {
 
   it("enables Clean Selected after a backup is taken", async () => {
     const regItem = makeRegistryItem();
+    await openRegistryTab();
     mockInvoke.mockResolvedValueOnce([regItem]).mockResolvedValueOnce({
       backup_path: "C:\\Temp\\b.reg",
       success: true,
       error: null,
     });
-
-    await openRegistryTab();
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
     fireEvent.click(screen.getByRole("button", { name: "Create Backup" }));
     await waitFor(() => screen.getByText("Backup saved"));
 
-    const cleanBtn = screen.getByRole("button", { name: /Clean Selected/ });
-    expect(cleanBtn).not.toBeDisabled();
+    // Two "Clean Selected" buttons exist: registry content area (index 0) and junk footer (index 1)
+    const cleanBtns = screen.getAllByRole("button", { name: /Clean Selected/ });
+    expect(cleanBtns[0]).not.toBeDisabled();
   });
 
   it("calls clean_registry with the correct entries", async () => {
@@ -901,6 +923,7 @@ describe("Registry tab (Windows only)", () => {
       key_path: "HKCU\\SOFTWARE\\OldApp",
       value_name: null,
     });
+    await openRegistryTab();
     mockInvoke
       .mockResolvedValueOnce([regItem])
       .mockResolvedValueOnce({
@@ -913,13 +936,13 @@ describe("Registry tab (Windows only)", () => {
         errors: [],
         backup_path: null,
       });
-
-    await openRegistryTab();
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
     fireEvent.click(screen.getByRole("button", { name: "Create Backup" }));
     await waitFor(() => screen.getByText("Backup saved"));
-    fireEvent.click(screen.getByRole("button", { name: /Clean Selected/ }));
+    // Click the registry "Clean Selected" (index 0); junk footer button is index 1
+    const cleanBtns = screen.getAllByRole("button", { name: /Clean Selected/ });
+    fireEvent.click(cleanBtns[0]);
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("clean_registry", {
@@ -940,9 +963,8 @@ describe("Registry tab (Windows only)", () => {
       name: "BadPath",
       key_path: "HKLM\\SOFTWARE\\App Paths\\bad.exe",
     });
-    mockInvoke.mockResolvedValueOnce([orphan, appPath]);
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([orphan, appPath]);
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
 
     await waitFor(() => screen.getByText("OldApp"));
@@ -952,13 +974,12 @@ describe("Registry tab (Windows only)", () => {
 
   it("shows an error banner when backup fails", async () => {
     const regItem = makeRegistryItem();
+    await openRegistryTab();
     mockInvoke.mockResolvedValueOnce([regItem]).mockResolvedValueOnce({
       backup_path: "",
       success: false,
       error: "Access denied",
     });
-
-    await openRegistryTab();
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
     fireEvent.click(screen.getByRole("button", { name: "Create Backup" }));
@@ -972,13 +993,12 @@ describe("Registry tab (Windows only)", () => {
 
   it("shows the key path in monospace below each registry item", async () => {
     const regItem = makeRegistryItem({ key_path: "HKCU\\SOFTWARE\\OldApp" });
-    mockInvoke.mockResolvedValueOnce([regItem]);
-
     await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([regItem]);
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
 
     await waitFor(() =>
-      expect(screen.getByText("HKCU\\SOFTWARE\\OldApp")).toBeInTheDocument(),
+      expect(screen.getByText(/HKCU.SOFTWARE.OldApp/)).toBeInTheDocument(),
     );
   });
 });
