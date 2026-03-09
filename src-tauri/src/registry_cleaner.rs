@@ -570,69 +570,282 @@ fn extract_exe_from_command(cmd: &str) -> String {
 mod tests {
     use super::*;
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Cross-platform: public API must never panic
+    // ─────────────────────────────────────────────────────────────────────
+
     #[test]
-    fn test_scan_returns_vec_on_all_platforms() {
-        // Must not panic on any platform
+    fn test_scan_does_not_panic_on_any_platform() {
         let items = scan_registry();
-        // On non-Windows this will always be empty
         #[cfg(not(target_os = "windows"))]
-        assert!(items.is_empty());
-        // On Windows just confirm it ran without panic
+        assert!(
+            items.is_empty(),
+            "Non-Windows scan must return an empty Vec"
+        );
         #[cfg(target_os = "windows")]
-        let _ = items;
+        let _ = items; // On Windows just assert it ran
     }
 
     #[test]
-    fn test_backup_fails_gracefully_on_non_windows() {
+    fn test_backup_returns_structured_result_on_all_platforms() {
+        let result = backup_registry();
+        // On Windows this may succeed or fail depending on permissions;
+        // on other platforms it must fail with a descriptive error.
         #[cfg(not(target_os = "windows"))]
         {
-            let result = backup_registry();
             assert!(!result.success);
             assert!(result.error.is_some());
+            assert!(
+                result.error.unwrap().contains("Windows"),
+                "Error message should mention Windows"
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // success depends on environment — just verify the fields are populated
+            if result.success {
+                assert!(!result.backup_path.is_empty());
+                assert!(result.error.is_none());
+            } else {
+                assert!(result.error.is_some());
+            }
         }
     }
 
     #[test]
-    fn test_clean_fails_gracefully_on_non_windows() {
+    fn test_clean_returns_structured_result_on_all_platforms() {
+        let result = clean_registry_entries(vec![]);
         #[cfg(not(target_os = "windows"))]
         {
-            let result = clean_registry_entries(vec![]);
             assert_eq!(result.items_cleaned, 0);
-            assert!(!result.errors.is_empty());
+            assert!(
+                !result.errors.is_empty(),
+                "Non-Windows clean must return an error explaining the limitation"
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Empty input → nothing cleaned, no errors
+            assert_eq!(result.items_cleaned, 0);
+            assert!(result.errors.is_empty());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // RegistryItem struct completeness
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_scan_items_have_non_empty_required_fields() {
+        let items = scan_registry();
+        for item in &items {
+            assert!(!item.id.is_empty(), "Item '{}' has empty id", item.name);
+            assert!(
+                !item.name.is_empty(),
+                "Item at '{}' has empty name",
+                item.key_path
+            );
+            assert!(
+                !item.key_path.is_empty(),
+                "Item '{}' has empty key_path",
+                item.name
+            );
+            assert!(
+                !item.category.is_empty(),
+                "Item '{}' has empty category",
+                item.name
+            );
+            assert!(
+                !item.description.is_empty(),
+                "Item '{}' has empty description",
+                item.name
+            );
         }
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_quoted() {
-        let cmd = r#""C:\Program Files\App\uninstall.exe" /silent"#;
+    fn test_scan_items_have_valid_categories() {
+        let valid = [
+            "OrphanedInstaller",
+            "InvalidAppPath",
+            "MUICache",
+            "StartupEntry",
+        ];
+        let items = scan_registry();
+        for item in &items {
+            assert!(
+                valid.contains(&item.category.as_str()),
+                "Item '{}' has unknown category '{}'",
+                item.name,
+                item.category
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_scan_items_have_unique_ids() {
+        let items = scan_registry();
+        let mut seen = std::collections::HashSet::new();
+        for item in &items {
+            assert!(
+                seen.insert(item.id.clone()),
+                "Duplicate UUID for item '{}' at '{}'",
+                item.name,
+                item.key_path
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_scan_key_paths_contain_known_hive_prefix() {
+        let valid_prefixes = ["HKLM\\", "HKCU\\", "HKLM (WOW64)\\"];
+        let items = scan_registry();
+        for item in &items {
+            let has_valid_prefix = valid_prefixes.iter().any(|p| item.key_path.starts_with(p));
+            assert!(
+                has_valid_prefix,
+                "Item '{}' key_path '{}' does not start with a known hive prefix",
+                item.name, item.key_path
+            );
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // extract_exe_from_command (Windows-only helper)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_quoted_path_with_spaces() {
+        let cmd = r#""C:\Program Files\My App\uninstall.exe" /silent"#;
         assert_eq!(
             extract_exe_from_command(cmd),
-            r"C:\Program Files\App\uninstall.exe"
+            r"C:\Program Files\My App\uninstall.exe"
         );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_unquoted() {
-        let cmd = r"C:\Windows\App\uninstall.exe /S";
+    fn test_extract_exe_quoted_path_no_args() {
+        let cmd = r#""C:\Program Files\App\remove.exe""#;
         assert_eq!(
             extract_exe_from_command(cmd),
-            r"C:\Windows\App\uninstall.exe"
+            r"C:\Program Files\App\remove.exe"
         );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_msiexec_ignored() {
-        // MsiExec.exe has no path separator — should return empty
+    fn test_extract_exe_unquoted_with_flag() {
+        let cmd = r"C:\Windows\App\uninst.exe /S";
+        assert_eq!(extract_exe_from_command(cmd), r"C:\Windows\App\uninst.exe");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_unquoted_no_args() {
+        let cmd = r"C:\Tools\remove.exe";
+        assert_eq!(extract_exe_from_command(cmd), r"C:\Tools\remove.exe");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_msiexec_returns_empty() {
+        // MsiExec.exe has no path separator — must be ignored to avoid false positives
         let cmd = r"MsiExec.exe /X{12345678-1234-1234-1234-123456789012}";
         assert_eq!(extract_exe_from_command(cmd), "");
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_parse_hive_hklm() {
+    fn test_extract_exe_rundll32_without_path_separator_returns_empty() {
+        let cmd = "rundll32.exe setupapi.dll,InstallHinfSection";
+        assert_eq!(extract_exe_from_command(cmd), "");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_empty_string_returns_empty() {
+        assert_eq!(extract_exe_from_command(""), "");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_whitespace_only_returns_empty() {
+        assert_eq!(extract_exe_from_command("   "), "");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_forward_slash_no_spaces() {
+        // Unquoted forward-slash paths work when there are no spaces in the path.
+        let cmd = "C:/Tools/App/uninstall.exe /silent";
+        assert_eq!(extract_exe_from_command(cmd), "C:/Tools/App/uninstall.exe");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_forward_slash_quoted_with_spaces() {
+        // Forward-slash paths with spaces must be quoted — the closing quote is
+        // the only unambiguous delimiter between path and arguments.
+        let cmd = r#""C:/Program Files/App/uninstall.exe" /silent"#;
+        assert_eq!(
+            extract_exe_from_command(cmd),
+            "C:/Program Files/App/uninstall.exe"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // is_installation_orphaned (Windows-only helper)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_both_fields_empty_returns_false() {
+        // We can't tell either way — don't flag it
+        assert!(!is_installation_orphaned("", ""));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_existing_install_location_returns_false() {
+        // Windows\System32 definitely exists and is not a valid install location
+        // but the existence check should pass and mark it as NOT orphaned
+        let existing = r"C:\Windows";
+        assert!(!is_installation_orphaned(existing, ""));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_missing_location_missing_uninstall_returns_true() {
+        let fake_loc = r"C:\Program Files\FakeApp12345XYZ\";
+        let fake_uninst = r"C:\Program Files\FakeApp12345XYZ\uninstall.exe";
+        // Neither exists — should be flagged as orphaned
+        assert!(is_installation_orphaned(fake_loc, fake_uninst));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_missing_location_but_valid_uninstall_returns_false() {
+        // Uninstall string points to a real executable → not orphaned
+        let existing_exe = r"C:\Windows\System32\cmd.exe";
+        assert!(!is_installation_orphaned(
+            r"C:\FakeDir\12345\",
+            existing_exe
+        ));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // parse_hive (Windows-only helper)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_hive_hklm_short() {
         let (hive, path) =
             parse_hive(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp")
                 .unwrap();
@@ -645,9 +858,93 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_parse_hive_hkcu() {
+    fn test_parse_hive_hkcu_short() {
         let (hive, path) = parse_hive(r"HKCU\SOFTWARE\TestKey").unwrap();
         assert_eq!(hive, winreg::enums::HKEY_CURRENT_USER);
         assert_eq!(path, r"SOFTWARE\TestKey");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_hive_hklm_wow64() {
+        let (hive, path) = parse_hive(r"HKLM (WOW64)\SOFTWARE\TestApp").unwrap();
+        assert_eq!(hive, winreg::enums::HKEY_LOCAL_MACHINE);
+        assert_eq!(path, r"SOFTWARE\TestApp");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_hive_unknown_prefix_returns_error() {
+        let result = parse_hive(r"HKCR\SOFTWARE\TestKey");
+        assert!(
+            result.is_err(),
+            "Unknown hive prefix HKCR should return Err"
+        );
+        assert!(result.unwrap_err().contains("Unrecognized registry hive"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_hive_empty_string_returns_error() {
+        let result = parse_hive("");
+        assert!(result.is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_hive_preserves_nested_subkeys() {
+        let (_, path) = parse_hive(r"HKCU\A\B\C\D\E").unwrap();
+        assert_eq!(path, r"A\B\C\D\E");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // RegistryCleanEntry deserialization round-trip
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_clean_entry_with_value_name() {
+        let entry = RegistryCleanEntry {
+            key_path: r"HKCU\SOFTWARE\Test".to_string(),
+            value_name: Some("MyValue".to_string()),
+        };
+        assert_eq!(entry.key_path, r"HKCU\SOFTWARE\Test");
+        assert_eq!(entry.value_name.as_deref(), Some("MyValue"));
+    }
+
+    #[test]
+    fn test_registry_clean_entry_without_value_name() {
+        let entry = RegistryCleanEntry {
+            key_path: r"HKCU\SOFTWARE\Test".to_string(),
+            value_name: None,
+        };
+        assert!(entry.value_name.is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // RegistryBackupResult fields
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_backup_result_success_fields_consistent() {
+        // Manually construct a "success" result and verify field consistency
+        let r = RegistryBackupResult {
+            backup_path: "/tmp/backup.reg".to_string(),
+            success: true,
+            error: None,
+        };
+        assert!(r.success);
+        assert!(!r.backup_path.is_empty());
+        assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn test_backup_result_failure_fields_consistent() {
+        let r = RegistryBackupResult {
+            backup_path: String::new(),
+            success: false,
+            error: Some("Access denied".to_string()),
+        };
+        assert!(!r.success);
+        assert!(r.error.is_some());
     }
 }
