@@ -15,6 +15,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_os = "windows")]
 use std::path::Path;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -113,9 +115,14 @@ pub fn backup_registry() -> RegistryBackupResult {
         // Fallback to AppData\Roaming\QRE\Registry Backups if Documents is unavailable.
         // Either location is permanent and never targeted by our temp/cache cleaners.
         let backup_dir = directories::UserDirs::new()
-            .and_then(|u| u.document_dir().map(|d| d.join("QRE").join("Registry Backups")))
-            .or_else(|| directories::BaseDirs::new()
-                .map(|b| b.data_dir().join("QRE").join("Registry Backups")))
+            .and_then(|u| {
+                u.document_dir()
+                    .map(|d| d.join("QRE").join("Registry Backups"))
+            })
+            .or_else(|| {
+                directories::BaseDirs::new()
+                    .map(|b| b.data_dir().join("QRE").join("Registry Backups"))
+            })
             .unwrap_or_else(|| std::env::temp_dir().join("qre_registry_backups"));
         if let Err(e) = std::fs::create_dir_all(&backup_dir) {
             return RegistryBackupResult {
@@ -130,12 +137,36 @@ pub fn backup_registry() -> RegistryBackupResult {
 
         // Keys to back up — same set we scan, so the backup covers everything we might delete.
         let keys_to_backup: &[(winreg::HKEY, &str, &str)] = &[
-            (HKEY_CURRENT_USER,  r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_CURRENT_USER"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_LOCAL_MACHINE"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_LOCAL_MACHINE"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths", "HKEY_LOCAL_MACHINE"),
-            (HKEY_CURRENT_USER,  r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKEY_CURRENT_USER"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKEY_LOCAL_MACHINE"),
+            (
+                HKEY_CURRENT_USER,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                "HKEY_CURRENT_USER",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                "HKEY_LOCAL_MACHINE",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+                "HKEY_LOCAL_MACHINE",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+                "HKEY_LOCAL_MACHINE",
+            ),
+            (
+                HKEY_CURRENT_USER,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                "HKEY_CURRENT_USER",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                "HKEY_LOCAL_MACHINE",
+            ),
         ];
 
         let mut reg_content = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
@@ -153,7 +184,11 @@ pub fn backup_registry() -> RegistryBackupResult {
                 Ok(key) => {
                     // Write the section header
                     reg_content.push_str(&format!("[{}\\{}]\r\n", hive_name, subkey_path));
-                    export_key_recursive(&key, &format!("{}\\{}", hive_name, subkey_path), &mut reg_content);
+                    export_key_recursive(
+                        &key,
+                        &format!("{}\\{}", hive_name, subkey_path),
+                        &mut reg_content,
+                    );
                     reg_content.push_str("\r\n");
                     any_success = true;
                 }
@@ -231,7 +266,12 @@ fn format_reg_value(name: &str, value: &winreg::RegValue) -> String {
         }
         REG_DWORD => {
             if value.bytes.len() >= 4 {
-                let n = u32::from_le_bytes([value.bytes[0], value.bytes[1], value.bytes[2], value.bytes[3]]);
+                let n = u32::from_le_bytes([
+                    value.bytes[0],
+                    value.bytes[1],
+                    value.bytes[2],
+                    value.bytes[3],
+                ]);
                 format!("{}=dword:{:08x}", key_part, n)
             } else {
                 format!("{}=dword:00000000", key_part)
@@ -248,7 +288,12 @@ fn format_reg_value(name: &str, value: &winreg::RegValue) -> String {
         }
         _ => {
             // Unknown type — store as raw hex
-            format!("{}=hex({:x}):{}", key_part, value.vtype.clone() as u32, bytes_to_hex(&value.bytes))
+            format!(
+                "{}=hex({:x}):{}",
+                key_part,
+                value.vtype.clone() as u32,
+                bytes_to_hex(&value.bytes)
+            )
         }
     }
 }
@@ -279,10 +324,9 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         .join(",")
 }
 
-
 /// Deletes the specified registry entries. Call backup_registry() first.
 pub fn clean_registry_entries(
-    entries: Vec<RegistryCleanEntry>,
+    #[allow(unused_variables)] entries: Vec<RegistryCleanEntry>,
 ) -> RegistryCleanResult {
     #[cfg(not(target_os = "windows"))]
     return RegistryCleanResult {
@@ -320,7 +364,6 @@ pub fn clean_registry_entries(
 fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
     use winreg::{enums::*, RegKey};
 
-    // Scan both HKLM and HKCU uninstall hives
     let hives: &[(winreg::HKEY, &str, &str)] = &[
         (
             HKEY_LOCAL_MACHINE,
@@ -332,7 +375,6 @@ fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
             "HKCU",
         ),
-        // 32-bit on 64-bit Windows
         (
             HKEY_LOCAL_MACHINE,
             r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -340,46 +382,56 @@ fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
         ),
     ];
 
+    // Same app often appears in both HKLM and WOW64 — deduplicate by
+    // (lowercase subkey name, lowercase uninstall string).
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
     for (hive, path, hive_name) in hives {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else { continue };
+        let Ok(key) = root.open_subkey(path) else {
+            continue;
+        };
 
         for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
-            let Ok(subkey) = key.open_subkey(&subkey_name) else { continue };
+            let Ok(subkey) = key.open_subkey(&subkey_name) else {
+                continue;
+            };
 
             let display_name: String = subkey
                 .get_value("DisplayName")
                 .unwrap_or_else(|_| subkey_name.clone());
 
-            // Skip system components and Windows updates — too risky to flag
             let publisher: String = subkey.get_value("Publisher").unwrap_or_default();
             if publisher.to_lowercase().contains("microsoft") {
                 continue;
             }
 
-            let is_system_component: u32 = subkey
-                .get_value("SystemComponent")
-                .unwrap_or(0);
+            let is_system_component: u32 = subkey.get_value("SystemComponent").unwrap_or(0);
             if is_system_component == 1 {
                 continue;
             }
 
-            // Determine if the install location or uninstall string still exists
             let install_loc: String = subkey.get_value("InstallLocation").unwrap_or_default();
             let uninstall_str: String = subkey.get_value("UninstallString").unwrap_or_default();
 
-            let is_orphaned = is_installation_orphaned(&install_loc, &uninstall_str);
-            if !is_orphaned {
+            if !is_installation_orphaned(&install_loc, &uninstall_str) {
+                continue;
+            }
+
+            let dedup_key = (
+                subkey_name.to_lowercase(),
+                uninstall_str.trim().to_lowercase(),
+            );
+            if !seen.insert(dedup_key) {
                 continue;
             }
 
             let full_key_path = format!(r"{}\{}\{}", hive_name, path, subkey_name);
-
             items.push(RegistryItem {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: display_name.clone(),
                 key_path: full_key_path,
-                value_name: None, // Delete the whole subkey
+                value_name: None,
                 category: "OrphanedInstaller".to_string(),
                 description: format!(
                     "\"{}\" — install location no longer exists on disk.",
@@ -410,23 +462,57 @@ fn scan_invalid_app_paths(items: &mut Vec<RegistryItem>) {
         ),
     ];
 
+    // Dedup by resolved exe path — prevents double entries from both hive views.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for (hive, path, hive_name) in hives {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else { continue };
+        let Ok(key) = root.open_subkey(path) else {
+            continue;
+        };
 
         for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
-            let Ok(subkey) = key.open_subkey(&subkey_name) else { continue };
+            let Ok(subkey) = key.open_subkey(&subkey_name) else {
+                continue;
+            };
 
-            // The default (unnamed) value is the path to the executable
-            let exe_path: String = subkey.get_value("").unwrap_or_default();
-            if exe_path.is_empty() {
+            let raw: String = subkey.get_value("").unwrap_or_default();
+            if raw.is_empty() {
                 continue;
             }
 
-            // Strip surrounding quotes if present
-            let clean_path = exe_path.trim_matches('"');
+            // App Paths entries should be a direct path to an executable, but some
+            // vendors (e.g. Lenovo's warrantyviewer.exe) store a full shell command
+            // like `cmd.exe /c "start protocol:..."` instead. If the value looks
+            // like a command line rather than a plain file path, skip it — we
+            // cannot meaningfully verify shell commands here.
+            //
+            // Strategy: strip quotes/whitespace/null bytes, expand %VAR% tokens,
+            // then use extract_exe_from_command. If the result is empty (no path
+            // separator, i.e. a bare exe name like "cmd.exe"), the entry is a
+            // shell command — skip it to avoid false positives.
+            let clean = raw.trim().trim_end_matches('\0').trim_matches('"');
+            let expanded = expand_env_vars(clean);
 
-            if !Path::new(clean_path).exists() {
+            // If the value itself already looks like a bare command (no backslash),
+            // treat it the same as extract_exe_from_command returning empty.
+            let exe = if expanded.contains('\\') || expanded.contains('/') {
+                // Looks like a path — but may still have arguments; extract cleanly
+                extract_exe_from_command(&expanded)
+            } else {
+                String::new() // bare name like "cmd.exe" — skip
+            };
+
+            if exe.is_empty() {
+                continue; // shell command, protocol handler, or unresolvable — skip
+            }
+
+            let dedup_key = exe.to_lowercase();
+            if !seen.insert(dedup_key) {
+                continue;
+            }
+
+            if !Path::new(&exe).exists() {
                 let full_key_path = format!(r"{}\{}\{}", hive_name, path, subkey_name);
                 items.push(RegistryItem {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -436,7 +522,7 @@ fn scan_invalid_app_paths(items: &mut Vec<RegistryItem>) {
                     category: "InvalidAppPath".to_string(),
                     description: format!(
                         "App Paths entry for \"{}\" points to a missing executable: {}",
-                        subkey_name, clean_path
+                        subkey_name, exe
                     ),
                     warning: None,
                 });
@@ -452,11 +538,15 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
     // MUI cache stores localized application names. Value names ARE the exe paths.
     let path = r"SOFTWARE\Classes\Local Settings\MuiCache";
     let root = RegKey::predef(HKEY_CURRENT_USER);
-    let Ok(mui_root) = root.open_subkey(path) else { return };
+    let Ok(mui_root) = root.open_subkey(path) else {
+        return;
+    };
 
     // MUI cache has numbered subkeys like "0", "1", etc.
     for subkey_name in mui_root.enum_keys().filter_map(|k| k.ok()) {
-        let Ok(subkey) = mui_root.open_subkey(&subkey_name) else { continue };
+        let Ok(subkey) = mui_root.open_subkey(&subkey_name) else {
+            continue;
+        };
 
         for (value_name, _value) in subkey.enum_values().filter_map(|v| v.ok()) {
             // The value name itself is an exe path
@@ -467,11 +557,12 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
                 continue;
             }
 
-            if !Path::new(clean).exists() {
+            let expanded = expand_env_vars(clean);
+            if !Path::new(&expanded).exists() {
                 let full_key = format!(r"HKCU\{}\{}", path, subkey_name);
                 items.push(RegistryItem {
                     id: uuid::Uuid::new_v4().to_string(),
-                    name: Path::new(clean)
+                    name: Path::new(&expanded)
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or(clean)
@@ -479,10 +570,7 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
                     key_path: full_key,
                     value_name: Some(value_name.clone()),
                     category: "MUICache".to_string(),
-                    description: format!(
-                        "MUI cache entry for a missing executable: {}",
-                        clean
-                    ),
+                    description: format!("MUI cache entry for a missing executable: {}", expanded),
                     warning: None,
                 });
             }
@@ -514,7 +602,9 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
 
     for (hive, path, hive_name) in run_locations {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else { continue };
+        let Ok(key) = root.open_subkey(path) else {
+            continue;
+        };
 
         for (value_name, value) in key.enum_values().filter_map(|v| v.ok()) {
             let raw_path: String = match value.to_string().parse() {
@@ -527,7 +617,8 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
                 continue;
             }
 
-            if !Path::new(&exe_path).exists() {
+            let exe_expanded = expand_env_vars(&exe_path);
+            if !Path::new(&exe_expanded).exists() {
                 let full_key = format!(r"{}\{}", hive_name, path);
                 items.push(RegistryItem {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -537,10 +628,11 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
                     category: "StartupEntry".to_string(),
                     description: format!(
                         "Startup entry \"{}\" points to a missing file: {}",
-                        value_name, exe_path
+                        value_name, exe_expanded
                     ),
                     warning: Some(
-                        "Removing this stops it from running at login — verify before deleting.".to_string(),
+                        "Removing this stops it from running at login — verify before deleting."
+                            .to_string(),
                     ),
                 });
             }
@@ -553,10 +645,7 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "windows")]
-fn delete_registry_entry(
-    key_path: &str,
-    value_name: &Option<String>,
-) -> Result<(), String> {
+fn delete_registry_entry(key_path: &str, value_name: &Option<String>) -> Result<(), String> {
     use winreg::{enums::*, RegKey};
 
     // Parse the hive prefix
@@ -573,7 +662,8 @@ fn delete_registry_entry(
     } else {
         // Delete the entire subkey (and all values within it)
         // Split into parent key + child name for RegDeleteKey semantics
-        let last_backslash = subpath.rfind('\\')
+        let last_backslash = subpath
+            .rfind('\\')
             .ok_or_else(|| format!("Cannot find parent key in path: {}", key_path))?;
         let parent_path = &subpath[..last_backslash];
         let child_name = &subpath[last_backslash + 1..];
@@ -616,47 +706,133 @@ fn parse_hive(key_path: &str) -> Result<(winreg::HKEY, &str), String> {
     Err(format!("Unrecognized registry hive in path: {}", key_path))
 }
 
-/// Determines if an installation is truly orphaned by checking both
-/// the install location and the uninstall executable on disk.
+/// Expands Windows `%VARIABLE%` tokens using the current process environment.
+/// `Path::new()` never does this — it passes strings verbatim to the OS.
+#[cfg(target_os = "windows")]
+fn expand_env_vars(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if let Some(rel) = bytes[i + 1..].iter().position(|&b| b == b'%') {
+                let var_name = &s[i + 1..i + 1 + rel];
+                if var_name.is_empty() {
+                    result.push('%'); // "%%" → literal "%"
+                } else if let Ok(val) = std::env::var(var_name) {
+                    result.push_str(&val);
+                } else {
+                    result.push('%');
+                    result.push_str(var_name);
+                    result.push('%');
+                }
+                i += 1 + rel + 1;
+                continue;
+            }
+        }
+        let ch = s[i..].chars().next().unwrap();
+        result.push(ch);
+        i += ch.len_utf8();
+    }
+    result
+}
+
+/// Returns `true` only when there is solid evidence the installation is gone.
+///
+/// Four checks are applied (all with trimming and `%VAR%` expansion):
+///
+/// 1. **`InstallLocation` exists** → not orphaned.
+/// 2. **Uninstaller exe exists** → not orphaned.
+/// 3. **Uninstaller's parent directory exists** — covers tools like Miniforge3
+///    whose uninstaller exe is absent but whose install directory is intact.
+/// 4. **Non-path command guard** — `MsiExec.exe /X{GUID}`, `rundll32`, etc.:
+///    `extract_exe_from_command` returns `""`, so we cannot verify anything →
+///    conservatively treat as not orphaned.
 #[cfg(target_os = "windows")]
 fn is_installation_orphaned(install_loc: &str, uninstall_str: &str) -> bool {
-    // If there's a valid install location that still exists → not orphaned
-    if !install_loc.is_empty() && Path::new(install_loc).exists() {
+    let install_loc = install_loc.trim().trim_end_matches('\0');
+    let uninstall_str = uninstall_str.trim().trim_end_matches('\0');
+
+    let install_loc_exp = expand_env_vars(install_loc);
+    let uninstall_str_exp = expand_env_vars(uninstall_str);
+
+    // Check 1 — InstallLocation directory exists
+    if !install_loc_exp.is_empty() && Path::new(&install_loc_exp).exists() {
         return false;
     }
 
-    // If there's a valid uninstall string pointing to a real exe → not orphaned
-    if !uninstall_str.is_empty() {
-        let exe = extract_exe_from_command(uninstall_str);
-        if !exe.is_empty() && Path::new(&exe).exists() {
+    if !uninstall_str_exp.is_empty() {
+        let exe = extract_exe_from_command(&uninstall_str_exp);
+
+        // Check 4 — Non-path command: cannot verify → assume valid
+        if exe.is_empty() {
             return false;
+        }
+
+        let exe_exp = expand_env_vars(&exe);
+
+        // Check 2 — Uninstaller exe exists
+        if Path::new(&exe_exp).exists() {
+            return false;
+        }
+
+        // Check 3 — Uninstaller's parent directory exists.
+        // Miniforge3, conda-based tools and some portable apps regenerate their
+        // uninstaller on demand; the exe is absent but the install folder is real.
+        if let Some(parent) = Path::new(&exe_exp).parent() {
+            let parent_str = parent.to_str().unwrap_or("");
+            // Reject trivial parents: empty string or bare drive root "C:\"
+            if parent_str.len() > 3 && parent.exists() {
+                return false;
+            }
         }
     }
 
-    // Both checks failed: only flag as orphaned if we had SOME data to check
-    // (entries with no install location AND no uninstall string are ambiguous — skip them)
     !install_loc.is_empty() || !uninstall_str.is_empty()
 }
 
-/// Extracts the executable path from a command string that may include arguments.
-/// Handles: `"C:\path\to\app.exe" /uninstall`, `C:\path\to\app.exe /S`, etc.
+/// Extracts the executable path from a Windows uninstall/run command string.
+///
+/// Handles all real-world patterns:
+///   Quoted:                  `"C:\Program Files\App\uninstall.exe" /silent`
+///   Unquoted, no spaces:     `C:\Tools\remove.exe /S`
+///   Unquoted, WITH spaces:   `C:\Program Files\App\uninstall.exe`
+///   Non-path (MsiExec etc.): `MsiExec.exe /X{GUID}` → `""`
+///
+/// Returns `""` for commands whose first path-token has no separator.
 #[cfg(target_os = "windows")]
 fn extract_exe_from_command(cmd: &str) -> String {
     let trimmed = cmd.trim();
 
+    // Quoted path
     if trimmed.starts_with('"') {
-        // Quoted path: extract up to the closing quote
         if let Some(end) = trimmed[1..].find('"') {
             return trimmed[1..end + 1].to_string();
         }
     }
 
-    // Unquoted: take everything up to the first space or argument flag
-    let exe_part = trimmed.split_whitespace().next().unwrap_or("");
+    // Unquoted: accumulate tokens until we hit the .exe token or an argument flag
+    let mut candidate = String::new();
+    for token in trimmed.split(' ') {
+        if token.is_empty() {
+            continue;
+        }
+        if token.starts_with('/') || token.starts_with('-') {
+            break;
+        }
+        if !candidate.is_empty() {
+            candidate.push(' ');
+        }
+        candidate.push_str(token);
 
-    // Ignore entries that are not filesystem paths (e.g. "MsiExec.exe /X{GUID}")
-    if exe_part.contains('\\') || exe_part.contains('/') {
-        exe_part.to_string()
+        let lower = candidate.to_lowercase();
+        if lower.ends_with(".exe") || lower.ends_with(".bat") || lower.ends_with(".cmd") {
+            break;
+        }
+    }
+
+    if candidate.contains('\\') || candidate.contains('/') {
+        candidate
     } else {
         String::new()
     }
@@ -678,7 +854,10 @@ mod tests {
     fn test_scan_does_not_panic_on_any_platform() {
         let items = scan_registry();
         #[cfg(not(target_os = "windows"))]
-        assert!(items.is_empty(), "Non-Windows scan must return an empty Vec");
+        assert!(
+            items.is_empty(),
+            "Non-Windows scan must return an empty Vec"
+        );
         #[cfg(target_os = "windows")]
         let _ = items; // On Windows just assert it ran
     }
@@ -692,8 +871,10 @@ mod tests {
         {
             assert!(!result.success);
             assert!(result.error.is_some());
-            assert!(result.error.unwrap().contains("Windows"),
-                "Error message should mention Windows");
+            assert!(
+                result.error.unwrap().contains("Windows"),
+                "Error message should mention Windows"
+            );
         }
         #[cfg(target_os = "windows")]
         {
@@ -713,8 +894,10 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(result.items_cleaned, 0);
-            assert!(!result.errors.is_empty(),
-                "Non-Windows clean must return an error explaining the limitation");
+            assert!(
+                !result.errors.is_empty(),
+                "Non-Windows clean must return an error explaining the limitation"
+            );
         }
         #[cfg(target_os = "windows")]
         {
@@ -733,22 +916,47 @@ mod tests {
     fn test_scan_items_have_non_empty_required_fields() {
         let items = scan_registry();
         for item in &items {
-            assert!(!item.id.is_empty(),     "Item '{}' has empty id",       item.name);
-            assert!(!item.name.is_empty(),   "Item at '{}' has empty name",  item.key_path);
-            assert!(!item.key_path.is_empty(),"Item '{}' has empty key_path", item.name);
-            assert!(!item.category.is_empty(),"Item '{}' has empty category", item.name);
-            assert!(!item.description.is_empty(),"Item '{}' has empty description", item.name);
+            assert!(!item.id.is_empty(), "Item '{}' has empty id", item.name);
+            assert!(
+                !item.name.is_empty(),
+                "Item at '{}' has empty name",
+                item.key_path
+            );
+            assert!(
+                !item.key_path.is_empty(),
+                "Item '{}' has empty key_path",
+                item.name
+            );
+            assert!(
+                !item.category.is_empty(),
+                "Item '{}' has empty category",
+                item.name
+            );
+            assert!(
+                !item.description.is_empty(),
+                "Item '{}' has empty description",
+                item.name
+            );
         }
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_scan_items_have_valid_categories() {
-        let valid = ["OrphanedInstaller", "InvalidAppPath", "MUICache", "StartupEntry"];
+        let valid = [
+            "OrphanedInstaller",
+            "InvalidAppPath",
+            "MUICache",
+            "StartupEntry",
+        ];
         let items = scan_registry();
         for item in &items {
-            assert!(valid.contains(&item.category.as_str()),
-                "Item '{}' has unknown category '{}'", item.name, item.category);
+            assert!(
+                valid.contains(&item.category.as_str()),
+                "Item '{}' has unknown category '{}'",
+                item.name,
+                item.category
+            );
         }
     }
 
@@ -758,8 +966,12 @@ mod tests {
         let items = scan_registry();
         let mut seen = std::collections::HashSet::new();
         for item in &items {
-            assert!(seen.insert(item.id.clone()),
-                "Duplicate UUID for item '{}' at '{}'", item.name, item.key_path);
+            assert!(
+                seen.insert(item.id.clone()),
+                "Duplicate UUID for item '{}' at '{}'",
+                item.name,
+                item.key_path
+            );
         }
     }
 
@@ -769,70 +981,115 @@ mod tests {
         let valid_prefixes = ["HKLM\\", "HKCU\\", "HKLM (WOW64)\\"];
         let items = scan_registry();
         for item in &items {
-            let has_valid_prefix = valid_prefixes.iter()
-                .any(|p| item.key_path.starts_with(p));
-            assert!(has_valid_prefix,
+            let has_valid_prefix = valid_prefixes.iter().any(|p| item.key_path.starts_with(p));
+            assert!(
+                has_valid_prefix,
                 "Item '{}' key_path '{}' does not start with a known hive prefix",
-                item.name, item.key_path);
+                item.name, item.key_path
+            );
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // extract_exe_from_command (Windows-only helper)
+    // extract_exe_from_command
     // ─────────────────────────────────────────────────────────────────────
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_quoted_path_with_spaces() {
-        let cmd = r#""C:\Program Files\My App\uninstall.exe" /silent"#;
+    fn test_extract_exe_quoted_with_spaces() {
         assert_eq!(
-            extract_exe_from_command(cmd),
-            r"C:\Program Files\My App\uninstall.exe"
+            extract_exe_from_command(r#""C:\Program Files\App\uninstall.exe" /silent"#),
+            r"C:\Program Files\App\uninstall.exe"
         );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_quoted_path_no_args() {
-        let cmd = r#""C:\Program Files\App\remove.exe""#;
+    fn test_extract_exe_quoted_no_args() {
         assert_eq!(
-            extract_exe_from_command(cmd),
+            extract_exe_from_command(r#""C:\Program Files\App\remove.exe""#),
             r"C:\Program Files\App\remove.exe"
         );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_unquoted_with_flag() {
-        let cmd = r"C:\Windows\App\uninst.exe /S";
-        assert_eq!(extract_exe_from_command(cmd), r"C:\Windows\App\uninst.exe");
+    fn test_extract_exe_unquoted_no_spaces_with_flag() {
+        assert_eq!(
+            extract_exe_from_command(r"C:\Windows\App\uninst.exe /S"),
+            r"C:\Windows\App\uninst.exe"
+        );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_extract_exe_unquoted_no_args() {
-        let cmd = r"C:\Tools\remove.exe";
-        assert_eq!(extract_exe_from_command(cmd), r"C:\Tools\remove.exe");
+        assert_eq!(
+            extract_exe_from_command(r"C:\Tools\remove.exe"),
+            r"C:\Tools\remove.exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_unquoted_spaces_in_path_no_args() {
+        // REGRESSION: split_whitespace().next() returned "C:\Program" only.
+        assert_eq!(
+            extract_exe_from_command(r"C:\Program Files\Android\Android Studio\uninstall.exe"),
+            r"C:\Program Files\Android\Android Studio\uninstall.exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_unquoted_spaces_with_slash_flag() {
+        assert_eq!(
+            extract_exe_from_command(r"C:\Program Files\App\uninstall.exe /S"),
+            r"C:\Program Files\App\uninstall.exe"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_unquoted_spaces_with_dash_flag() {
+        assert_eq!(
+            extract_exe_from_command(r"C:\Program Files (x86)\Steam\steam.exe -uninstall"),
+            r"C:\Program Files (x86)\Steam\steam.exe"
+        );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_extract_exe_msiexec_returns_empty() {
-        // MsiExec.exe has no path separator — must be ignored to avoid false positives
-        let cmd = r"MsiExec.exe /X{12345678-1234-1234-1234-123456789012}";
-        assert_eq!(extract_exe_from_command(cmd), "");
+        assert_eq!(
+            extract_exe_from_command(r"MsiExec.exe /X{12345678-1234-1234-1234-123456789012}"),
+            ""
+        );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_rundll32_without_path_separator_returns_empty() {
-        let cmd = "rundll32.exe setupapi.dll,InstallHinfSection";
-        assert_eq!(extract_exe_from_command(cmd), "");
+    fn test_extract_exe_rundll32_returns_empty() {
+        assert_eq!(
+            extract_exe_from_command("rundll32.exe setupapi.dll,InstallHinfSection"),
+            ""
+        );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_empty_string_returns_empty() {
+    fn test_extract_exe_cmd_shell_command_returns_empty() {
+        // Lenovo's warrantyviewer.exe stores "cmd.exe /c start lenovo-companion:..."
+        // in App Paths — must NOT be flagged as a missing exe.
+        assert_eq!(
+            extract_exe_from_command(r#"cmd.exe /c "start lenovo-companion:PARAM?featureId=foo""#),
+            ""
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_exe_empty_returns_empty() {
         assert_eq!(extract_exe_from_command(""), "");
     }
 
@@ -844,59 +1101,134 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_extract_exe_forward_slash_no_spaces() {
-        // Unquoted forward-slash paths work when there are no spaces in the path.
-        let cmd = "C:/Tools/App/uninstall.exe /silent";
-        assert_eq!(extract_exe_from_command(cmd), "C:/Tools/App/uninstall.exe");
+    fn test_extract_exe_forward_slash_unquoted() {
+        assert_eq!(
+            extract_exe_from_command("C:/Tools/App/uninstall.exe /silent"),
+            "C:/Tools/App/uninstall.exe"
+        );
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_extract_exe_forward_slash_quoted_with_spaces() {
-        // Forward-slash paths with spaces must be quoted — the closing quote is
-        // the only unambiguous delimiter between path and arguments.
-        let cmd = r#""C:/Program Files/App/uninstall.exe" /silent"#;
         assert_eq!(
-            extract_exe_from_command(cmd),
+            extract_exe_from_command(r#""C:/Program Files/App/uninstall.exe" /silent"#),
             "C:/Program Files/App/uninstall.exe"
         );
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // is_installation_orphaned (Windows-only helper)
+    // expand_env_vars
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_expand_env_vars_known_var() {
+        let r = expand_env_vars("%WINDIR%");
+        assert!(!r.is_empty() && !r.contains('%'), "Got: {}", r);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_expand_env_vars_unknown_preserved() {
+        assert_eq!(
+            expand_env_vars("%TOTALLY_UNKNOWN_XYZ%"),
+            "%TOTALLY_UNKNOWN_XYZ%"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_expand_env_vars_no_tokens() {
+        let s = r"C:\Program Files\MyApp\app.exe";
+        assert_eq!(expand_env_vars(s), s);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_expand_env_vars_double_percent() {
+        assert_eq!(expand_env_vars("100%%"), "100%");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // is_installation_orphaned
     // ─────────────────────────────────────────────────────────────────────
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_orphaned_both_fields_empty_returns_false() {
-        // We can't tell either way — don't flag it
         assert!(!is_installation_orphaned("", ""));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_orphaned_existing_install_location_returns_false() {
-        // Windows\System32 definitely exists and is not a valid install location
-        // but the existence check should pass and mark it as NOT orphaned
-        let existing = r"C:\Windows";
-        assert!(!is_installation_orphaned(existing, ""));
+        assert!(!is_installation_orphaned(r"C:\Windows", ""));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_orphaned_missing_location_missing_uninstall_returns_true() {
-        let fake_loc = r"C:\Program Files\FakeApp12345XYZ\";
-        let fake_uninst = r"C:\Program Files\FakeApp12345XYZ\uninstall.exe";
-        // Neither exists — should be flagged as orphaned
-        assert!(is_installation_orphaned(fake_loc, fake_uninst));
+    fn test_orphaned_missing_both_returns_true() {
+        assert!(is_installation_orphaned(
+            r"C:\Program Files\FakeApp12345XYZ\",
+            r"C:\Program Files\FakeApp12345XYZ\uninstall.exe"
+        ));
     }
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn test_orphaned_missing_location_but_valid_uninstall_returns_false() {
-        // Uninstall string points to a real executable → not orphaned
-        let existing_exe = r"C:\Windows\System32\cmd.exe";
-        assert!(!is_installation_orphaned(r"C:\FakeDir\12345\", existing_exe));
+    fn test_orphaned_valid_uninstall_exe_returns_false() {
+        assert!(!is_installation_orphaned(
+            r"C:\FakeDir\12345\",
+            r"C:\Windows\System32\cmd.exe"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_missing_exe_but_parent_dir_exists_returns_false() {
+        // REGRESSION: Miniforge3 — uninstaller may be absent but install dir is real.
+        // C:\Windows exists on all Windows machines; use it as the parent stand-in.
+        assert!(!is_installation_orphaned(
+            "",
+            r"C:\Windows\FakeUninstaller-xyz-notreal.exe"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_msiexec_not_false_positive() {
+        assert!(!is_installation_orphaned(
+            "",
+            r"MsiExec.exe /X{12345678-1234-1234-1234-123456789012}"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_trailing_whitespace_not_false_positive() {
+        assert!(!is_installation_orphaned("C:\\Windows  \t", ""));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_trailing_null_byte_not_false_positive() {
+        assert!(!is_installation_orphaned("C:\\Windows\0", ""));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_env_var_install_location_not_false_positive() {
+        assert!(!is_installation_orphaned("%WINDIR%", ""));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_orphaned_env_var_uninstall_string_not_false_positive() {
+        assert!(!is_installation_orphaned(
+            "",
+            r#""%WINDIR%\System32\cmd.exe" /C echo hi"#
+        ));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -906,11 +1238,14 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_hklm_short() {
-        let (hive, path) = parse_hive(
-            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp"
-        ).unwrap();
+        let (hive, path) =
+            parse_hive(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp")
+                .unwrap();
         assert_eq!(hive, winreg::enums::HKEY_LOCAL_MACHINE);
-        assert_eq!(path, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp");
+        assert_eq!(
+            path,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp"
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -924,9 +1259,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_hklm_wow64() {
-        let (hive, path) = parse_hive(
-            r"HKLM (WOW64)\SOFTWARE\TestApp"
-        ).unwrap();
+        let (hive, path) = parse_hive(r"HKLM (WOW64)\SOFTWARE\TestApp").unwrap();
         assert_eq!(hive, winreg::enums::HKEY_LOCAL_MACHINE);
         assert_eq!(path, r"SOFTWARE\TestApp");
     }
@@ -935,8 +1268,10 @@ mod tests {
     #[test]
     fn test_parse_hive_unknown_prefix_returns_error() {
         let result = parse_hive(r"HKCR\SOFTWARE\TestKey");
-        assert!(result.is_err(),
-            "Unknown hive prefix HKCR should return Err");
+        assert!(
+            result.is_err(),
+            "Unknown hive prefix HKCR should return Err"
+        );
         assert!(result.unwrap_err().contains("Unrecognized registry hive"));
     }
 
@@ -950,9 +1285,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_preserves_nested_subkeys() {
-        let (_, path) = parse_hive(
-            r"HKCU\A\B\C\D\E"
-        ).unwrap();
+        let (_, path) = parse_hive(r"HKCU\A\B\C\D\E").unwrap();
         assert_eq!(path, r"A\B\C\D\E");
     }
 
