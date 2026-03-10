@@ -95,15 +95,28 @@ pub fn backup_registry() -> RegistryBackupResult {
 
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
+        use winreg::{enums::*, RegKey};
 
-        // Write backup to the OS temp directory with a timestamp
+        // Write backup to the OS temp directory with a timestamp.
+        // Using winreg directly avoids reg.exe subprocess issues:
+        //   - WOW64 file system redirection (32-bit process can't run System32 eg.exe)
+        //   - PATH not being set correctly in Tauri's process environment
+        //   - Silent failures that are impossible to diagnose
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let backup_dir = std::env::temp_dir().join("qre_registry_backups");
+        // Save to Documents\QRE\Registry Backups — NOT the temp folder.
+        // The temp folder is a cleaning target in this very app; storing backups
+        // there would silently destroy them the next time the user runs a clean.
+        // Fallback to AppData\Roaming\QRE\Registry Backups if Documents is unavailable.
+        // Either location is permanent and never targeted by our temp/cache cleaners.
+        let backup_dir = directories::UserDirs::new()
+            .and_then(|u| u.document_dir().map(|d| d.join("QRE").join("Registry Backups")))
+            .or_else(|| directories::BaseDirs::new()
+                .map(|b| b.data_dir().join("QRE").join("Registry Backups")))
+            .unwrap_or_else(|| std::env::temp_dir().join("qre_registry_backups"));
         if let Err(e) = std::fs::create_dir_all(&backup_dir) {
             return RegistryBackupResult {
                 backup_path: String::new(),
@@ -115,55 +128,54 @@ pub fn backup_registry() -> RegistryBackupResult {
         let backup_file = backup_dir.join(format!("registry_backup_{}.reg", timestamp));
         let backup_path_str = backup_file.display().to_string();
 
-        // Backup all four locations we scan — one combined export via reg.exe
-        // reg.exe is present on all modern Windows installations
-        let keys_to_backup = [
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
-            r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+        // Keys to back up — same set we scan, so the backup covers everything we might delete.
+        let keys_to_backup: &[(winreg::HKEY, &str, &str)] = &[
+            (HKEY_CURRENT_USER,  r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_CURRENT_USER"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_LOCAL_MACHINE"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall", "HKEY_LOCAL_MACHINE"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths", "HKEY_LOCAL_MACHINE"),
+            (HKEY_CURRENT_USER,  r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKEY_CURRENT_USER"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKEY_LOCAL_MACHINE"),
         ];
 
-        // Write a combined .reg file by exporting each key and appending
-        // We use a temp prefix file per key then merge
-        let mut combined = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
+        let mut reg_content = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
         let mut any_success = false;
+        let mut export_errors: Vec<String> = Vec::new();
 
-        for key in &keys_to_backup {
-            let tmp = backup_dir.join(format!("tmp_{}_{}.reg", timestamp, key.replace('\\', "_")));
-            let output = Command::new("reg")
-                .args(["export", key, tmp.to_str().unwrap_or(""), "/y"])
-                .output();
-
-            if let Ok(out) = output {
-                if out.status.success() {
-                    if let Ok(content) = std::fs::read_to_string(&tmp) {
-                        // Strip the header from subsequent files
-                        let body = content
-                            .lines()
-                            .skip(1) // Skip "Windows Registry Editor Version 5.00"
-                            .collect::<Vec<_>>()
-                            .join("\r\n");
-                        combined.push_str(&body);
-                        combined.push_str("\r\n");
-                        any_success = true;
-                    }
-                    let _ = std::fs::remove_file(&tmp);
+        for (hive, subkey_path, hive_name) in keys_to_backup {
+            let root = RegKey::predef(*hive);
+            match root.open_subkey(subkey_path) {
+                Err(e) => {
+                    // Key may simply not exist on this machine — not an error worth surfacing
+                    export_errors.push(format!("Skipped {}\\{}: {}", hive_name, subkey_path, e));
+                    continue;
+                }
+                Ok(key) => {
+                    // Write the section header
+                    reg_content.push_str(&format!("[{}\\{}]\r\n", hive_name, subkey_path));
+                    export_key_recursive(&key, &format!("{}\\{}", hive_name, subkey_path), &mut reg_content);
+                    reg_content.push_str("\r\n");
+                    any_success = true;
                 }
             }
         }
 
-        match std::fs::write(&backup_file, combined.as_bytes()) {
-            Ok(_) if any_success => RegistryBackupResult {
+        if !any_success {
+            return RegistryBackupResult {
+                backup_path: backup_path_str,
+                success: false,
+                error: Some(format!(
+                    "No registry keys could be read. Errors: {}",
+                    export_errors.join("; ")
+                )),
+            };
+        }
+
+        match std::fs::write(&backup_file, reg_content.as_bytes()) {
+            Ok(_) => RegistryBackupResult {
                 backup_path: backup_path_str,
                 success: true,
                 error: None,
-            },
-            Ok(_) => RegistryBackupResult {
-                backup_path: backup_path_str,
-                success: false,
-                error: Some("No registry keys could be exported — check permissions.".to_string()),
             },
             Err(e) => RegistryBackupResult {
                 backup_path: backup_path_str,
@@ -174,8 +186,104 @@ pub fn backup_registry() -> RegistryBackupResult {
     }
 }
 
+/// Recursively exports a registry key and all its subkeys into .reg format.
+#[cfg(target_os = "windows")]
+fn export_key_recursive(key: &winreg::RegKey, full_path: &str, out: &mut String) {
+    // Export all values in this key
+    for (name, value) in key.enum_values().filter_map(|v| v.ok()) {
+        let formatted = format_reg_value(&name, &value);
+        out.push_str(&formatted);
+        out.push_str("\r\n");
+    }
+
+    // Recurse into subkeys
+    for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
+        let subkey_path = format!("{}\\{}", full_path, subkey_name);
+        out.push_str(&format!("\r\n[{}]\r\n", subkey_path));
+        if let Ok(subkey) = key.open_subkey(&subkey_name) {
+            export_key_recursive(&subkey, &subkey_path, out);
+        }
+    }
+}
+
+/// Formats a single registry value into .reg file syntax.
+#[cfg(target_os = "windows")]
+fn format_reg_value(name: &str, value: &winreg::RegValue) -> String {
+    use winreg::enums::*;
+
+    // Default value uses "@" in .reg files; named values are quoted
+    let key_part = if name.is_empty() {
+        "@".to_string()
+    } else {
+        format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
+    };
+
+    match value.vtype {
+        REG_SZ | REG_EXPAND_SZ => {
+            // Decode UTF-16LE bytes to a string
+            let s = reg_value_to_string(value);
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+            if value.vtype == REG_EXPAND_SZ {
+                format!("{}=hex(2):{}", key_part, bytes_to_hex(&value.bytes))
+            } else {
+                format!("{}=\"{}\"", key_part, escaped)
+            }
+        }
+        REG_DWORD => {
+            if value.bytes.len() >= 4 {
+                let n = u32::from_le_bytes([value.bytes[0], value.bytes[1], value.bytes[2], value.bytes[3]]);
+                format!("{}=dword:{:08x}", key_part, n)
+            } else {
+                format!("{}=dword:00000000", key_part)
+            }
+        }
+        REG_QWORD => {
+            format!("{}=hex(b):{}", key_part, bytes_to_hex(&value.bytes))
+        }
+        REG_BINARY => {
+            format!("{}=hex:{}", key_part, bytes_to_hex(&value.bytes))
+        }
+        REG_MULTI_SZ => {
+            format!("{}=hex(7):{}", key_part, bytes_to_hex(&value.bytes))
+        }
+        _ => {
+            // Unknown type — store as raw hex
+            format!("{}=hex({:x}):{}", key_part, value.vtype.clone() as u32, bytes_to_hex(&value.bytes))
+        }
+    }
+}
+
+/// Decodes a REG_SZ / REG_EXPAND_SZ value's raw bytes (UTF-16LE) to a Rust String.
+#[cfg(target_os = "windows")]
+fn reg_value_to_string(value: &winreg::RegValue) -> String {
+    let bytes = &value.bytes;
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return String::new();
+    }
+    let words: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    // Strip trailing NUL
+    let words: Vec<u16> = words.into_iter().take_while(|&w| w != 0).collect();
+    String::from_utf16_lossy(&words).to_string()
+}
+
+/// Formats a byte slice as comma-separated hex pairs (reg.exe export style).
+#[cfg(target_os = "windows")]
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+
 /// Deletes the specified registry entries. Call backup_registry() first.
-pub fn clean_registry_entries(entries: Vec<RegistryCleanEntry>) -> RegistryCleanResult {
+pub fn clean_registry_entries(
+    entries: Vec<RegistryCleanEntry>,
+) -> RegistryCleanResult {
     #[cfg(not(target_os = "windows"))]
     return RegistryCleanResult {
         items_cleaned: 0,
@@ -234,14 +342,10 @@ fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
 
     for (hive, path, hive_name) in hives {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else {
-            continue;
-        };
+        let Ok(key) = root.open_subkey(path) else { continue };
 
         for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
-            let Ok(subkey) = key.open_subkey(&subkey_name) else {
-                continue;
-            };
+            let Ok(subkey) = key.open_subkey(&subkey_name) else { continue };
 
             let display_name: String = subkey
                 .get_value("DisplayName")
@@ -253,7 +357,9 @@ fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
                 continue;
             }
 
-            let is_system_component: u32 = subkey.get_value("SystemComponent").unwrap_or(0);
+            let is_system_component: u32 = subkey
+                .get_value("SystemComponent")
+                .unwrap_or(0);
             if is_system_component == 1 {
                 continue;
             }
@@ -306,14 +412,10 @@ fn scan_invalid_app_paths(items: &mut Vec<RegistryItem>) {
 
     for (hive, path, hive_name) in hives {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else {
-            continue;
-        };
+        let Ok(key) = root.open_subkey(path) else { continue };
 
         for subkey_name in key.enum_keys().filter_map(|k| k.ok()) {
-            let Ok(subkey) = key.open_subkey(&subkey_name) else {
-                continue;
-            };
+            let Ok(subkey) = key.open_subkey(&subkey_name) else { continue };
 
             // The default (unnamed) value is the path to the executable
             let exe_path: String = subkey.get_value("").unwrap_or_default();
@@ -350,15 +452,11 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
     // MUI cache stores localized application names. Value names ARE the exe paths.
     let path = r"SOFTWARE\Classes\Local Settings\MuiCache";
     let root = RegKey::predef(HKEY_CURRENT_USER);
-    let Ok(mui_root) = root.open_subkey(path) else {
-        return;
-    };
+    let Ok(mui_root) = root.open_subkey(path) else { return };
 
     // MUI cache has numbered subkeys like "0", "1", etc.
     for subkey_name in mui_root.enum_keys().filter_map(|k| k.ok()) {
-        let Ok(subkey) = mui_root.open_subkey(&subkey_name) else {
-            continue;
-        };
+        let Ok(subkey) = mui_root.open_subkey(&subkey_name) else { continue };
 
         for (value_name, _value) in subkey.enum_values().filter_map(|v| v.ok()) {
             // The value name itself is an exe path
@@ -381,7 +479,10 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
                     key_path: full_key,
                     value_name: Some(value_name.clone()),
                     category: "MUICache".to_string(),
-                    description: format!("MUI cache entry for a missing executable: {}", clean),
+                    description: format!(
+                        "MUI cache entry for a missing executable: {}",
+                        clean
+                    ),
                     warning: None,
                 });
             }
@@ -413,9 +514,7 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
 
     for (hive, path, hive_name) in run_locations {
         let root = RegKey::predef(*hive);
-        let Ok(key) = root.open_subkey(path) else {
-            continue;
-        };
+        let Ok(key) = root.open_subkey(path) else { continue };
 
         for (value_name, value) in key.enum_values().filter_map(|v| v.ok()) {
             let raw_path: String = match value.to_string().parse() {
@@ -441,8 +540,7 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
                         value_name, exe_path
                     ),
                     warning: Some(
-                        "Removing this stops it from running at login — verify before deleting."
-                            .to_string(),
+                        "Removing this stops it from running at login — verify before deleting.".to_string(),
                     ),
                 });
             }
@@ -455,7 +553,10 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "windows")]
-fn delete_registry_entry(key_path: &str, value_name: &Option<String>) -> Result<(), String> {
+fn delete_registry_entry(
+    key_path: &str,
+    value_name: &Option<String>,
+) -> Result<(), String> {
     use winreg::{enums::*, RegKey};
 
     // Parse the hive prefix
@@ -472,8 +573,7 @@ fn delete_registry_entry(key_path: &str, value_name: &Option<String>) -> Result<
     } else {
         // Delete the entire subkey (and all values within it)
         // Split into parent key + child name for RegDeleteKey semantics
-        let last_backslash = subpath
-            .rfind('\\')
+        let last_backslash = subpath.rfind('\\')
             .ok_or_else(|| format!("Cannot find parent key in path: {}", key_path))?;
         let parent_path = &subpath[..last_backslash];
         let child_name = &subpath[last_backslash + 1..];
@@ -578,10 +678,7 @@ mod tests {
     fn test_scan_does_not_panic_on_any_platform() {
         let items = scan_registry();
         #[cfg(not(target_os = "windows"))]
-        assert!(
-            items.is_empty(),
-            "Non-Windows scan must return an empty Vec"
-        );
+        assert!(items.is_empty(), "Non-Windows scan must return an empty Vec");
         #[cfg(target_os = "windows")]
         let _ = items; // On Windows just assert it ran
     }
@@ -595,10 +692,8 @@ mod tests {
         {
             assert!(!result.success);
             assert!(result.error.is_some());
-            assert!(
-                result.error.unwrap().contains("Windows"),
-                "Error message should mention Windows"
-            );
+            assert!(result.error.unwrap().contains("Windows"),
+                "Error message should mention Windows");
         }
         #[cfg(target_os = "windows")]
         {
@@ -618,10 +713,8 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         {
             assert_eq!(result.items_cleaned, 0);
-            assert!(
-                !result.errors.is_empty(),
-                "Non-Windows clean must return an error explaining the limitation"
-            );
+            assert!(!result.errors.is_empty(),
+                "Non-Windows clean must return an error explaining the limitation");
         }
         #[cfg(target_os = "windows")]
         {
@@ -640,47 +733,22 @@ mod tests {
     fn test_scan_items_have_non_empty_required_fields() {
         let items = scan_registry();
         for item in &items {
-            assert!(!item.id.is_empty(), "Item '{}' has empty id", item.name);
-            assert!(
-                !item.name.is_empty(),
-                "Item at '{}' has empty name",
-                item.key_path
-            );
-            assert!(
-                !item.key_path.is_empty(),
-                "Item '{}' has empty key_path",
-                item.name
-            );
-            assert!(
-                !item.category.is_empty(),
-                "Item '{}' has empty category",
-                item.name
-            );
-            assert!(
-                !item.description.is_empty(),
-                "Item '{}' has empty description",
-                item.name
-            );
+            assert!(!item.id.is_empty(),     "Item '{}' has empty id",       item.name);
+            assert!(!item.name.is_empty(),   "Item at '{}' has empty name",  item.key_path);
+            assert!(!item.key_path.is_empty(),"Item '{}' has empty key_path", item.name);
+            assert!(!item.category.is_empty(),"Item '{}' has empty category", item.name);
+            assert!(!item.description.is_empty(),"Item '{}' has empty description", item.name);
         }
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn test_scan_items_have_valid_categories() {
-        let valid = [
-            "OrphanedInstaller",
-            "InvalidAppPath",
-            "MUICache",
-            "StartupEntry",
-        ];
+        let valid = ["OrphanedInstaller", "InvalidAppPath", "MUICache", "StartupEntry"];
         let items = scan_registry();
         for item in &items {
-            assert!(
-                valid.contains(&item.category.as_str()),
-                "Item '{}' has unknown category '{}'",
-                item.name,
-                item.category
-            );
+            assert!(valid.contains(&item.category.as_str()),
+                "Item '{}' has unknown category '{}'", item.name, item.category);
         }
     }
 
@@ -690,12 +758,8 @@ mod tests {
         let items = scan_registry();
         let mut seen = std::collections::HashSet::new();
         for item in &items {
-            assert!(
-                seen.insert(item.id.clone()),
-                "Duplicate UUID for item '{}' at '{}'",
-                item.name,
-                item.key_path
-            );
+            assert!(seen.insert(item.id.clone()),
+                "Duplicate UUID for item '{}' at '{}'", item.name, item.key_path);
         }
     }
 
@@ -705,12 +769,11 @@ mod tests {
         let valid_prefixes = ["HKLM\\", "HKCU\\", "HKLM (WOW64)\\"];
         let items = scan_registry();
         for item in &items {
-            let has_valid_prefix = valid_prefixes.iter().any(|p| item.key_path.starts_with(p));
-            assert!(
-                has_valid_prefix,
+            let has_valid_prefix = valid_prefixes.iter()
+                .any(|p| item.key_path.starts_with(p));
+            assert!(has_valid_prefix,
                 "Item '{}' key_path '{}' does not start with a known hive prefix",
-                item.name, item.key_path
-            );
+                item.name, item.key_path);
         }
     }
 
@@ -833,10 +896,7 @@ mod tests {
     fn test_orphaned_missing_location_but_valid_uninstall_returns_false() {
         // Uninstall string points to a real executable → not orphaned
         let existing_exe = r"C:\Windows\System32\cmd.exe";
-        assert!(!is_installation_orphaned(
-            r"C:\FakeDir\12345\",
-            existing_exe
-        ));
+        assert!(!is_installation_orphaned(r"C:\FakeDir\12345\", existing_exe));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -846,14 +906,11 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_hklm_short() {
-        let (hive, path) =
-            parse_hive(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp")
-                .unwrap();
+        let (hive, path) = parse_hive(
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp"
+        ).unwrap();
         assert_eq!(hive, winreg::enums::HKEY_LOCAL_MACHINE);
-        assert_eq!(
-            path,
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp"
-        );
+        assert_eq!(path, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TestApp");
     }
 
     #[cfg(target_os = "windows")]
@@ -867,7 +924,9 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_hklm_wow64() {
-        let (hive, path) = parse_hive(r"HKLM (WOW64)\SOFTWARE\TestApp").unwrap();
+        let (hive, path) = parse_hive(
+            r"HKLM (WOW64)\SOFTWARE\TestApp"
+        ).unwrap();
         assert_eq!(hive, winreg::enums::HKEY_LOCAL_MACHINE);
         assert_eq!(path, r"SOFTWARE\TestApp");
     }
@@ -876,10 +935,8 @@ mod tests {
     #[test]
     fn test_parse_hive_unknown_prefix_returns_error() {
         let result = parse_hive(r"HKCR\SOFTWARE\TestKey");
-        assert!(
-            result.is_err(),
-            "Unknown hive prefix HKCR should return Err"
-        );
+        assert!(result.is_err(),
+            "Unknown hive prefix HKCR should return Err");
         assert!(result.unwrap_err().contains("Unrecognized registry hive"));
     }
 
@@ -893,7 +950,9 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_hive_preserves_nested_subkeys() {
-        let (_, path) = parse_hive(r"HKCU\A\B\C\D\E").unwrap();
+        let (_, path) = parse_hive(
+            r"HKCU\A\B\C\D\E"
+        ).unwrap();
         assert_eq!(path, r"A\B\C\D\E");
     }
 
