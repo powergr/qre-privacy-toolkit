@@ -20,6 +20,8 @@ QRE Toolkit is a secure, cross-platform application designed to handle your sens
 
 **[📥 Download the Latest Release](https://github.com/powergr/qre-privacy-toolkit/releases)**
 
+[![Sponsor powergr](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github-sponsors&logoColor=white&style=flat)](https://github.com/sponsors/powergr)
+
 ---
 
 ![QRE Privacy Toolkit](qrev2.jpg)
