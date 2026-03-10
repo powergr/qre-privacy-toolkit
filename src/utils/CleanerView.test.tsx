@@ -137,6 +137,20 @@ const MOCK_COMPARISON = {
 
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
+const originalError = console.error;
+
+beforeAll(() => {
+  // Suppress React 18 act() warnings caused by async Tauri IPC resolves
+  console.error = (...args) => {
+    if (/was not wrapped in act/.test(args[0])) return;
+    originalError.call(console, ...args);
+  };
+});
+
+afterAll(() => {
+  console.error = originalError;
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   progressCallback = null;
@@ -628,7 +642,9 @@ describe("CleanerView", () => {
       });
 
       // Clean up: resolve the hanging promise
-      act(() => resolveClean(MOCK_CLEAN_RESULT));
+      await act(async () => {
+        resolveClean(MOCK_CLEAN_RESULT);
+      });
     });
 
     test("shows Cancel button during cleaning and calls cancel command", async () => {
@@ -667,7 +683,9 @@ describe("CleanerView", () => {
 
       expect(mockInvoke).toHaveBeenCalledWith("cancel_metadata_clean");
 
-      act(() => resolveClean(MOCK_CLEAN_RESULT));
+      await act(async () => {
+        resolveClean(MOCK_CLEAN_RESULT);
+      });
     });
   });
 

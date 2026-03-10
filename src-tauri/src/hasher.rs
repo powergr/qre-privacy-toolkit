@@ -55,6 +55,8 @@ pub struct ProgressPayload {
 }
 
 // Global thread-safe flag used to abort a running hash operation early.
+// NOTE: For multi-file concurrent hashing in the future, this should be moved
+// into Tauri's managed state rather than being a global static variable.
 static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,14 +86,16 @@ pub fn get_file_metadata(path_str: &str) -> Result<FileMetadata> {
 // HASH CALCULATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Core hashing logic decoupled from Tauri so it can be Unit Tested easily.
-/// Instead of taking an AppHandle, it takes a callback function to report progress.
-pub fn calculate_hashes_core<F>(path_str: &str, mut progress_callback: F) -> Result<HashResult>
+/// Core hashing logic decoupled from Tauri and Global State so it can be Unit Tested easily.
+/// It takes a cancellation flag and a callback function to report progress.
+pub fn calculate_hashes_core<F>(
+    path_str: &str,
+    cancel_flag: &AtomicBool,
+    mut progress_callback: F,
+) -> Result<HashResult>
 where
     F: FnMut(ProgressPayload),
 {
-    CANCEL_FLAG.store(false, Ordering::Relaxed);
-
     let path = Path::new(path_str);
 
     // ─── SECURITY VALIDATION ───
@@ -137,7 +141,8 @@ where
     let mut last_progress_report = 0u64;
 
     loop {
-        if CANCEL_FLAG.load(Ordering::Relaxed) {
+        // Check the provided cancellation flag
+        if cancel_flag.load(Ordering::Relaxed) {
             return Err(anyhow!("Hashing cancelled by user"));
         }
 
@@ -192,8 +197,11 @@ pub fn calculate_hashes<R: tauri::Runtime>(
     path_str: &str,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<HashResult> {
-    // Pass a closure that emits the Tauri event
-    calculate_hashes_core(path_str, |progress| {
+    // Reset the global flag before starting
+    CANCEL_FLAG.store(false, Ordering::Relaxed);
+
+    // Pass the global CANCEL_FLAG to the core function
+    calculate_hashes_core(path_str, &CANCEL_FLAG, |progress| {
         let _ = app_handle.emit("hash-progress", progress);
     })
 }
@@ -298,11 +306,11 @@ mod tests {
     #[test]
     fn test_calculate_hashes_core() {
         let path = create_temp_file("hash_target.txt", "hello world");
+        let cancel_flag = AtomicBool::new(false); // Isolated test flag
 
-        // Use a dummy closure that does nothing, just to satisfy the function signature
-        let result = calculate_hashes_core(path.to_str().unwrap(), |_progress| {}).unwrap();
+        let result =
+            calculate_hashes_core(path.to_str().unwrap(), &cancel_flag, |_progress| {}).unwrap();
 
-        // The file hash should exactly match the text hash of "hello world"
         assert_eq!(
             result.sha256,
             "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -314,21 +322,17 @@ mod tests {
 
     #[test]
     fn test_cancel_hashing() {
-        // Create a file large enough to trigger at least one loop iteration
-        // (Our buffer is 8KB, so > 8KB guarantees the loop fires and invokes the callback)
         let data = vec![0u8; 10000];
         let path = create_temp_file(
             "cancel_target.txt",
             std::str::from_utf8(&data).unwrap_or(""),
         );
 
-        // Call the core function.
-        // INSIDE the progress callback, we simulate the user clicking "Cancel" in the UI.
-        // This will set the flag to true *after* the function has already started,
-        // causing the next iteration of the read loop to abort.
-        let result = calculate_hashes_core(path.to_str().unwrap(), |_progress| {
-            // Simulate UI Cancel Button click
-            cancel_hashing();
+        let cancel_flag = AtomicBool::new(false); // Isolated test flag
+
+        let result = calculate_hashes_core(path.to_str().unwrap(), &cancel_flag, |_progress| {
+            // Simulate UI Cancel Button click by mutating the isolated flag
+            cancel_flag.store(true, Ordering::Relaxed);
         });
 
         assert!(
