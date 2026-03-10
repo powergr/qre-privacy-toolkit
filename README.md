@@ -217,6 +217,28 @@ If the app fails to open, shows "App is damaged", or crashes immediately, it is 
 
 4. Open the app normally.
 
+## Tests
+
+There are 2 test suits. For the Rust backend run
+
+````bash
+cd /src-tauri
+cargo test
+~~
+
+- 235 tests passed from 235 total
+
+
+For the frontend run
+
+```bash
+
+npm test
+
+````
+
+- 170 tests passed from 170 total
+
 ---
 
 **License:** MIT

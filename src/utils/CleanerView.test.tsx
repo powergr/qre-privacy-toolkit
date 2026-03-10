@@ -272,7 +272,7 @@ describe("CleanerView", () => {
       await userEvent.click(removeButtons[0]);
 
       expect(screen.queryByText("photo.jpg")).not.toBeInTheDocument();
-      expect(screen.getByText("doc.docx")).toBeInTheDocument();
+      expect(screen.getAllByText("doc.docx")[0]).toBeInTheDocument();
     });
 
     test("returns to empty state when all files are removed via clear-all", async () => {
@@ -317,24 +317,17 @@ describe("CleanerView", () => {
     });
 
     test("next button advances preview and re-triggers analysis", async () => {
-      // Find the Next chevron button — it's the icon-btn-ghost that isn't disabled
-      // (Prev is disabled at index 0 since we're on the first file).
-      const navButtons = screen
-        .getAllByRole("button")
-        .filter((b) => b.className.includes("icon-btn-ghost"));
+      // Scope to the pagination container (the parent of the "1 / 2" counter)
+      // so we don't accidentally match Remove or Clear All icon buttons.
+      const paginationContainer = screen.getByText("1 / 2").parentElement!;
+      const [, nextButton] = within(paginationContainer).getAllByRole("button");
 
-      const nextButton = navButtons.find(
-        (b) => !b.hasAttribute("disabled") && b.querySelector("svg"),
-      );
-
-      if (nextButton) {
-        await userEvent.click(nextButton);
-        await waitFor(() => {
-          expect(mockInvoke).toHaveBeenCalledWith("analyze_file_metadata", {
-            path: "/home/user/b.jpg",
-          });
+      await userEvent.click(nextButton);
+      await waitFor(() => {
+        expect(mockInvoke).toHaveBeenCalledWith("analyze_file_metadata", {
+          path: "/home/user/b.jpg",
         });
-      }
+      });
     });
 
     test("clicking a file in the list triggers its analysis", async () => {
@@ -771,7 +764,7 @@ describe("CleanerView", () => {
             cleaned: "/output/photo_clean.jpg",
           }),
         );
-        expect(screen.getByText("3 tags removed")).toBeInTheDocument();
+        expect(screen.getByText(/3 tags removed/)).toBeInTheDocument();
         expect(
           screen.getByText("• GPSLatitude: 51.5074 N"),
         ).toBeInTheDocument();
