@@ -5,6 +5,16 @@
 [![Release](https://github.com/powergr/qre-privacy-toolkit/actions/workflows/build.yml/badge.svg)](https://github.com/powergr/qre-privacy-toolkit/actions/workflows/build.yml)
 ![Version](https://img.shields.io/github/v/release/powergr/qre-privacy-toolkit)
 ![License](https://img.shields.io/github/license/powergr/qre-privacy-toolkit)
+![Downloads](https://img.shields.io/github/downloads/powergr/qre-privacy-toolkit/total)
+![Stars](https://img.shields.io/github/stars/powergr/qre-privacy-toolkit?style=social)
+
+![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.78+-000000?logo=rust&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+
+[![dependency status](https://deps.rs/repo/github/powergr/qre-privacy-toolkit/status.svg)](https://deps.rs/repo/github/powergr/qre-privacy-toolkit)
+![Last Commit](https://img.shields.io/github/last-commit/powergr/qre-privacy-toolkit)
 
 QRE Toolkit is a secure, cross-platform application designed to handle your sensitive data without relying on the cloud. It runs natively on **Windows, macOS, Linux, and Android**.
 
@@ -217,30 +227,33 @@ If the app fails to open, shows "App is damaged", or crashes immediately, it is 
 
 4. Open the app normally.
 
-## Tests
+---
 
-There are 2 test suits. For the Rust backend run
+## ✅ Tests
 
-````bash
+There are 2 test suits.
+
+For the Rust backend run
+
+```bash
 cd /src-tauri
 cargo test
-~~
+```
 
 - 235 tests passed from 235 total
-
 
 For the frontend run
 
 ```bash
-
 npm test
-
-````
+```
 
 - 170 tests passed from 170 total
 
 ---
 
 **License:** MIT
+
+---
 
 **Copyright:** © 2026 Project QRE
