@@ -1031,6 +1031,7 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
+        let _ = drive_path; // <--- ADD THIS LINE to fix the warning
         return Err(anyhow!("TRIM is not supported on this platform."));
     }
 }

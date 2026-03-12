@@ -735,28 +735,37 @@ pub async fn cancel_shred() -> CommandResult<()> {
 
 /// Wipes unallocated (free) space on an HDD by filling it with zeros then cleaning up.
 /// Emits `wipe-progress` events to the frontend during the operation.
-///
-/// This is a desktop-only feature. On Android, flash storage wear-leveling makes
-/// free-space wiping unreliable and potentially harmful to the device.
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn wipe_free_space(
     drive_path: String,
     app_handle: tauri::AppHandle,
 ) -> CommandResult<shredder::WipeFreeSpaceResult> {
-    reject_critical_path(Path::new(&drive_path))?;
-    shredder::wipe_free_space(drive_path, &app_handle).map_err(|e| e.to_string())
+    #[cfg(target_os = "android")]
+    {
+        let _ = drive_path;
+        let _ = app_handle;
+        Err("Free space wiping is not supported on Android due to flash storage wear-leveling constraints.".to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        reject_critical_path(Path::new(&drive_path))?;
+        shredder::wipe_free_space(drive_path, &app_handle).map_err(|e| e.to_string())
+    }
 }
 
 /// Issues a TRIM command to an SSD, signalling which blocks the controller may erase.
-/// Improves future write performance but does NOT guarantee forensic-level data removal.
-///
-/// This is a desktop-only feature — Android manages flash lifecycle internally.
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn trim_drive(drive_path: String) -> CommandResult<shredder::TrimResult> {
-    reject_critical_path(Path::new(&drive_path))?;
-    shredder::trim_drive(drive_path).map_err(|e| e.to_string())
+    #[cfg(target_os = "android")]
+    {
+        let _ = drive_path;
+        Err("TRIM is managed automatically by the Android OS.".to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        reject_critical_path(Path::new(&drive_path))?;
+        shredder::trim_drive(drive_path).map_err(|e| e.to_string())
+    }
 }
 
 // --- SYSTEM UTILS ---
