@@ -8,7 +8,6 @@ import "./styles/components.css";
 import "./styles/dashboard.css";
 import "./components/layout/Sidebar.css";
 import "./styles/modern-cards.css";
-import "./components/views/ShredderView.css";
 import "./components/views/VaultView.css";
 import "./components/views/NotesView.css";
 

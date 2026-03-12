@@ -16,7 +16,7 @@
 [![dependency status](https://deps.rs/repo/github/powergr/qre-privacy-toolkit/status.svg?path=src-tauri)](https://deps.rs/repo/github/powergr/qre-privacy-toolkit?path=src-tauri)
 ![Last Commit](https://img.shields.io/github/last-commit/powergr/qre-privacy-toolkit)
 
-QRE Toolkit is a secure, cross-platform application designed to handle your sensitive data without relying on the cloud. It runs natively on **Windows, macOS, Linux, and Android**.
+QRE Privacy Toolkit is a secure, cross-platform application designed to handle your sensitive data without relying on the cloud. It runs natively on **Windows, macOS, Linux, and Android**.
 
 **[📥 Download the Latest Release](https://github.com/powergr/qre-privacy-toolkit/releases)**
 
@@ -30,7 +30,7 @@ QRE Toolkit is a secure, cross-platform application designed to handle your sens
 
 ## 🛠️ The Toolkit
 
-QRE Toolkit combines 12 essential privacy tools into one secure application:
+QRE Privacy Toolkit combines 12 essential privacy tools into one secure application:
 
 ### **1. 🔐 File Encryption**
 
@@ -116,7 +116,7 @@ Share sensitive data (Wi-Fi passwords, Crypto addresses) with mobile devices wit
 
 ### **11. 🗑️ Secure Shredder (Desktop)**
 
-When you delete a file, the data remains on your disk. The Shredder overwrites your files with random noise (DoD Standard 3-Pass) before deleting them.
+When you delete a file, the data remains on your disk. The Shredder overwrites your files with random noise (DoD Standard 3-Pass) before deleting them. Added the wipe-free space for HDDs and trim for SSDs. (V2.7.2)
 
 _(Note: On Android, this performs a standard permanent delete due to hardware limitations)._
 
@@ -242,7 +242,7 @@ cd /src-tauri
 cargo test
 ```
 
-- 235 tests passed from 235 total
+- 255 tests passed from 255 total
 
 For the frontend run
 
@@ -250,7 +250,7 @@ For the frontend run
 npm test
 ```
 
-- 170 tests passed from 170 total
+- 182 tests passed from 182 total
 
 ---
 
