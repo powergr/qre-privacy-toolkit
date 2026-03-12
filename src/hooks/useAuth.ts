@@ -17,6 +17,10 @@ export function useAuth() {
   const [password, setPassword] = useState("");
   const [confirmPass, setConfirmPass] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
+  // FIX F-01: Track the current (existing) password for the change-password flow.
+  // This is required so we can verify the user knows their current password before
+  // allowing them to set a new one, preventing session-hijack escalation.
+  const [currentPassword, setCurrentPassword] = useState("");
   const [sessionExpired, setSessionExpired] = useState(false);
   const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
@@ -25,6 +29,15 @@ export function useAuth() {
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
+
+  // FIX F-10: Centralised helper to wipe all password-related state in one call.
+  // Calling this promptly after any auth operation reduces the window in which a
+  // plain JS string containing the master password lives in V8 heap memory.
+  const clearPasswordState = useCallback(() => {
+    setPassword("");
+    setConfirmPass("");
+    setCurrentPassword("");
+  }, []);
 
   const logout = useCallback(async () => {
     if (isTauri()) {
@@ -35,9 +48,10 @@ export function useAuth() {
       }
     }
     setView("login");
-    setPassword("");
+    // FIX F-10: Clear all password state on logout.
+    clearPasswordState();
     setShowTimeoutWarning(false);
-  }, []);
+  }, [clearPasswordState]);
 
   const performLogout = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -126,6 +140,9 @@ export function useAuth() {
         const code = (await invoke("init_vault", { password })) as string;
         setRecoveryCode(code);
       }
+      // FIX F-10: Clear password fields immediately after the vault is initialised —
+      // the recovery display screen has no need for them.
+      clearPasswordState();
       setView("recovery_display");
       return { success: true };
     } catch (e) {
@@ -136,11 +153,13 @@ export function useAuth() {
   async function handleLogin(): Promise<ActionResult> {
     try {
       if (isTauri()) await invoke("login", { password });
-      setPassword("");
+      // FIX F-10: Clear password from state immediately after a successful login.
+      clearPasswordState();
       setView("dashboard");
       setSessionExpired(false);
       return { success: true };
     } catch (e) {
+      // Do NOT clear on failure so the user does not have to re-type.
       return { success: false, msg: String(e) };
     }
   }
@@ -154,8 +173,8 @@ export function useAuth() {
           recoveryCode: recoveryCode.trim(),
           newPassword: password,
         });
-      setPassword("");
-      setConfirmPass("");
+
+      clearPasswordState();
       setRecoveryCode("");
       setView("dashboard");
       setSessionExpired(false);
@@ -166,12 +185,27 @@ export function useAuth() {
   }
 
   async function handleChangePassword(): Promise<ActionResult> {
-    if (password !== confirmPass) return { success: false, msg: "Mismatch." };
+    // Prevent silently succeeding when the user types the same password twice.
+    if (password === currentPassword)
+      return {
+        success: false,
+        msg: "New password must be different from your current password.",
+      };
+
+    if (getPasswordScore(password) < 3)
+      return { success: false, msg: "New password is too weak." };
+
+    if (password !== confirmPass)
+      return { success: false, msg: "Passwords do not match." };
+
     try {
       if (isTauri())
-        await invoke("change_user_password", { newPassword: password });
-      setPassword("");
-      setConfirmPass("");
+        await invoke("change_user_password", {
+          currentPassword,
+          newPassword: password,
+        });
+
+      clearPasswordState();
       return { success: true, msg: "Password updated." };
     } catch (e) {
       return { success: false, msg: String(e) };
@@ -198,6 +232,8 @@ export function useAuth() {
     setPassword,
     confirmPass,
     setConfirmPass,
+    currentPassword,
+    setCurrentPassword,
     recoveryCode,
     setRecoveryCode,
     sessionExpired,
