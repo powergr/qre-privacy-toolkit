@@ -33,8 +33,15 @@ pub type CommandResult<T> = Result<T, String>;
 
 /// Thread-safe counter for consecutive failed login attempts.
 static LOGIN_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
-/// Thread-safe timestamp recording the exact time of the last failed attempt.
+/// Thread-safe timestamp recording the exact time of the last failed login attempt.
 static LOGIN_LAST_FAIL_SECS: AtomicU64 = AtomicU64::new(0);
+
+// FIX F-03: Mirror the login rate-limiting mechanism for recovery code attempts.
+// Previously the recovery path had no brute-force protection whatsoever.
+/// Thread-safe counter for consecutive failed recovery code attempts.
+static RECOVERY_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
+/// Thread-safe timestamp recording the exact time of the last failed recovery attempt.
+static RECOVERY_LAST_FAIL_SECS: AtomicU64 = AtomicU64::new(0);
 
 /// The threshold of failed attempts before the exponential time penalty begins.
 const MAX_ATTEMPTS_BEFORE_LOCKOUT: u32 = 5;
@@ -77,6 +84,22 @@ fn resolve_keychain_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 // ==========================================
+// --- FIX F-08: Safe Mutex Accessor ---
+// ==========================================
+// Previously all callers used `.lock().unwrap_or_else(|e| e.into_inner())`, which
+// silently continued with potentially inconsistent state after a thread panic.
+// This macro returns a proper error if the mutex is poisoned, treating it as a
+// signal that the session state is untrustworthy and re-login is required.
+macro_rules! lock_session {
+    ($state:expr) => {
+        $state
+            .master_key
+            .lock()
+            .map_err(|_| "Session state is corrupted. Please re-login.".to_string())
+    };
+}
+
+// ==========================================
 // --- UTILS ---
 // ==========================================
 
@@ -102,6 +125,44 @@ pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
 }
 
 // ==========================================
+// --- FIX F-09: Persistent Backup Flag ---
+// ==========================================
+// Previously, whether the user had completed a backup was tracked via localStorage
+// in the frontend (a browser API), which can be cleared by the user or read by any
+// JS in the same origin. These two commands store the flag as a sentinel file in the
+// OS-managed app data directory instead — the same location as the keychain itself.
+//
+// IMPORTANT: Register both commands in your Tauri builder (lib.rs or main.rs):
+//   .invoke_handler(tauri::generate_handler![
+//       ...,
+//       get_backup_done,
+//       set_backup_done,
+//   ])
+
+/// Returns true if the user has previously completed at least one keychain backup.
+/// Reads from a small sentinel file in the app data directory.
+#[tauri::command]
+pub fn get_backup_done(app: AppHandle) -> bool {
+    resolve_keychain_path(&app)
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("backup_done")))
+        .map(|p| p.exists())
+        .unwrap_or(false)
+}
+
+/// Marks that the user has completed their first backup.
+/// Creates a small sentinel file in the app data directory.
+#[tauri::command]
+pub fn set_backup_done(app: AppHandle) -> CommandResult<()> {
+    let path = resolve_keychain_path(&app)?
+        .parent()
+        .ok_or("Keychain path has no parent directory".to_string())?
+        .join("backup_done");
+    fs::write(&path, b"1").map_err(|e| format!("Failed to write backup flag: {}", e))?;
+    Ok(())
+}
+
+// ==========================================
 // --- AUTH & SYSTEM ---
 // ==========================================
 
@@ -112,7 +173,12 @@ pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
 /// - "setup_needed" if no keychain exists (first-time launch).
 #[tauri::command]
 pub fn check_auth_status(app: AppHandle, state: tauri::State<SessionState>) -> String {
-    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+    // FIX F-08: Treat a poisoned mutex as locked rather than silently recovering.
+    let guard = match state.master_key.lock() {
+        Ok(g) => g,
+        Err(_) => return "locked".to_string(),
+    };
+
     if guard.is_some() {
         return "unlocked".to_string();
     }
@@ -142,7 +208,8 @@ pub fn init_vault(
         keychain::init_keychain(&path, &password).map_err(|e| e.to_string())?;
 
     // Store the decrypted master key securely in the active session memory.
-    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+    // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+    let mut guard = lock_session!(state)?;
     *guard = Some(master_key);
 
     // Return the generated recovery code to display to the user once.
@@ -181,7 +248,8 @@ pub fn login(
             LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
 
             // Store the decrypted master key in the session.
-            let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+            // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+            let mut guard = lock_session!(state)?;
             *guard = Some(master_key);
             Ok("Logged in".to_string())
         }
@@ -197,29 +265,57 @@ pub fn login(
 /// Wipes the master key from the application's active session memory, locking the app.
 #[tauri::command]
 pub fn logout(state: tauri::State<SessionState>) {
-    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
+    // FIX F-08: Handle poisoned mutex explicitly. If the mutex is poisoned, log it
+    // and return — there is no safe way to clear the key, but a restart will reset state.
+    match state.master_key.lock() {
+        Ok(mut guard) => {
+            *guard = None;
+        }
+        Err(_) => {
+            eprintln!(
+                "CRITICAL: Session mutex is poisoned during logout. Please restart the application."
+            );
+        }
+    }
 }
 
-/// Re-encrypts the keychain with a new password derived key, keeping the internal master key intact.
+/// FIX F-01: Re-encrypts the keychain with a new password derived key, keeping the
+/// internal master key intact.
+///
+/// The `current_password` parameter is now required and is verified against the
+/// existing keychain before the change is allowed. This prevents an attacker with
+/// brief access to an unlocked session from silently changing the master password.
 #[tauri::command]
 pub fn change_user_password(
     app: AppHandle,
+    current_password: String,
     new_password: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+    let path = resolve_keychain_path(&app)?;
+
+    // FIX F-01: Verify the current password BEFORE making any changes.
+    // unlock_keychain re-derives the KEK from `current_password` and attempts
+    // decryption — if the password is wrong, the AES-GCM auth tag will not match
+    // and the function returns an error, aborting the change.
+    keychain::unlock_keychain(&path, &current_password)
+        .map_err(|_| "Current password is incorrect.".to_string())?;
+
+    // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+    let guard = lock_session!(state)?;
     let master_key = match &*guard {
         Some(mk) => mk,
         None => return Err("Vault is locked.".to_string()),
     };
 
-    let path = resolve_keychain_path(&app)?;
     keychain::change_password(&path, master_key, &new_password).map_err(|e| e.to_string())?;
     Ok("Password changed successfully.".to_string())
 }
 
 /// Uses a user's emergency recovery code to restore access and set a new password.
+///
+/// FIX F-03: Now applies the same exponential-backoff rate limiting as the login command.
+/// Previously this path had no brute-force protection at all.
 #[tauri::command]
 pub fn recover_vault(
     app: AppHandle,
@@ -227,19 +323,42 @@ pub fn recover_vault(
     new_password: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
+    // FIX F-03: Check recovery lockout status before attempting.
+    let fail_count = RECOVERY_FAIL_COUNT.load(Ordering::SeqCst);
+    if fail_count >= MAX_ATTEMPTS_BEFORE_LOCKOUT {
+        let last_fail = RECOVERY_LAST_FAIL_SECS.load(Ordering::SeqCst);
+        let wait = lockout_duration_secs(fail_count);
+        let elapsed = now_secs().saturating_sub(last_fail);
+
+        if elapsed < wait {
+            return Err(format!(
+                "Too many failed recovery attempts. Please wait {} more second(s) before trying again.",
+                wait - elapsed
+            ));
+        }
+    }
+
     let path = resolve_keychain_path(&app)?;
 
     // Attempt to unlock the vault using the recovery key instead of the primary password key
-    let master_key = keychain::recover_with_code(&path, &recovery_code, &new_password)
-        .map_err(|e| e.to_string())?;
+    match keychain::recover_with_code(&path, &recovery_code, &new_password) {
+        Ok(master_key) => {
+            // Success: Reset both failure counters.
+            RECOVERY_FAIL_COUNT.store(0, Ordering::SeqCst);
+            LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
 
-    // Reset any outstanding login lockout after a successful recovery.
-    LOGIN_FAIL_COUNT.store(0, Ordering::SeqCst);
-
-    // Load the key into the active session
-    let mut guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = Some(master_key);
-    Ok("Recovery successful. Password updated.".to_string())
+            // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+            let mut guard = lock_session!(state)?;
+            *guard = Some(master_key);
+            Ok("Recovery successful. Password updated.".to_string())
+        }
+        Err(e) => {
+            // FIX F-03: Increment the recovery fail counter and record the timestamp.
+            RECOVERY_FAIL_COUNT.fetch_add(1, Ordering::SeqCst);
+            RECOVERY_LAST_FAIL_SECS.store(now_secs(), Ordering::SeqCst);
+            Err(e.to_string())
+        }
+    }
 }
 
 /// Creates a new emergency recovery code (invalidating the old one).
@@ -248,7 +367,8 @@ pub fn regenerate_recovery_code(
     app: AppHandle,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+    // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+    let guard = lock_session!(state)?;
     let master_key = match &*guard {
         Some(mk) => mk,
         None => return Err("Vault is locked. Cannot reset code.".to_string()),
@@ -271,7 +391,8 @@ pub fn load_password_vault(
 ) -> CommandResult<PasswordVault> {
     // 1. Verify app is unlocked
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -313,7 +434,8 @@ pub fn save_password_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -358,7 +480,8 @@ pub fn load_notes_vault(
     state: tauri::State<SessionState>,
 ) -> CommandResult<NotesVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -392,7 +515,8 @@ pub fn save_notes_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -428,7 +552,8 @@ pub fn load_bookmarks_vault(
     state: tauri::State<SessionState>,
 ) -> CommandResult<BookmarksVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -469,7 +594,8 @@ pub fn save_bookmarks_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -538,7 +664,8 @@ pub fn load_clipboard_vault(
     retention_hours: u64,
 ) -> CommandResult<ClipboardVault> {
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),
@@ -619,7 +746,8 @@ pub fn save_clipboard_vault(
     vault.validate().map_err(|e| e.to_string())?;
 
     let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
+        // FIX F-08: Use lock_session! macro to handle poisoned mutex.
+        let guard = lock_session!(state)?;
         match &*guard {
             Some(mk) => mk.clone(),
             None => return Err("Vault is locked".to_string()),

@@ -119,6 +119,8 @@ pub fn run() {
             commands::files::dry_run_shred,
             commands::files::batch_shred_files,
             commands::files::cancel_shred,
+            commands::files::wipe_free_space,
+            commands::files::trim_drive,
             commands::files::get_drives,
             commands::files::get_startup_file,
             // --- VAULT COMMANDS (commands/vault.rs) ---
@@ -132,6 +134,8 @@ pub fn run() {
             commands::vault::regenerate_recovery_code,
             commands::vault::get_keychain_data,
             commands::vault::export_keychain,
+            commands::vault::get_backup_done,
+            commands::vault::set_backup_done,
             // Password Vault
             commands::vault::load_password_vault,
             commands::vault::save_password_vault,

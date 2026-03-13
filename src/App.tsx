@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -8,7 +8,6 @@ import "./styles/components.css";
 import "./styles/dashboard.css";
 import "./components/layout/Sidebar.css";
 import "./styles/modern-cards.css";
-import "./components/views/ShredderView.css";
 import "./components/views/VaultView.css";
 import "./components/views/NotesView.css";
 
@@ -64,11 +63,31 @@ function App() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-
-  // NEW: Backup Reminder State
   const [showBackupReminder, setShowBackupReminder] = useState(false);
 
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+  // Tracks validation/backend errors from the change-password flow so they are
+  // shown inline inside the modal in red, not via the green success InfoModal.
+  const [changePassError, setChangePassError] = useState<string | null>(null);
+
+  // FIX F-09: Replace localStorage with a Tauri backend flag stored in the app
+  // data directory alongside the keychain itself. localStorage is a browser API
+  // that can be cleared by the user or read by any JS in the same webview origin.
+  // The backend uses a simple sentinel file that persists independently of browser
+  // storage and is under application (not user) control.
+  const [backupDone, setBackupDone] = useState(false);
+
+  // Load the backup-done flag from the backend whenever the user reaches the dashboard.
+  useEffect(() => {
+    if (auth.view !== "dashboard") return;
+    invoke<boolean>("get_backup_done")
+      .then((done) => setBackupDone(done))
+      .catch(() => {
+        // If the command fails for any reason (e.g. during development without
+        // Tauri), default to false so the reminder still fires.
+        setBackupDone(false);
+      });
+  }, [auth.view]);
 
   // --- GLOBAL HELPERS ---
 
@@ -88,8 +107,9 @@ function App() {
         // 2. Write using JS Plugin
         await writeFile(path, Uint8Array.from(bytes));
 
-        // NEW: Mark backup as done so we don't nag the user again
-        localStorage.setItem("qre_backup_done", "true");
+        // FIX F-09: Persist backup-done flag via the Tauri backend instead of localStorage.
+        await invoke("set_backup_done");
+        setBackupDone(true);
 
         setInfoMsg("Backup saved successfully.\nKeep it safe!");
       }
@@ -169,10 +189,11 @@ function App() {
 
         {activeTab === "files" && (
           <FilesView
-            // Check if backup is done; if not, show reminder
+            // FIX F-09: Use backend-persisted `backupDone` state instead of
+            // localStorage so the flag survives browser storage clears and cannot
+            // be trivially tampered with from the webview.
             onShowBackupReminder={() => {
-              const done = localStorage.getItem("qre_backup_done");
-              if (done !== "true") {
+              if (!backupDone) {
                 setShowBackupReminder(true);
               }
             }}
@@ -228,7 +249,6 @@ function App() {
         />
       )}
 
-      {/* NEW: Backup Reminder Modal */}
       {showBackupReminder && (
         <BackupReminderModal
           onBackup={performBackup}
@@ -259,22 +279,45 @@ function App() {
       )}
 
       {showChangePass && (
+        // FIX F-01: Pass currentPassword state through to ChangePassModal so the
+        // user must prove knowledge of their existing password before changing it.
         <ChangePassModal
+          currentPass={auth.currentPassword}
+          setCurrentPass={(v) => {
+            setChangePassError(null);
+            auth.setCurrentPassword(v);
+          }}
           pass={auth.password}
-          setPass={auth.setPassword}
+          setPass={(v) => {
+            setChangePassError(null);
+            auth.setPassword(v);
+          }}
           confirm={auth.confirmPass}
-          setConfirm={auth.setConfirmPass}
+          setConfirm={(v) => {
+            setChangePassError(null);
+            auth.setConfirmPass(v);
+          }}
+          error={changePassError ?? undefined}
           onUpdate={async () => {
             const res = await auth.handleChangePassword();
-            if (!res.success) setInfoMsg(res.msg || "Update failed");
-            else {
+            if (!res.success) {
+              // Show the error inline in red inside the modal rather than
+              // surfacing it through the green success InfoModal.
+              setChangePassError(res.msg || "Update failed");
+            } else {
+              setChangePassError(null);
               setInfoMsg("Password updated successfully.");
               setShowChangePass(false);
             }
           }}
           onCancel={() => {
             setShowChangePass(false);
+            setChangePassError(null);
+            // FIX F-10: Clear all password fields on cancel — don't leave the
+            // current password lingering in the React state / V8 heap.
             auth.setPassword("");
+            auth.setConfirmPass("");
+            auth.setCurrentPassword("");
           }}
         />
       )}

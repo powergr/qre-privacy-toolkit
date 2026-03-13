@@ -747,21 +747,32 @@ export function ResetConfirmModal({
 }
 
 // --- CHANGE PASSWORD MODAL ---
+// FIX F-01: Added `currentPass` / `setCurrentPass` props so the user must provide
+// their existing password before setting a new one. This is verified on the backend
+// before any keychain mutation takes place.
 interface ChangePassProps {
+  currentPass: string;
+  setCurrentPass: (s: string) => void;
   pass: string;
   setPass: (s: string) => void;
   confirm: string;
   setConfirm: (s: string) => void;
   onUpdate: () => void;
   onCancel: () => void;
+  // Inline validation error shown in red inside the modal — avoids routing
+  // password-change failures through the green success InfoModal.
+  error?: string;
 }
 export function ChangePassModal({
+  currentPass,
+  setCurrentPass,
   pass,
   setPass,
   confirm,
   setConfirm,
   onUpdate,
   onCancel,
+  error,
 }: ChangePassProps) {
   return (
     <div className="modal-overlay">
@@ -771,6 +782,18 @@ export function ChangePassModal({
           <h2>Change Password</h2>
         </div>
         <div className="modal-body">
+          {/* FIX F-01: Current password field — required to verify identity before
+              the backend will accept a password change. */}
+          <PasswordInput
+            value={currentPass}
+            onChange={setCurrentPass}
+            placeholder="Current Password"
+            showStrength={false}
+            autoFocus
+            // autocomplete hint so password managers do not confuse this with the new-password field
+            className="auth-input current-password"
+          />
+
           {/* New Password Input with Strength & Generator */}
           <PasswordInput
             value={pass}
@@ -778,14 +801,27 @@ export function ChangePassModal({
             placeholder="New Password"
             showStrength={true}
             allowGenerate={true}
-            autoFocus
           />
 
           <PasswordInput
             value={confirm}
             onChange={setConfirm}
-            placeholder="Confirm Password"
+            placeholder="Confirm New Password"
           />
+
+          {/* Inline error — shown in red so it is never mistaken for a success message */}
+          {error && (
+            <p
+              style={{
+                color: "var(--btn-danger)",
+                fontSize: "0.85rem",
+                margin: "4px 0 0",
+                textAlign: "center",
+              }}
+            >
+              Password change failed: {error}
+            </p>
+          )}
 
           <div style={{ display: "flex", gap: 10 }}>
             <button className="auth-btn" style={{ flex: 1 }} onClick={onUpdate}>

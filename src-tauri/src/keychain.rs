@@ -25,15 +25,20 @@ const NONCE_LEN: usize = 12;
 // KDF = Key Derivation Function. Human passwords are mathematically weak and easy
 // for modern GPUs to guess (brute-force). Argon2id "stretches" the password by
 // forcing the computer to use a specific amount of RAM and CPU time to calculate the key.
+//
+// FIX F-06: Parameters raised from OWASP minimums (19 MB / 2 iter / 1 thread) to
+// recommended desktop-class settings (64 MB / 3 iter / 4 threads).
+// Existing vaults are unaffected — parameters are stored per-vault in keychain.json
+// and read back on unlock. Only newly created vaults use these stronger defaults.
 
 fn default_kdf_memory() -> u32 {
-    19456 // ~19 MB of RAM required. Balanced to be secure but fast enough on mobile devices.
+    65536 // 64 MB of RAM required. Strong default for desktop; resists GPU-based brute-force.
 }
 fn default_kdf_iterations() -> u32 {
-    2 // Number of passes. Increases CPU time required for an attacker.
+    3 // Three passes. Increases CPU time required for an attacker.
 }
 fn default_kdf_parallelism() -> u32 {
-    1 // Number of CPU threads required to calculate the hash.
+    4 // Four CPU threads. Increases hardware cost of parallelised attacks.
 }
 
 // ==========================================
@@ -117,6 +122,49 @@ fn derive_kek(
     Ok(Zeroizing::new(key))
 }
 
+/// FIX F-02: Writes the keychain store to disk atomically.
+///
+/// Instead of opening the target file directly (which truncates it to zero bytes immediately,
+/// risking permanent data loss on a crash), this function:
+///   1. Writes the new data to a `.tmp` file in the same directory.
+///   2. Atomically replaces the real keychain file with the temp file via `fs::rename`.
+///
+/// On all major OS filesystems, `rename` within the same directory is guaranteed to be
+/// atomic — the old file is never visible as empty or partial to any reader.
+fn atomic_write_keychain(path: &Path, store: &KeychainStore) -> Result<()> {
+    let tmp_path = path.with_extension("tmp");
+
+    // Step 1: Write to a temp file. If this fails, the real keychain is untouched.
+    let tmp_file = fs::File::create(&tmp_path)
+        .context("Failed to create temporary keychain file for atomic write")?;
+    serde_json::to_writer_pretty(tmp_file, store)
+        .context("Failed to serialize keychain to temp file")?;
+
+    // Step 2: Atomically swap. If this fails, the temp file is left behind
+    // (it will be overwritten on the next write attempt, which is harmless).
+    fs::rename(&tmp_path, path).context("Failed to atomically replace keychain file")?;
+
+    Ok(())
+}
+
+/// FIX F-05: Generates a cryptographically random recovery code with 128 bits of entropy.
+///
+/// Format: QRE-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+/// Each group is a random 32-bit integer formatted as 8 uppercase hex characters.
+/// 4 groups × 32 bits = 128 bits total (meets NIST SP 800-63B guidance for long-lived secrets).
+fn generate_recovery_code() -> Result<String> {
+    let mut raw_parts = Vec::with_capacity(4);
+    for _ in 0..4 {
+        let mut buf = [0u8; 4];
+        // FIX F-07: Propagate RNG errors as Results instead of panicking.
+        OsRng
+            .try_fill_bytes(&mut buf)
+            .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
+        raw_parts.push(format!("{:08X}", u32::from_le_bytes(buf)));
+    }
+    Ok(format!("QRE-{}", raw_parts.join("-")))
+}
+
 // ==========================================
 // --- Public API ---
 // ==========================================
@@ -126,9 +174,9 @@ fn derive_kek(
 /// The Step-by-Step Envelope Encryption Setup:
 /// 1. Generates a truly random Master Key.
 /// 2. Derives a KEK from the User's Password & Encrypts the Master Key (Slot 1).
-/// 3. Generates a random, printable Recovery Code (e.g., QRE-A1B2-C3D4...).
+/// 3. Generates a random, printable Recovery Code (QRE-XXXXXXXX-...).
 /// 4. Derives a KEK from the Recovery Code & Encrypts the Master Key again (Slot 2).
-/// 5. Saves the metadata and encrypted slots to `keychain.json` on disk.
+/// 5. Saves the metadata and encrypted slots to `keychain.json` on disk atomically.
 pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)> {
     // Prevent accidentally overwriting an existing user's vault
     if path.exists() {
@@ -141,8 +189,11 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     let par = default_kdf_parallelism();
 
     // 2. Generate Truly Random Master Key
+    // FIX F-07: Use ? instead of .expect() so RNG failure surfaces as a recoverable error.
     let mut mk_bytes = [0u8; 32];
-    OsRng.try_fill_bytes(&mut mk_bytes).expect("OS RNG failed");
+    OsRng
+        .try_fill_bytes(&mut mk_bytes)
+        .map_err(|e| anyhow!("OS RNG failed generating master key: {}", e))?;
     let master_key = MasterKey(mk_bytes);
 
     // 3. Prepare Password Slot (Slot 1)
@@ -154,26 +205,18 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         Aes256Gcm::new_from_slice(&*pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut pass_nonce_bytes = [0u8; NONCE_LEN];
+    // FIX F-07: Propagate RNG errors.
     OsRng
         .try_fill_bytes(&mut pass_nonce_bytes)
-        .expect("OS RNG failed");
+        .map_err(|e| anyhow!("OS RNG failed generating nonce: {}", e))?;
 
     let enc_mk_pass = cipher_pass
         .encrypt(Nonce::from_slice(&pass_nonce_bytes), master_key.0.as_ref())
         .map_err(|e| anyhow!("Failed to encrypt master key: {}", e))?;
 
     // 4. Prepare Recovery Slot (Slot 2)
-    // Generate a readable format: QRE-XXXX-XXXX-XXXX-XXXX
-    let raw_recovery: String = (0..4)
-        .map(|_| {
-            let mut buf = [0u8; 2];
-            OsRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
-            let n = u16::from_le_bytes(buf);
-            format!("{:04X}", n) // Format as uppercase hex
-        })
-        .collect::<Vec<String>>()
-        .join("-");
-    let recovery_code = format!("QRE-{}", raw_recovery);
+    // FIX F-05 + F-07: generate_recovery_code() now produces 128-bit codes and propagates RNG errors.
+    let recovery_code = generate_recovery_code()?;
 
     let rec_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
 
@@ -183,15 +226,17 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
+    // FIX F-07: Propagate RNG errors.
     OsRng
         .try_fill_bytes(&mut rec_nonce_bytes)
-        .expect("OS RNG failed");
+        .map_err(|e| anyhow!("OS RNG failed generating recovery nonce: {}", e))?;
 
     let enc_mk_rec = cipher_rec
         .encrypt(Nonce::from_slice(&rec_nonce_bytes), master_key.0.as_ref())
         .map_err(|_| anyhow!("Failed to encrypt recovery slot"))?;
 
-    // 5. Construct the JSON structure and save it to Disk
+    // 5. Construct the JSON structure and save it to Disk atomically
+    // FIX F-02: Use atomic_write_keychain instead of fs::File::create() to prevent data loss.
     let store = KeychainStore {
         vault_id: uuid::Uuid::new_v4().to_string(),
         kdf_memory: mem,
@@ -205,8 +250,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
         encrypted_master_key_recovery: enc_mk_rec,
     };
 
-    let file = fs::File::create(path)?;
-    serde_json::to_writer_pretty(file, &store)?;
+    atomic_write_keychain(path, &store)?;
 
     // Return both the string recovery code (to show the user) and the MasterKey (to load into active RAM)
     Ok((recovery_code, master_key))
@@ -307,9 +351,10 @@ pub fn recover_with_code(
         Aes256Gcm::new_from_slice(&*new_pass_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
+    // FIX F-07: Propagate RNG errors.
     OsRng
         .try_fill_bytes(&mut new_pass_nonce_bytes)
-        .expect("OS RNG failed");
+        .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
 
     let new_enc_mk_pass = cipher_pass
         .encrypt(
@@ -318,15 +363,15 @@ pub fn recover_with_code(
         )
         .map_err(|e| anyhow!("Failed to encrypt with new password: {}", e))?;
 
-    // 3. Update the JSON Store and Save it
+    // 3. Update the JSON Store and save it atomically.
     // NOTE: Because we are only updating the keychain, the terabytes of files the user encrypted
     // over the years do NOT need to be re-encrypted! The Master Key never changed.
     store.password_salt = new_pass_salt;
     store.password_nonce = new_pass_nonce_bytes.to_vec();
     store.encrypted_master_key_pass = new_enc_mk_pass;
 
-    let outfile = fs::File::create(path)?;
-    serde_json::to_writer_pretty(outfile, &store)?;
+    // FIX F-02: Use atomic_write_keychain to prevent data loss on crash during write.
+    atomic_write_keychain(path, &store)?;
 
     Ok(master_key)
 }
@@ -337,17 +382,9 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
     let file = fs::File::open(path)?;
     let mut store: KeychainStore = serde_json::from_reader(file)?;
 
-    // 1. Generate NEW string Recovery Code
-    let raw_recovery: String = (0..4)
-        .map(|_| {
-            let mut buf = [0u8; 2];
-            OsRng.try_fill_bytes(&mut buf).expect("OS RNG failed");
-            let n = u16::from_le_bytes(buf);
-            format!("{:04X}", n)
-        })
-        .collect::<Vec<String>>()
-        .join("-");
-    let recovery_code = format!("QRE-{}", raw_recovery);
+    // 1. Generate NEW recovery code.
+    // FIX F-05 + F-07: generate_recovery_code() produces 128-bit codes and propagates RNG errors.
+    let recovery_code = generate_recovery_code()?;
 
     // 2. Derive new KEK and Encrypt the active Master Key with the new code.
     let rec_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
@@ -362,22 +399,23 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
         Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
+    // FIX F-07: Propagate RNG errors.
     OsRng
         .try_fill_bytes(&mut rec_nonce_bytes)
-        .expect("OS RNG failed");
+        .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
     let rec_nonce = Nonce::from_slice(&rec_nonce_bytes);
 
     let enc_mk_rec = cipher_rec
         .encrypt(rec_nonce, master_key.0.as_ref())
         .map_err(|_| anyhow!("Failed to encrypt recovery slot"))?;
 
-    // 3. Update Store and save
+    // 3. Update Store and save atomically.
+    // FIX F-02: Use atomic_write_keychain to prevent data loss on crash during write.
     store.recovery_salt = rec_salt;
     store.recovery_nonce = rec_nonce_bytes.to_vec();
     store.encrypted_master_key_recovery = enc_mk_rec;
 
-    let outfile = fs::File::create(path)?;
-    serde_json::to_writer_pretty(outfile, &store)?;
+    atomic_write_keychain(path, &store)?;
 
     Ok(recovery_code)
 }
@@ -404,9 +442,10 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
 
     // 3. Encrypt the existing active Master Key with the new KEK
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
+    // FIX F-07: Propagate RNG errors.
     OsRng
         .try_fill_bytes(&mut new_pass_nonce_bytes)
-        .expect("OS RNG failed");
+        .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
 
     let new_enc_mk_pass = cipher_pass
         .encrypt(
@@ -420,9 +459,9 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     store.password_nonce = new_pass_nonce_bytes.to_vec();
     store.encrypted_master_key_pass = new_enc_mk_pass;
 
-    // 5. Save to Disk
-    let outfile = fs::File::create(path)?;
-    serde_json::to_writer_pretty(outfile, &store)?;
+    // 5. Save to Disk atomically.
+    // FIX F-02: Use atomic_write_keychain to prevent data loss on crash during write.
+    atomic_write_keychain(path, &store)?;
 
     Ok(())
 }
@@ -451,7 +490,7 @@ mod tests {
     #[test]
     fn test_init_and_unlock_success() {
         let path = get_temp_keychain_path("test_init_success");
-        let _ = fs::remove_file(&path); // Ensure clean state
+        let _ = fs::remove_file(&path);
 
         let password = "MySuperSecretPassword123!";
 
@@ -460,7 +499,10 @@ mod tests {
         assert!(init_result.is_ok(), "Failed to initialize keychain");
 
         let (recovery_code, original_master_key) = init_result.unwrap();
+        // FIX F-05: Recovery codes are now QRE-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX (128-bit)
+        // "QRE-" (4) + 8 + "-" + 8 + "-" + 8 + "-" + 8 = 39 characters total
         assert!(recovery_code.starts_with("QRE-"));
+        assert_eq!(recovery_code.len(), 4 + 8 + 1 + 8 + 1 + 8 + 1 + 8);
 
         // 2. Unlock
         let unlock_result = unlock_keychain(&path, password);
@@ -564,6 +606,23 @@ mod tests {
         // Old fails, New succeeds
         assert!(unlock_keychain(&path, "OldPass").is_err());
         assert!(unlock_keychain(&path, "NewPass").is_ok());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_atomic_write_no_tmp_file_left_on_success() {
+        let path = get_temp_keychain_path("test_atomic_write");
+        let _ = fs::remove_file(&path);
+
+        init_keychain(&path, "TestPassword").unwrap();
+
+        // After a successful write, the .tmp file should be gone
+        let tmp_path = path.with_extension("tmp");
+        assert!(
+            !tmp_path.exists(),
+            ".tmp file should not exist after successful atomic write"
+        );
 
         let _ = fs::remove_file(path);
     }
