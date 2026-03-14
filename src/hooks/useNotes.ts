@@ -29,7 +29,9 @@ export function useNotes() {
     try {
       setLoading(true);
       setError(null);
-      const vault = await invoke<NotesVault>("load_notes_vault");
+      const vault = await invoke<NotesVault>("load_notes_vault", {
+        vaultId: "local",
+      });
 
       // Validate timestamps (Must be seconds, not milliseconds)
       const validEntries = vault.entries.filter((note) => {
@@ -59,7 +61,10 @@ export function useNotes() {
       if (index >= 0) newEntries[index] = note;
       else newEntries.unshift(note);
 
-      await invoke("save_notes_vault", { vault: { entries: newEntries } });
+      await invoke("save_notes_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       const msg = "Failed to save note: " + String(e);
@@ -71,7 +76,10 @@ export function useNotes() {
   async function deleteNote(id: string): Promise<void> {
     try {
       const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_notes_vault", { vault: { entries: newEntries } });
+      await invoke("save_notes_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       throw new Error("Failed to delete: " + String(e));

@@ -59,7 +59,9 @@ export function useBookmarks() {
     try {
       setLoading(true);
       setError(null);
-      const vault = await invoke<BookmarksVault>("load_bookmarks_vault");
+      const vault = await invoke<BookmarksVault>("load_bookmarks_vault", {
+        vaultId: "local",
+      });
 
       const validEntries = vault.entries.filter((bookmark) => {
         // Sanity check: timestamps > year 2286 mean milliseconds were used
@@ -109,6 +111,7 @@ export function useBookmarks() {
       const sortedEntries = sortBookmarks(newEntries);
       await invoke("save_bookmarks_vault", {
         vault: { entries: sortedEntries },
+        vaultId: "local",
       });
       setEntries(sortedEntries);
     } catch (e) {
@@ -122,7 +125,10 @@ export function useBookmarks() {
     try {
       setError(null);
       const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_bookmarks_vault", { vault: { entries: newEntries } });
+      await invoke("save_bookmarks_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       setError("Failed to delete: " + String(e));

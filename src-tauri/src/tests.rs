@@ -13,7 +13,7 @@ mod tests {
     // (cargo test) never collide with each other.
     // -------------------------------------------------------------------------
 
-    fn mk(seed: u8) -> MasterKey {
+    pub fn mk(seed: u8) -> MasterKey {
         MasterKey([seed; 32])
     }
 
@@ -1264,4 +1264,610 @@ mod tests {
             assert!(res3.is_err(), "Non-hex characters must fail");
         });
     }
+}
+
+// =========================================================================
+// SECTION 11 — SESSION STATE & MULTI-VAULT ROUTING (Phase 1)
+// =========================================================================
+#[test]
+fn test_session_state_multi_vault() {
+    use crate::keychain::MasterKey;
+    use crate::state::SessionState;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    // Initialize the new Phase 1 State Manager
+    let state = SessionState {
+        vaults: Arc::new(Mutex::new(HashMap::new())),
+    };
+
+    // 1. Simulate logging into the Local Vault
+    {
+        let mut guard = state.vaults.lock().unwrap();
+        // Create the MasterKey directly inline
+        guard.insert("local".to_string(), MasterKey([1u8; 32]));
+    }
+
+    // 2. Simulate logging into a Portable USB Vault
+    let usb_path = "D:\\".to_string();
+    {
+        let mut guard = state.vaults.lock().unwrap();
+        // Create the MasterKey directly inline
+        guard.insert(usb_path.clone(), MasterKey([2u8; 32]));
+    }
+
+    // 3. Verify both exist simultaneously and are distinct
+    {
+        let guard = state.vaults.lock().unwrap();
+        assert!(guard.contains_key("local"));
+        assert!(guard.contains_key(&usb_path));
+
+        let local_key = guard.get("local").unwrap();
+        let usb_key = guard.get(&usb_path).unwrap();
+
+        assert_ne!(local_key.0, usb_key.0, "Vaults must have distinct keys");
+    }
+
+    // 4. Simulate USB Ejection (Locking only one vault)
+    {
+        let mut guard = state.vaults.lock().unwrap();
+        let removed = guard.remove(&usb_path);
+        assert!(removed.is_some());
+    }
+
+    // Verify Local is still unlocked
+    {
+        let guard = state.vaults.lock().unwrap();
+        assert!(guard.contains_key("local"));
+        assert!(!guard.contains_key(&usb_path));
+    }
+
+    // 5. Simulate App Logout (Locks all vaults)
+    {
+        let mut guard = state.vaults.lock().unwrap();
+        guard.clear();
+    }
+
+    // Verify everything is locked
+    {
+        let guard = state.vaults.lock().unwrap();
+        assert!(guard.is_empty());
+    }
+}
+
+// =========================================================================
+// SECTION 12 — PORTABLE USB VAULT (Phase 2 Integration Tests)
+//
+// These tests exercise the full init → unlock → lock lifecycle directly
+// through the pub(crate) inner functions (unlock_vault_from_drive,
+// lock_vault_by_id) rather than the Tauri command wrappers, because
+// tauri::State<T> cannot be constructed outside a live Tauri application.
+//
+// All tests use KdfTier::Test (8 MB / 1 iter / 1 thread) to keep the suite
+// fast. The KDF parameter values themselves are verified in a dedicated test.
+//
+// Tests that involve the ejection watcher thread are marked with a comment
+// explaining the intentional sleep — the watcher polls every 2 seconds, so
+// 3 seconds is the minimum reliable observation window.
+// =========================================================================
+
+#[test]
+fn test_portable_init_creates_scaffold() {
+    use crate::commands::portable::{init_portable_vault, KdfTier, PortableKeychainStore};
+    use std::fs;
+
+    let drive = std::env::temp_dir().join("qre_p2_scaffold");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let result = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "CorrectHorseBatteryStaple1!".to_string(),
+        KdfTier::Test,
+    );
+    assert!(result.is_ok(), "init should succeed: {:?}", result);
+
+    // Verify directory scaffold
+    assert!(
+        drive.join(".qre_portable").exists(),
+        ".qre_portable directory must be created"
+    );
+    assert!(
+        drive.join(".qre_portable").join("keychain.qre").exists(),
+        "keychain.qre must be written"
+    );
+    assert!(
+        drive.join("Secure_Locker").exists(),
+        "Secure_Locker directory must be created"
+    );
+
+    // Verify keychain.qre is valid JSON with the expected structure
+    let raw = fs::read_to_string(drive.join(".qre_portable").join("keychain.qre")).unwrap();
+    let store: Result<PortableKeychainStore, _> = serde_json::from_str(&raw);
+    assert!(
+        store.is_ok(),
+        "keychain.qre must deserialize as PortableKeychainStore"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_init_recovery_code_format() {
+    use crate::commands::portable::{init_portable_vault, KdfTier};
+    use std::fs;
+
+    let drive = std::env::temp_dir().join("qre_p2_recovery_fmt");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let (recovery_code, _vault_id) = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "CorrectHorseBatteryStaple1!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    // Format: "QRE-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX"
+    // "QRE-" (4) + 4 groups of 8 hex chars joined by "-" (8*4 + 3) = 4 + 35 = 39
+    assert!(
+        recovery_code.starts_with("QRE-"),
+        "recovery code must start with QRE-"
+    );
+    assert_eq!(
+        recovery_code.len(),
+        39,
+        "recovery code must be 39 chars (128-bit: 4 + 4×8 + 3 separators)"
+    );
+
+    // Verify every non-prefix character is valid uppercase hex or a hyphen
+    let after_prefix = &recovery_code[4..]; // strip "QRE-"
+    for (i, ch) in after_prefix.chars().enumerate() {
+        // Positions 8, 17, 26 within after_prefix are the three hyphens
+        if i == 8 || i == 17 || i == 26 {
+            assert_eq!(ch, '-', "separator must be '-' at position {}", i);
+        } else {
+            assert!(
+                ch.is_ascii_digit() || ('A'..='F').contains(&ch),
+                "non-separator chars must be uppercase hex (0-9 or A-F), got '{}' at position {}",
+                ch,
+                i
+            );
+        }
+    }
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_init_returns_unique_vault_ids() {
+    use crate::commands::portable::{init_portable_vault, KdfTier};
+    use std::fs;
+
+    let drive_a = std::env::temp_dir().join("qre_p2_uuid_a");
+    let drive_b = std::env::temp_dir().join("qre_p2_uuid_b");
+    for d in [&drive_a, &drive_b] {
+        let _ = fs::remove_dir_all(d);
+        fs::create_dir_all(d).unwrap();
+    }
+
+    let (_rc_a, vault_id_a) = init_portable_vault(
+        drive_a.to_str().unwrap().to_string(),
+        "Pass1234!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    let (_rc_b, vault_id_b) = init_portable_vault(
+        drive_b.to_str().unwrap().to_string(),
+        "Pass1234!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    assert_ne!(
+        vault_id_a, vault_id_b,
+        "each vault must receive a unique UUID regardless of password"
+    );
+
+    for d in [&drive_a, &drive_b] {
+        let _ = fs::remove_dir_all(d);
+    }
+}
+
+#[test]
+fn test_portable_init_rejects_already_formatted_drive() {
+    use crate::commands::portable::{init_portable_vault, KdfTier};
+    use std::fs;
+
+    let drive = std::env::temp_dir().join("qre_p2_dup_init");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    // First init — must succeed
+    init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "Pass1234!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    // Second init on the same drive — must fail
+    let result = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "DifferentPass!".to_string(),
+        KdfTier::Test,
+    );
+    assert!(result.is_err(), "second init must return an error");
+    assert!(
+        result.unwrap_err().contains("already formatted"),
+        "error must mention 'already formatted'"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_init_rejects_nonexistent_drive() {
+    use crate::commands::portable::{init_portable_vault, KdfTier};
+
+    let result = init_portable_vault(
+        "/this/path/does/not/exist/qre_test_xyz".to_string(),
+        "Pass1234!".to_string(),
+        KdfTier::Test,
+    );
+
+    assert!(result.is_err(), "nonexistent path must return an error");
+    assert!(
+        result.unwrap_err().contains("Drive not found"),
+        "error must mention 'Drive not found'"
+    );
+}
+
+#[test]
+fn test_portable_init_keychain_stores_correct_kdf_params() {
+    use crate::commands::portable::{init_portable_vault, KdfTier, PortableKeychainStore};
+    use std::fs;
+
+    let drive = std::env::temp_dir().join("qre_p2_kdf_params");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "Pass1234!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    let raw = fs::read_to_string(drive.join(".qre_portable").join("keychain.qre")).unwrap();
+    let store: PortableKeychainStore = serde_json::from_str(&raw).unwrap();
+
+    // KdfTier::Test params are (8_192, 1, 1)
+    assert_eq!(store.kdf_memory, 8_192, "kdf_memory must match Test tier");
+    assert_eq!(
+        store.kdf_iterations, 1,
+        "kdf_iterations must match Test tier"
+    );
+    assert_eq!(
+        store.kdf_parallelism, 1,
+        "kdf_parallelism must match Test tier"
+    );
+
+    // Slots must not be empty
+    assert!(
+        !store.encrypted_master_key_pass.is_empty(),
+        "password slot must be non-empty"
+    );
+    assert!(
+        !store.encrypted_master_key_recovery.is_empty(),
+        "recovery slot must be non-empty"
+    );
+    assert_eq!(
+        store.password_nonce.len(),
+        12,
+        "password nonce must be 12 bytes (96-bit AES-GCM)"
+    );
+    assert_eq!(
+        store.recovery_nonce.len(),
+        12,
+        "recovery nonce must be 12 bytes"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_kdf_tier_production_parameters() {
+    use crate::commands::portable::KdfTier;
+
+    // Verify production tiers meet the minimums defined in the security plan.
+    // Standard: ≥ 256 MB, ≥ 5 iter
+    // High:     ≥ 512 MB, ≥ 8 iter
+    // Paranoid: ≥ 1 GB,   ≥ 10 iter
+    assert_eq!(KdfTier::Standard.get_params(), (262_144, 5, 4));
+    assert_eq!(KdfTier::High.get_params(), (524_288, 8, 4));
+    assert_eq!(KdfTier::Paranoid.get_params(), (1_048_576, 10, 4));
+
+    // Standard must be strictly stronger than any desktop local vault default
+    // (desktop uses 65_536 / 3 iter per keychain.rs).
+    let (std_mem, std_iter, _) = KdfTier::Standard.get_params();
+    assert!(
+        std_mem >= 262_144,
+        "Standard portable tier must be ≥ 256 MB (offline attack mitigation)"
+    );
+    assert!(
+        std_iter >= 5,
+        "Standard portable tier must be ≥ 5 iterations"
+    );
+}
+
+#[test]
+fn test_portable_full_init_unlock_lock_cycle() {
+    use crate::commands::portable::{
+        init_portable_vault, lock_vault_by_id, unlock_vault_from_drive, KdfTier,
+    };
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    let drive = std::env::temp_dir().join("qre_p2_full_cycle");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // ── INIT ────────────────────────────────────────────────────────────────
+    let (_recovery_code, vault_id) = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "PortablePass99!".to_string(),
+        KdfTier::Test,
+    )
+    .expect("init must succeed");
+
+    // Vault must not be in RAM yet — init does not auto-unlock.
+    assert!(
+        !vaults.lock().unwrap().contains_key(&vault_id),
+        "vault must not be in RAM before unlock"
+    );
+
+    // ── UNLOCK ───────────────────────────────────────────────────────────────
+    let returned_id = unlock_vault_from_drive(drive.to_str().unwrap(), "PortablePass99!", &vaults)
+        .expect("unlock must succeed with correct password");
+
+    assert_eq!(
+        returned_id, vault_id,
+        "unlock must return the same vault_id written by init"
+    );
+    assert!(
+        vaults.lock().unwrap().contains_key(&vault_id),
+        "vault must be present in RAM after unlock"
+    );
+
+    // ── LOCK ─────────────────────────────────────────────────────────────────
+    lock_vault_by_id(&vault_id, &vaults).expect("lock must succeed");
+
+    assert!(
+        !vaults.lock().unwrap().contains_key(&vault_id),
+        "vault must be absent from RAM after lock"
+    );
+
+    // Local vault (or any other vault) must be unaffected by locking the portable one.
+    // Insert a dummy local key and verify it survives.
+    {
+        use crate::keychain::MasterKey;
+        let mut guard = vaults.lock().unwrap();
+        guard.insert("local".to_string(), MasterKey([1u8; 32]));
+    }
+    lock_vault_by_id(&vault_id, &vaults).unwrap(); // already gone — must be a no-op
+    assert!(
+        vaults.lock().unwrap().contains_key("local"),
+        "locking portable vault must not affect local vault"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_unlock_wrong_password_fails() {
+    use crate::commands::portable::{init_portable_vault, unlock_vault_from_drive, KdfTier};
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    let drive = std::env::temp_dir().join("qre_p2_wrong_pass");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    let (_rc, vault_id) = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "CorrectPassword99!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "WrongPassword!!", &vaults);
+
+    assert!(result.is_err(), "wrong password must return an error");
+    assert!(
+        result.unwrap_err().contains("Incorrect Password"),
+        "error must say 'Incorrect Password'"
+    );
+    assert!(
+        !vaults.lock().unwrap().contains_key(&vault_id),
+        "failed unlock must not insert any key into the vault map"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_unlock_missing_vault_fails() {
+    use crate::commands::portable::unlock_vault_from_drive;
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    // A real directory that exists but has no .qre_portable inside it.
+    let drive = std::env::temp_dir().join("qre_p2_no_vault");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "AnyPassword!", &vaults);
+
+    assert!(result.is_err(), "unlock on unformatted drive must fail");
+    assert!(
+        result.unwrap_err().contains("Portable vault not found"),
+        "error must say 'Portable vault not found'"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
+}
+
+#[test]
+fn test_portable_lock_already_locked_is_noop() {
+    // Locking a vault_id that does not exist must succeed silently —
+    // HashMap::remove(missing_key) returns None without panicking.
+    use crate::commands::portable::lock_vault_by_id;
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::<
+        VaultId,
+        crate::keychain::MasterKey,
+    >::new()));
+
+    let result = lock_vault_by_id("ghost-vault-id-that-never-existed", &vaults);
+    assert!(
+        result.is_ok(),
+        "locking a non-existent vault must be a silent no-op"
+    );
+}
+
+#[test]
+fn test_portable_two_vaults_coexist_and_lock_independently() {
+    use crate::commands::portable::{
+        init_portable_vault, lock_vault_by_id, unlock_vault_from_drive, KdfTier,
+    };
+    use crate::keychain::MasterKey;
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    let drive_a = std::env::temp_dir().join("qre_p2_two_a");
+    let drive_b = std::env::temp_dir().join("qre_p2_two_b");
+    for d in [&drive_a, &drive_b] {
+        let _ = fs::remove_dir_all(d);
+        fs::create_dir_all(d).unwrap();
+    }
+
+    let vaults: Arc<Mutex<HashMap<VaultId, MasterKey>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    let (_rc_a, vault_id_a) = init_portable_vault(
+        drive_a.to_str().unwrap().to_string(),
+        "PassA_99!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    let (_rc_b, vault_id_b) = init_portable_vault(
+        drive_b.to_str().unwrap().to_string(),
+        "PassB_99!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    unlock_vault_from_drive(drive_a.to_str().unwrap(), "PassA_99!", &vaults).unwrap();
+    unlock_vault_from_drive(drive_b.to_str().unwrap(), "PassB_99!", &vaults).unwrap();
+
+    // Both must be in RAM simultaneously
+    {
+        let guard = vaults.lock().unwrap();
+        assert!(guard.contains_key(&vault_id_a), "vault A must be unlocked");
+        assert!(guard.contains_key(&vault_id_b), "vault B must be unlocked");
+
+        // The two master keys must be distinct (different random keys)
+        let key_a = &guard[&vault_id_a];
+        let key_b = &guard[&vault_id_b];
+        assert_ne!(
+            key_a.0, key_b.0,
+            "two independent vaults must have distinct master keys"
+        );
+    }
+
+    // Locking vault A must not affect vault B
+    lock_vault_by_id(&vault_id_a, &vaults).unwrap();
+
+    {
+        let guard = vaults.lock().unwrap();
+        assert!(!guard.contains_key(&vault_id_a), "vault A must be locked");
+        assert!(
+            guard.contains_key(&vault_id_b),
+            "vault B must still be unlocked"
+        );
+    }
+
+    for d in [&drive_a, &drive_b] {
+        let _ = fs::remove_dir_all(d);
+    }
+}
+
+/// Verifies the S-03 ejection watcher: removing keychain.qre simulates a
+/// drive being physically pulled while unlocked. The watcher polls every 2 s,
+/// so we sleep 3 s to guarantee at least one poll has fired.
+///
+/// This test is intentionally slow (~3 s). It is not marked `#[ignore]`
+/// because it verifies a critical security property (RAM zeroization on
+/// unexpected drive removal).
+#[test]
+fn test_portable_ejection_watcher_zeroizes_key() {
+    use crate::commands::portable::{init_portable_vault, unlock_vault_from_drive, KdfTier};
+    use crate::keychain::MasterKey;
+    use crate::state::VaultId;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+
+    let drive = std::env::temp_dir().join("qre_p2_ejection");
+    let _ = fs::remove_dir_all(&drive);
+    fs::create_dir_all(&drive).unwrap();
+
+    let vaults: Arc<Mutex<HashMap<VaultId, MasterKey>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    let (_rc, vault_id) = init_portable_vault(
+        drive.to_str().unwrap().to_string(),
+        "EjectionTest99!".to_string(),
+        KdfTier::Test,
+    )
+    .unwrap();
+
+    unlock_vault_from_drive(drive.to_str().unwrap(), "EjectionTest99!", &vaults).unwrap();
+    assert!(
+        vaults.lock().unwrap().contains_key(&vault_id),
+        "vault must be unlocked before simulating ejection"
+    );
+
+    // Simulate physical ejection: delete the file the watcher watches.
+    let keychain_path = drive.join(".qre_portable").join("keychain.qre");
+    fs::remove_file(&keychain_path).expect("must be able to remove keychain.qre");
+
+    // Give the watcher thread time to wake (polls every 2 s), detect the
+    // missing file, and remove the key from the map.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    assert!(
+        !vaults.lock().unwrap().contains_key(&vault_id),
+        "watcher must have zeroized the key after keychain.qre was deleted (S-03)"
+    );
+
+    let _ = fs::remove_dir_all(&drive);
 }

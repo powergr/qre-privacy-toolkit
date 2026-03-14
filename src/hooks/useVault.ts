@@ -31,7 +31,9 @@ export function useVault() {
   async function refreshVault() {
     try {
       setLoading(true);
-      const vault = await invoke<PasswordVault>("load_password_vault");
+      const vault = await invoke<PasswordVault>("load_password_vault", {
+        vaultId: "local",
+      });
       // Sort: Pinned first, then Newest
       setEntries(
         vault.entries.sort((a, b) => {
@@ -68,7 +70,10 @@ export function useVault() {
       // We add new items to the TOP
       const combined = [...newItems, ...entries];
 
-      await invoke("save_password_vault", { vault: { entries: combined } });
+      await invoke("save_password_vault", {
+        vault: { entries: combined },
+        vaultId: "local",
+      });
       setEntries(combined);
       return true;
     } catch (e) {
@@ -80,7 +85,10 @@ export function useVault() {
   async function deleteEntry(id: string) {
     try {
       const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_password_vault", { vault: { entries: newEntries } });
+      await invoke("save_password_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       setError("Failed to delete: " + String(e));

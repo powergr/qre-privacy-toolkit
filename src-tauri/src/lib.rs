@@ -27,9 +27,6 @@ mod tests; // Only compiled when running `cargo test`
 mod utils;
 mod wordlist;
 
-use state::SessionState;
-use std::sync::{Arc, Mutex};
-
 // Conditional compilation: Global OS-level keyboard shortcuts are not supported on iOS/Android.
 #[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
@@ -52,9 +49,7 @@ pub fn run() {
         // Any command can request `state: tauri::State<SessionState>` to access it.
         // ARCHITECTURE: `Arc` (Atomic Reference Counting) allows multiple threads to share ownership.
         // `Mutex` (Mutual Exclusion) ensures only one thread can read/write the MasterKey at a time.
-        .manage(SessionState {
-            master_key: Arc::new(Mutex::new(None)),
-        })
+        .manage(state::SessionState::new())
         // More plugins for standard OS interactions
         .plugin(tauri_plugin_http::init()) // <--- Allows Rust to handle secure HTTP requests bypassing CORS
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -123,6 +118,10 @@ pub fn run() {
             commands::files::trim_drive,
             commands::files::get_drives,
             commands::files::get_startup_file,
+            commands::portable::enumerate_removable_drives,
+            commands::portable::init_portable_vault,
+            commands::portable::unlock_portable_vault,
+            commands::portable::lock_portable_vault,
             // --- VAULT COMMANDS (commands/vault.rs) ---
             // Auth & System
             commands::vault::check_auth_status,

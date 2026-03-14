@@ -105,11 +105,11 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 pub fn encrypt_file_stream(
     input_path: &str,
     output_path: &str,
-    master_key: &MasterKey,
+    master_key: &MasterKey, // <--- Now explicit reference
     keyfile_bytes: Option<&[u8]>,
     entropy_seed: Option<[u8; 32]>,
     compression_level: i32,
-    callback: impl Fn(u64, u64), // Progress callback for the UI
+    callback: impl Fn(u64, u64),
 ) -> Result<()> {
     let total_size = std::fs::metadata(input_path)?.len();
     let original_filename = std::path::Path::new(input_path)
@@ -285,7 +285,7 @@ pub fn encrypt_file_stream(
 pub fn decrypt_file_stream(
     input_path: &str,
     output_dir: &str,
-    master_key: &MasterKey,
+    master_key: &MasterKey, // <--- Now explicit reference
     keyfile_bytes: Option<&[u8]>,
     callback: impl Fn(u64, u64),
 ) -> Result<String> {

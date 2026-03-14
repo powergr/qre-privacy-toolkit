@@ -53,6 +53,7 @@ export function useClipboard() {
       setLoading(true);
       const vault = await invoke<ClipboardVault>("load_clipboard_vault", {
         retentionHours,
+        vaultId: "local",
       });
 
       // Sort: Pinned first, then Newest first
@@ -78,7 +79,11 @@ export function useClipboard() {
       if (!text || !text.trim()) throw new Error("Clipboard is empty.");
       if (text.length > 1_000_000) throw new Error("Content too large (>1MB).");
 
-      await invoke("add_clipboard_entry", { text, retentionHours });
+      await invoke("add_clipboard_entry", {
+        text,
+        retentionHours,
+        vaultId: "local",
+      });
       await writeText(""); // Wipe system clipboard
       await refreshVault();
     } catch (e) {
@@ -101,7 +106,10 @@ export function useClipboard() {
         return b.created_at - a.created_at;
       });
 
-      await invoke("save_clipboard_vault", { vault: { entries: newEntries } });
+      await invoke("save_clipboard_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       setError("Failed to pin: " + e);
@@ -124,7 +132,10 @@ export function useClipboard() {
 
   async function clearAll() {
     try {
-      await invoke("save_clipboard_vault", { vault: { entries: [] } });
+      await invoke("save_clipboard_vault", {
+        vault: { entries: [] },
+        vaultId: "local",
+      });
       setEntries([]);
     } catch (e) {
       setError("Clear failed: " + e);
@@ -134,7 +145,10 @@ export function useClipboard() {
   async function deleteEntry(id: string) {
     try {
       const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_clipboard_vault", { vault: { entries: newEntries } });
+      await invoke("save_clipboard_vault", {
+        vault: { entries: newEntries },
+        vaultId: "local",
+      });
       setEntries(newEntries);
     } catch (e) {
       setError("Delete failed: " + e);

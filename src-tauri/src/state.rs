@@ -1,13 +1,19 @@
 use crate::keychain::MasterKey;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+pub type VaultId = String; // E.g., "local" or "D:\"
+
 /// Represents the global runtime state of the application.
-///
-/// It primarily holds the **Master Key** in memory (RAM) while the user is logged in.
-/// The structure uses specific wrappers to ensure thread safety:
-/// - `Arc`: Allows the state to be shared safely across multiple threads.
-/// - `Mutex`: Ensures only one process can access or modify the key at a time to prevent data races.
-/// - `Option`: The key is `Some(key)` when unlocked, and `None` when locked.
+/// Now manages multiple unlocked vaults simultaneously (Local + Portable USBs).
 pub struct SessionState {
-    pub master_key: Arc<Mutex<Option<MasterKey>>>,
+    pub vaults: Arc<Mutex<HashMap<VaultId, MasterKey>>>,
+}
+
+impl SessionState {
+    pub fn new() -> Self {
+        Self {
+            vaults: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }

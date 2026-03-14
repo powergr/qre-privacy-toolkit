@@ -15,9 +15,26 @@ export type ViewState =
   | "login"
   | "dashboard";
 
-// NEW
 export interface BatchResult {
   name: string;
   success: boolean;
   message: string;
+}
+
+// --- PORTABLE USB TYPES ---
+
+export type VaultId = string; // "local" or a drive path like "D:\"
+
+export interface DriveInfo {
+  path: string;
+  name: string;
+  free_space: number;
+  total_space: number;
+  is_qre_portable: boolean;
+}
+
+export interface PortableVaultState {
+  drive: DriveInfo;
+  is_unlocked: boolean;
+  is_locked: boolean;
 }

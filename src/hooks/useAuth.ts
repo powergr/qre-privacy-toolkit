@@ -137,7 +137,10 @@ export function useAuth() {
       return { success: false, msg: "Passwords do not match." };
     try {
       if (isTauri()) {
-        const code = (await invoke("init_vault", { password })) as string;
+        const code = (await invoke("init_vault", {
+          password,
+          vaultId: "local",
+        })) as string;
         setRecoveryCode(code);
       }
       // FIX F-10: Clear password fields immediately after the vault is initialised —
@@ -152,7 +155,7 @@ export function useAuth() {
 
   async function handleLogin(): Promise<ActionResult> {
     try {
-      if (isTauri()) await invoke("login", { password });
+      if (isTauri()) await invoke("login", { password, vaultId: "local" });
       // FIX F-10: Clear password from state immediately after a successful login.
       clearPasswordState();
       setView("dashboard");
@@ -172,6 +175,7 @@ export function useAuth() {
         await invoke("recover_vault", {
           recoveryCode: recoveryCode.trim(),
           newPassword: password,
+          vaultId: "local",
         });
 
       clearPasswordState();
@@ -203,8 +207,8 @@ export function useAuth() {
         await invoke("change_user_password", {
           currentPassword,
           newPassword: password,
+          vaultId: "local",
         });
-
       clearPasswordState();
       return { success: true, msg: "Password updated." };
     } catch (e) {
@@ -215,7 +219,9 @@ export function useAuth() {
   async function handleReset2FA(): Promise<ActionResult> {
     try {
       if (isTauri()) {
-        const code = (await invoke("regenerate_recovery_code")) as string;
+        const code = (await invoke("regenerate_recovery_code", {
+          vaultId: "local",
+        })) as string;
         setRecoveryCode(code);
       }
       setView("recovery_display");

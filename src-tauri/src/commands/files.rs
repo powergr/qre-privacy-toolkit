@@ -143,16 +143,7 @@ pub async fn lock_file(
     extra_entropy: Option<Vec<u8>>,
     compression_mode: Option<String>,
 ) -> CommandResult<Vec<BatchItemResult>> {
-    // 1. Retrieve the master key from the active session state.
-    let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
-        match &*guard {
-            Some(mk) => mk.clone(),
-            None => return Err("Vault is locked.".to_string()),
-        }
-    };
-
-    // 2. Process the keyfile (if provided) into a SHA-256 hash to combine with the master key.
+    // Process the keyfile hash once up front to save time.
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -164,7 +155,10 @@ pub async fn lock_file(
     let raw_entropy: Option<Vec<u8>> = extra_entropy;
     let mode_str = compression_mode.unwrap_or("auto".to_string());
 
-    // 3. Move the heavy lifting into a background blocking thread to prevent freezing the Tauri UI.
+    // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
+    let vaults_arc = state.vaults.clone();
+
+    // Move the heavy lifting into a background blocking thread to prevent freezing the Tauri UI.
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
@@ -181,6 +175,33 @@ pub async fn lock_file(
                 continue;
             }
 
+            // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
+            // Because we don't have the full `state` here, we simulate `get_vault_id_for_path`
+            // Phase 1: Hardcoded to "local"
+            let vault_id = "local".to_string();
+
+            let master_key = {
+                let guard = match vaults_arc.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => {
+                        let mut p = poisoned.into_inner();
+                        p.clear();
+                        return Err("Session state corrupted.".to_string());
+                    }
+                };
+                match guard.get(&vault_id) {
+                    Some(mk) => mk.clone(),
+                    None => {
+                        results.push(BatchItemResult {
+                            name: path.to_string_lossy().to_string(),
+                            success: false,
+                            message: format!("Vault '{}' is locked.", vault_id),
+                        });
+                        continue;
+                    }
+                }
+            };
+
             let filename = path
                 .file_name()
                 .unwrap_or_default()
@@ -189,20 +210,20 @@ pub async fn lock_file(
 
             utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
 
-            // 4. Determine Zstd compression level.
+            // Determine Zstd compression level.
             let level = match mode_str.as_str() {
-                "store" => 0,    // No compression
-                "extreme" => 19, // Max compression (slow)
+                "store" => 0,
+                "extreme" => 19,
                 _ => {
                     if is_already_compressed(&filename) {
-                        1 // Minimal compression if the file format is already dense
+                        1
                     } else {
-                        3 // Default Zstd level
+                        3
                     }
                 }
             };
 
-            // 5. If the target is a directory, zip it into a temporary archive first.
+            // If the target is a directory, zip it into a temporary archive first.
             let (input_path_str, is_temp) = if path.is_dir() {
                 let parent = path.parent().unwrap_or(Path::new("."));
                 let temp_zip_name = format!("{}.zip", filename);
@@ -216,7 +237,7 @@ pub async fn lock_file(
                         success: false,
                         message: format!("Zip failed: {}", e),
                     });
-                    continue; // Skip to the next file if zipping fails
+                    continue;
                 }
 
                 (temp_zip_path.to_string_lossy().to_string(), true)
@@ -224,27 +245,26 @@ pub async fn lock_file(
                 (file_path.clone(), false)
             };
 
-            // 6. Define output file path (*.qre)
+            // Define output file path (*.qre)
             let raw_output = format!("{}.qre", file_path);
             let final_path = utils::get_unique_path(Path::new(&raw_output));
             let final_path_str = final_path.to_string_lossy().to_string();
 
-            // 7. Mix extra entropy with the file index to create a unique seed per file.
+            // Mix extra entropy with the file index to create a unique seed per file.
             let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
                 let mut hasher = Sha256::new();
                 hasher.update(bytes);
-                hasher.update((file_index as u64).to_le_bytes()); // Ensure different seed per file in batch
+                hasher.update((file_index as u64).to_le_bytes());
                 hasher.finalize().into()
             });
 
             let app_handle = app.clone();
             let f_name_clone = filename.to_string();
 
-            // 8. Progress callback for the frontend UI
+            // Progress callback for the frontend UI
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
                     let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
-                    // Adjust progress scale if we spent time zipping earlier
                     let display_pct = if is_temp {
                         20u8.saturating_add((pct as f64 * 0.8) as u8).min(100)
                     } else {
@@ -258,7 +278,7 @@ pub async fn lock_file(
                 }
             };
 
-            // 9. Execute Stream Encryption
+            // Execute Stream Encryption
             let encryption_result = crypto_stream::encrypt_file_stream(
                 &input_path_str,
                 &final_path_str,
@@ -283,7 +303,6 @@ pub async fn lock_file(
                     });
                 }
                 Err(e) => {
-                    // Cleanup the partially written output file if encryption fails
                     let _ = fs::remove_file(&final_path);
                     results.push(BatchItemResult {
                         name: filename.to_string(),
@@ -308,16 +327,7 @@ pub async fn unlock_file(
     keyfile_path: Option<String>,
     keyfile_bytes: Option<Vec<u8>>,
 ) -> CommandResult<Vec<BatchItemResult>> {
-    // 1. Retrieve the master key from the active session state.
-    let master_key = {
-        let guard = state.master_key.lock().unwrap_or_else(|e| e.into_inner());
-        match &*guard {
-            Some(mk) => mk.clone(),
-            None => return Err("Vault is locked.".to_string()),
-        }
-    };
-
-    // 2. Process the keyfile hash.
+    // Process the keyfile hash
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -326,7 +336,10 @@ pub async fn unlock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
-    // 3. Move the heavy lifting into a background thread.
+    // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
+    let vaults_arc = state.vaults.clone();
+
+    // Move the heavy lifting into a background thread
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
@@ -337,6 +350,33 @@ pub async fn unlock_file(
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+
+            // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
+            // Phase 1: Hardcoded to "local"
+            let vault_id = "local".to_string();
+
+            let master_key = {
+                let guard = match vaults_arc.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => {
+                        let mut p = poisoned.into_inner();
+                        p.clear();
+                        return Err("Session state corrupted.".to_string());
+                    }
+                };
+                match guard.get(&vault_id) {
+                    Some(mk) => mk.clone(),
+                    None => {
+                        results.push(BatchItemResult {
+                            name: filename.clone(),
+                            success: false,
+                            message: format!("Vault '{}' is locked.", vault_id),
+                        });
+                        continue;
+                    }
+                }
+            };
+
             utils::emit_progress(&app, &format!("Checking: {}", filename), 5);
 
             let mut file = match fs::File::open(path) {
@@ -351,7 +391,7 @@ pub async fn unlock_file(
                 }
             };
 
-            // 4. Read the file's Magic Version Bytes to figure out how to decrypt it.
+            // Read the file's Magic Version Bytes to figure out how to decrypt it.
             let mut ver_buf = [0u8; 4];
             if file.read_exact(&mut ver_buf).is_err() {
                 results.push(BatchItemResult {
@@ -363,16 +403,10 @@ pub async fn unlock_file(
             }
             let version = u32::from_le_bytes(ver_buf);
 
-            // Handle V4 (Legacy full-in-memory encryption)
             if version == 4 {
                 match crypto::EncryptedFileContainer::load(&file_path) {
                     Ok(container) => {
-                        utils::emit_progress(
-                            &app,
-                            &format!("Decrypting (Legacy V4): {}", filename),
-                            50,
-                        );
-                        // Decrypt entirely in memory
+                        utils::emit_progress(&app, &format!("Decrypting: {}", filename), 50);
                         match crypto::decrypt_file_with_master_key(
                             &master_key,
                             keyfile_hash.as_deref(),
@@ -386,10 +420,9 @@ pub async fn unlock_file(
                                 );
                                 let parent =
                                     Path::new(&file_path).parent().unwrap_or(Path::new("."));
-                                let original_path = parent.join(&payload.filename);
-                                let final_path = utils::get_unique_path(&original_path);
+                                let final_path =
+                                    utils::get_unique_path(&parent.join(&payload.filename));
 
-                                // Write decrypted payload to disk
                                 if let Err(e) = fs::write(&final_path, &payload.content) {
                                     let _ = fs::remove_file(&final_path);
                                     results.push(BatchItemResult {
@@ -418,9 +451,7 @@ pub async fn unlock_file(
                         message: e.to_string(),
                     }),
                 }
-            }
-            // Handle V5 (Current stream-based chunked encryption)
-            else if version == 5 {
+            } else if version == 5 {
                 let parent = Path::new(&file_path).parent().unwrap_or(Path::new("."));
                 let output_dir_str = parent.to_string_lossy().to_string();
 
@@ -434,7 +465,6 @@ pub async fn unlock_file(
                     }
                 };
 
-                // Decrypt file as a stream directly to disk (memory efficient)
                 match crypto_stream::decrypt_file_stream(
                     &file_path,
                     &output_dir_str,
@@ -454,7 +484,6 @@ pub async fn unlock_file(
                     }),
                 }
             } else {
-                // Unsupported version format
                 results.push(BatchItemResult {
                     name: filename,
                     success: false,
@@ -804,4 +833,5 @@ pub fn get_startup_file() -> Option<String> {
     }
     None
 }
+
 // --- END OF FILE files.rs ---
