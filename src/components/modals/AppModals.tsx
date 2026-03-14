@@ -14,12 +14,16 @@ import {
   CheckCircle,
   FileX,
   ExternalLink,
+  Usb,
+  ShieldCheck,
+  ShieldAlert as ShieldAlertIcon,
 } from "lucide-react";
 import { PasswordInput } from "../common/PasswordInput";
 // Import version directly to ensure it matches the build
 // @ts-ignore
 import pkg from "../../../package.json";
 import { FileCheck } from "lucide-react";
+import type { KdfTier } from "../../hooks/usePortableVault";
 
 // --- INFO MODAL (Success) ---
 export function InfoModal({
@@ -1066,6 +1070,516 @@ export function ExportWarningModal({
               onClick={onConfirm}
             >
               <Download size={18} style={{ marginRight: 8 }} /> Export Anyway
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// PHASE 3 — PORTABLE USB VAULT MODALS
+// =============================================================================
+
+// --- DRIVE INIT MODAL --------------------------------------------------------
+// Shown when the user formats a standard USB drive as a QRE portable vault.
+// The vault UUID returned by init is displayed here alongside the recovery code
+// so the user can record both for out-of-band evil-maid verification (S-05).
+
+interface DriveInitModalProps {
+  driveName: string;
+  password: string;
+  setPassword: (v: string) => void;
+  confirm: string;
+  setConfirm: (v: string) => void;
+  tier: KdfTier;
+  setTier: (t: KdfTier) => void;
+  onInit: () => void;
+  onCancel: () => void;
+  error?: string;
+}
+export function DriveInitModal({
+  driveName,
+  password,
+  setPassword,
+  confirm,
+  setConfirm,
+  tier,
+  setTier,
+  onInit,
+  onCancel,
+  error,
+}: DriveInitModalProps) {
+  const tiers: { id: KdfTier; label: string; desc: string }[] = [
+    {
+      id: "Standard",
+      label: "Standard",
+      desc: "256 MB · 5 passes — recommended",
+    },
+    { id: "High", label: "High", desc: "512 MB · 8 passes" },
+    {
+      id: "Paranoid",
+      label: "Paranoid",
+      desc: "1 GB · 10 passes — very slow to unlock",
+    },
+  ];
+
+  return (
+    <div className="modal-overlay">
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <Usb size={20} color="var(--accent)" />
+          <h2>Format Portable Vault</h2>
+          <div style={{ flex: 1 }} />
+          <X size={20} style={{ cursor: "pointer" }} onClick={onCancel} />
+        </div>
+
+        <div className="modal-body">
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.85rem",
+              marginBottom: 12,
+            }}
+          >
+            Drive:{" "}
+            <strong style={{ color: "var(--text-main)" }}>{driveName}</strong>
+          </p>
+
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            placeholder="Vault Password"
+            showStrength
+            autoFocus
+          />
+          <PasswordInput
+            value={confirm}
+            onChange={setConfirm}
+            placeholder="Confirm Password"
+          />
+
+          {/* KDF Tier Selector */}
+          <p
+            style={{
+              color: "var(--text-main)",
+              fontSize: "0.85rem",
+              marginTop: 12,
+              marginBottom: 6,
+            }}
+          >
+            Security level (affects unlock speed):
+          </p>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginBottom: 12,
+            }}
+          >
+            {tiers.map((t) => (
+              <div
+                key={t.id}
+                onClick={() => setTier(t.id)}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  border: `1px solid ${tier === t.id ? "var(--accent)" : "var(--border)"}`,
+                  background:
+                    tier === t.id ? "rgba(0,122,204,0.1)" : "transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    color: "var(--text-main)",
+                    fontWeight: "bold",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {t.label}
+                </span>{" "}
+                <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>
+                  {t.desc}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {error && (
+            <p
+              style={{
+                color: "var(--btn-danger)",
+                fontSize: "0.85rem",
+                textAlign: "center",
+                marginBottom: 8,
+              }}
+            >
+              {error}
+            </p>
+          )}
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="auth-btn" style={{ flex: 1 }} onClick={onInit}>
+              Format Drive
+            </button>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- DRIVE INIT SUCCESS MODAL ------------------------------------------------
+// Shown after a successful init. Displays the recovery code AND the vault UUID
+// side-by-side so the user writes both down before proceeding (S-05).
+// Both values have copy-to-clipboard buttons.
+
+interface DriveInitSuccessModalProps {
+  recoveryCode: string;
+  vaultUuid: string;
+  onClose: () => void;
+}
+export function DriveInitSuccessModal({
+  recoveryCode,
+  vaultUuid,
+  onClose,
+}: DriveInitSuccessModalProps) {
+  const [copiedField, setCopiedField] = useState<"code" | "uuid" | null>(null);
+
+  async function copyToClipboard(text: string, field: "code" | "uuid") {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context) — silently ignore.
+    }
+  }
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 100010 }}>
+      <div
+        className="auth-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 460 }}
+      >
+        <div
+          className="modal-header"
+          style={{ borderBottomColor: "var(--btn-success)" }}
+        >
+          <ShieldCheck size={20} color="var(--btn-success)" />
+          <h2 style={{ color: "var(--btn-success)" }}>Vault Created</h2>
+        </div>
+
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", marginBottom: 4 }}>
+            Write down <strong>both</strong> values and store them separately
+            from the USB drive:
+          </p>
+
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.82rem",
+              marginBottom: 10,
+            }}
+          >
+            The <strong>Vault UUID</strong> lets you verify the keychain has not
+            been swapped if the USB is ever out of your sight (evil-maid
+            protection).
+          </p>
+
+          {/* Recovery Code */}
+          <label style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>
+            Recovery Code
+          </label>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 10,
+              marginTop: 4,
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: "10px 14px",
+                fontFamily: "monospace",
+                fontSize: "0.9rem",
+                color: "var(--accent)",
+                wordBreak: "break-all",
+              }}
+            >
+              {recoveryCode}
+            </div>
+            <button
+              className="secondary-btn"
+              style={{ flexShrink: 0, padding: "8px 12px", fontSize: "0.8rem" }}
+              onClick={() => copyToClipboard(recoveryCode, "code")}
+              title="Copy recovery code"
+            >
+              {copiedField === "code" ? (
+                <CheckCircle size={15} color="var(--btn-success)" />
+              ) : (
+                <Download size={15} />
+              )}
+            </button>
+          </div>
+
+          {/* Vault UUID */}
+          <label style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>
+            Vault UUID
+          </label>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 16,
+              marginTop: 4,
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,0.25)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: "10px 14px",
+                fontFamily: "monospace",
+                fontSize: "0.85rem",
+                color: "var(--text-main)",
+                wordBreak: "break-all",
+              }}
+            >
+              {vaultUuid}
+            </div>
+            <button
+              className="secondary-btn"
+              style={{ flexShrink: 0, padding: "8px 12px", fontSize: "0.8rem" }}
+              onClick={() => copyToClipboard(vaultUuid, "uuid")}
+              title="Copy vault UUID"
+            >
+              {copiedField === "uuid" ? (
+                <CheckCircle size={15} color="var(--btn-success)" />
+              ) : (
+                <Download size={15} />
+              )}
+            </button>
+          </div>
+
+          <div
+            style={{
+              background: "rgba(217,64,64,0.1)",
+              border: "1px solid rgba(217,64,64,0.3)",
+              borderRadius: 6,
+              padding: "10px 12px",
+              fontSize: "0.82rem",
+              color: "var(--btn-danger)",
+              marginBottom: 16,
+            }}
+          >
+            <strong>These are shown once.</strong> QRE does not store the
+            recovery code. If you lose both your password and this code, the
+            vault is unrecoverable.
+          </div>
+
+          <button
+            className="auth-btn"
+            style={{ width: "100%" }}
+            onClick={onClose}
+          >
+            I have saved both — Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- DRIVE UNLOCK MODAL ------------------------------------------------------
+// Displays the vault UUID read from keychain.qre at scan time so the user can
+// verify it matches their written record before entering their password (S-05).
+
+interface DriveUnlockModalProps {
+  driveName: string;
+  vaultUuid?: string;
+  password: string;
+  setPassword: (v: string) => void;
+  onUnlock: () => void;
+  onCancel: () => void;
+  error?: string;
+  showTrustedWarning: boolean;
+  onAcknowledgeWarning: () => void;
+}
+export function DriveUnlockModal({
+  driveName,
+  vaultUuid,
+  password,
+  setPassword,
+  onUnlock,
+  onCancel,
+  error,
+  showTrustedWarning,
+  onAcknowledgeWarning,
+}: DriveUnlockModalProps) {
+  // Show the trusted-computer warning before the password field on first unlock.
+  if (showTrustedWarning) {
+    return (
+      <div className="modal-overlay" style={{ zIndex: 100010 }}>
+        <div
+          className="auth-card"
+          onClick={(e) => e.stopPropagation()}
+          style={{ maxWidth: 440, border: "1px solid var(--warning)" }}
+        >
+          <div
+            className="modal-header"
+            style={{ borderBottomColor: "var(--warning)" }}
+          >
+            <ShieldAlertIcon size={20} color="var(--warning)" />
+            <h2 style={{ color: "var(--warning)" }}>Trusted Computer Only</h2>
+          </div>
+          <div className="modal-body">
+            <p
+              style={{
+                color: "var(--text-main)",
+                lineHeight: 1.5,
+                marginBottom: 12,
+              }}
+            >
+              Only unlock this vault on computers you{" "}
+              <strong>fully trust</strong>.
+            </p>
+            <p
+              style={{
+                color: "var(--text-dim)",
+                fontSize: "0.87rem",
+                lineHeight: 1.5,
+                marginBottom: 16,
+              }}
+            >
+              On a compromised machine (hotel PC, library kiosk), a keylogger
+              can capture your password as you type it, and a RAM-scraper can
+              read your decrypted files the moment they are opened. QRE cannot
+              protect against a compromised operating system. This vault is
+              designed for use on your own trusted devices only.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                className="auth-btn"
+                style={{ flex: 1 }}
+                onClick={onAcknowledgeWarning}
+              >
+                This is my trusted device
+              </button>
+              <button
+                className="secondary-btn"
+                style={{ flex: 1 }}
+                onClick={onCancel}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 100010 }}>
+      <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <Usb size={20} color="var(--accent)" />
+          <h2>Unlock Portable Vault</h2>
+          <div style={{ flex: 1 }} />
+          <X size={20} style={{ cursor: "pointer" }} onClick={onCancel} />
+        </div>
+
+        <div className="modal-body">
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.85rem",
+              marginBottom: 4,
+            }}
+          >
+            Drive:{" "}
+            <strong style={{ color: "var(--text-main)" }}>{driveName}</strong>
+          </p>
+
+          {/* Vault UUID for evil-maid verification */}
+          {vaultUuid && (
+            <div
+              style={{
+                background: "rgba(0,0,0,0.2)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: "8px 12px",
+                marginBottom: 12,
+                fontSize: "0.8rem",
+              }}
+            >
+              <span style={{ color: "var(--text-dim)" }}>Vault UUID: </span>
+              <span
+                style={{ fontFamily: "monospace", color: "var(--text-main)" }}
+              >
+                {vaultUuid}
+              </span>
+              <br />
+              <span style={{ color: "var(--text-dim)", fontSize: "0.75rem" }}>
+                Verify this matches your written record before entering your
+                password.
+              </span>
+            </div>
+          )}
+
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            placeholder="Vault Password"
+            showStrength={false}
+            autoFocus
+          />
+
+          {error && (
+            <p
+              style={{
+                color: "var(--btn-danger)",
+                fontSize: "0.85rem",
+                textAlign: "center",
+                marginTop: 6,
+              }}
+            >
+              {error}
+            </p>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button className="auth-btn" style={{ flex: 1 }} onClick={onUnlock}>
+              Unlock
+            </button>
+            <button
+              className="secondary-btn"
+              style={{ flex: 1 }}
+              onClick={onCancel}
+            >
+              Cancel
             </button>
           </div>
         </div>

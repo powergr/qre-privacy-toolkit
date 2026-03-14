@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
-import { UploadCloud, ShieldAlert } from "lucide-react"; // Import ShieldAlert
+import { UploadCloud, ShieldAlert, Usb } from "lucide-react";
 import { formatSize } from "../../utils/formatting";
 
 // Hooks
@@ -27,11 +27,22 @@ import { BatchResult } from "../../types";
 
 interface FilesViewProps {
   onShowBackupReminder: () => void;
+  /** Drive paths of currently unlocked portable vaults — used to show
+   *  the context banner and enforce ghost-file protection feedback. */
+  portableMountPaths?: string[];
 }
 
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(() => fs.loadDir(fs.currentPath));
+
+  // Detect if the current directory is on an unlocked portable vault.
+  // Used to render the persistent context banner warning the user which
+  // key is in use, and to surface ghost-file errors with helpful text.
+  const activePortableMount =
+    (props.portableMountPaths ?? []).find((mount) =>
+      fs.currentPath.toLowerCase().startsWith(mount.toLowerCase()),
+    ) ?? null;
 
   // State
   const [showCompression, setShowCompression] = useState(false);
@@ -239,6 +250,36 @@ export function FilesView(props: FilesViewProps) {
         onGoHome={fs.goHome}
         onNavigate={fs.loadDir}
       />
+
+      {/* Portable vault context banner — shown whenever the user is browsing
+          a path on an unlocked USB vault. Makes it visually unambiguous which
+          key is in use and reminds the user not to encrypt files directly here. */}
+      {activePortableMount && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "6px 14px",
+            background: "rgba(13, 115, 119, 0.12)",
+            borderBottom: "1px solid rgba(13, 115, 119, 0.35)",
+            fontSize: "0.8rem",
+            color: "var(--text-main)",
+          }}
+        >
+          <Usb size={14} color="var(--btn-success)" style={{ flexShrink: 0 }} />
+          <span>
+            <strong style={{ color: "var(--btn-success)" }}>
+              Portable Vault
+            </strong>{" "}
+            — files here are encrypted with the USB key.{" "}
+            <span style={{ color: "var(--text-dim)" }}>
+              Do not encrypt files directly on this drive — copy them to your PC
+              first.
+            </span>
+          </span>
+        </div>
+      )}
 
       <FileGrid
         entries={fs.entries}

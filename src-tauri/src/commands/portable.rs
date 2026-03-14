@@ -34,6 +34,9 @@ pub struct DriveInfo {
     pub free_space: u64,
     pub total_space: u64,
     pub is_qre_portable: bool,
+    /// UUID read from keychain.qre at scan time.
+    /// Shown in the unlock modal for out-of-band evil-maid verification (S-05).
+    pub vault_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -120,12 +123,28 @@ pub fn enumerate_removable_drives() -> CommandResult<Vec<DriveInfo>> {
                 let path = disk.mount_point().to_string_lossy().to_string();
                 let is_qre_portable = disk.mount_point().join(".qre_portable").exists();
 
+                // Read the vault UUID from keychain.qre so the unlock modal can
+                // display it for out-of-band evil-maid verification (S-05).
+                let vault_uuid = if is_qre_portable {
+                    let kc = disk
+                        .mount_point()
+                        .join(".qre_portable")
+                        .join("keychain.qre");
+                    fs::File::open(&kc)
+                        .ok()
+                        .and_then(|f| serde_json::from_reader::<_, PortableKeychainStore>(f).ok())
+                        .map(|s| s.vault_id)
+                } else {
+                    None
+                };
+
                 results.push(DriveInfo {
                     path,
                     name: disk.name().to_string_lossy().to_string(),
                     free_space: disk.available_space(),
                     total_space: disk.total_space(),
                     is_qre_portable,
+                    vault_uuid,
                 });
             }
         }
@@ -246,6 +265,9 @@ pub(crate) fn unlock_vault_from_drive(
     vaults: &std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<crate::state::VaultId, MasterKey>>,
     >,
+    mounts: &std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, crate::state::VaultId>>,
+    >,
 ) -> CommandResult<String> {
     let keychain_path = PathBuf::from(drive_path)
         .join(".qre_portable")
@@ -292,10 +314,18 @@ pub(crate) fn unlock_vault_from_drive(
         guard.insert(vault_id.clone(), master_key);
     }
 
+    // Register drive path → vault UUID so files.rs can route by path.
+    {
+        let mut guard = mounts.lock().unwrap();
+        guard.insert(drive_path.to_string(), vault_id.clone());
+    }
+
     // SECURITY FIX S-03: Spawn a watcher thread that zeroizes the key if the
     // drive is physically ejected while the vault is still unlocked.
     let watch_path = keychain_path.clone();
     let vaults_arc = vaults.clone();
+    let mounts_arc = mounts.clone();
+    let drive_path_owned = drive_path.to_string();
     let vid_clone = vault_id.clone();
 
     std::thread::spawn(move || {
@@ -308,12 +338,18 @@ pub(crate) fn unlock_vault_from_drive(
                     guard.remove(&vid_clone);
                     println!("🔒 Portable Drive Ejected. Master Key wiped from RAM.");
                 }
+                if let Ok(mut guard) = mounts_arc.lock() {
+                    guard.remove(&drive_path_owned);
+                }
                 break;
             }
 
             // User locked via UI — stop the watcher.
             if let Ok(guard) = vaults_arc.lock() {
                 if !guard.contains_key(&vid_clone) {
+                    if let Ok(mut mg) = mounts_arc.lock() {
+                        mg.remove(&drive_path_owned);
+                    }
                     break;
                 }
             }
@@ -331,7 +367,12 @@ pub fn unlock_portable_vault(
     drive_path: String,
     password: String,
 ) -> CommandResult<String> {
-    unlock_vault_from_drive(&drive_path, &password, &state.vaults)
+    unlock_vault_from_drive(
+        &drive_path,
+        &password,
+        &state.vaults,
+        &state.portable_mounts,
+    )
 }
 
 /// Core lock logic, extracted so tests can call it without tauri::State.
@@ -340,11 +381,19 @@ pub(crate) fn lock_vault_by_id(
     vaults: &std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<crate::state::VaultId, MasterKey>>,
     >,
+    mounts: &std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, crate::state::VaultId>>,
+    >,
 ) -> CommandResult<()> {
     let mut guard = vaults
         .lock()
         .map_err(|_| "Session state corrupted".to_string())?;
     guard.remove(vault_id);
+
+    // Remove any drive path that maps to this vault UUID.
+    if let Ok(mut mg) = mounts.lock() {
+        mg.retain(|_, v| v != vault_id);
+    }
     Ok(())
 }
 
@@ -354,7 +403,7 @@ pub fn lock_portable_vault(
     state: tauri::State<SessionState>,
     vault_id: String,
 ) -> CommandResult<()> {
-    lock_vault_by_id(&vault_id, &state.vaults)
+    lock_vault_by_id(&vault_id, &state.vaults, &state.portable_mounts)
 }
 
 // --- END OF FILE portable.rs ---

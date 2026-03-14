@@ -1273,13 +1273,10 @@ mod tests {
 fn test_session_state_multi_vault() {
     use crate::keychain::MasterKey;
     use crate::state::SessionState;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
 
-    // Initialize the new Phase 1 State Manager
-    let state = SessionState {
-        vaults: Arc::new(Mutex::new(HashMap::new())),
-    };
+    // Use SessionState::new() rather than a struct literal so adding fields
+    // to SessionState (e.g. portable_mounts in Phase 3) never breaks this test.
+    let state = SessionState::new();
 
     // 1. Simulate logging into the Local Vault
     {
@@ -1617,6 +1614,7 @@ fn test_portable_full_init_unlock_lock_cycle() {
     fs::create_dir_all(&drive).unwrap();
 
     let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // ── INIT ────────────────────────────────────────────────────────────────
     let (_recovery_code, vault_id) = init_portable_vault(
@@ -1633,8 +1631,9 @@ fn test_portable_full_init_unlock_lock_cycle() {
     );
 
     // ── UNLOCK ───────────────────────────────────────────────────────────────
-    let returned_id = unlock_vault_from_drive(drive.to_str().unwrap(), "PortablePass99!", &vaults)
-        .expect("unlock must succeed with correct password");
+    let returned_id =
+        unlock_vault_from_drive(drive.to_str().unwrap(), "PortablePass99!", &vaults, &mounts)
+            .expect("unlock must succeed with correct password");
 
     assert_eq!(
         returned_id, vault_id,
@@ -1646,7 +1645,7 @@ fn test_portable_full_init_unlock_lock_cycle() {
     );
 
     // ── LOCK ─────────────────────────────────────────────────────────────────
-    lock_vault_by_id(&vault_id, &vaults).expect("lock must succeed");
+    lock_vault_by_id(&vault_id, &vaults, &mounts).expect("lock must succeed");
 
     assert!(
         !vaults.lock().unwrap().contains_key(&vault_id),
@@ -1660,7 +1659,7 @@ fn test_portable_full_init_unlock_lock_cycle() {
         let mut guard = vaults.lock().unwrap();
         guard.insert("local".to_string(), MasterKey([1u8; 32]));
     }
-    lock_vault_by_id(&vault_id, &vaults).unwrap(); // already gone — must be a no-op
+    lock_vault_by_id(&vault_id, &vaults, &mounts).unwrap(); // already gone — must be a no-op
     assert!(
         vaults.lock().unwrap().contains_key("local"),
         "locking portable vault must not affect local vault"
@@ -1682,6 +1681,7 @@ fn test_portable_unlock_wrong_password_fails() {
     fs::create_dir_all(&drive).unwrap();
 
     let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let (_rc, vault_id) = init_portable_vault(
         drive.to_str().unwrap().to_string(),
@@ -1690,7 +1690,8 @@ fn test_portable_unlock_wrong_password_fails() {
     )
     .unwrap();
 
-    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "WrongPassword!!", &vaults);
+    let result =
+        unlock_vault_from_drive(drive.to_str().unwrap(), "WrongPassword!!", &vaults, &mounts);
 
     assert!(result.is_err(), "wrong password must return an error");
     assert!(
@@ -1719,8 +1720,9 @@ fn test_portable_unlock_missing_vault_fails() {
     fs::create_dir_all(&drive).unwrap();
 
     let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "AnyPassword!", &vaults);
+    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "AnyPassword!", &vaults, &mounts);
 
     assert!(result.is_err(), "unlock on unformatted drive must fail");
     assert!(
@@ -1744,8 +1746,9 @@ fn test_portable_lock_already_locked_is_noop() {
         VaultId,
         crate::keychain::MasterKey,
     >::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    let result = lock_vault_by_id("ghost-vault-id-that-never-existed", &vaults);
+    let result = lock_vault_by_id("ghost-vault-id-that-never-existed", &vaults, &mounts);
     assert!(
         result.is_ok(),
         "locking a non-existent vault must be a silent no-op"
@@ -1771,6 +1774,7 @@ fn test_portable_two_vaults_coexist_and_lock_independently() {
     }
 
     let vaults: Arc<Mutex<HashMap<VaultId, MasterKey>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let (_rc_a, vault_id_a) = init_portable_vault(
         drive_a.to_str().unwrap().to_string(),
@@ -1786,8 +1790,8 @@ fn test_portable_two_vaults_coexist_and_lock_independently() {
     )
     .unwrap();
 
-    unlock_vault_from_drive(drive_a.to_str().unwrap(), "PassA_99!", &vaults).unwrap();
-    unlock_vault_from_drive(drive_b.to_str().unwrap(), "PassB_99!", &vaults).unwrap();
+    unlock_vault_from_drive(drive_a.to_str().unwrap(), "PassA_99!", &vaults, &mounts).unwrap();
+    unlock_vault_from_drive(drive_b.to_str().unwrap(), "PassB_99!", &vaults, &mounts).unwrap();
 
     // Both must be in RAM simultaneously
     {
@@ -1805,7 +1809,7 @@ fn test_portable_two_vaults_coexist_and_lock_independently() {
     }
 
     // Locking vault A must not affect vault B
-    lock_vault_by_id(&vault_id_a, &vaults).unwrap();
+    lock_vault_by_id(&vault_id_a, &vaults, &mounts).unwrap();
 
     {
         let guard = vaults.lock().unwrap();
@@ -1842,6 +1846,7 @@ fn test_portable_ejection_watcher_zeroizes_key() {
     fs::create_dir_all(&drive).unwrap();
 
     let vaults: Arc<Mutex<HashMap<VaultId, MasterKey>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let (_rc, vault_id) = init_portable_vault(
         drive.to_str().unwrap().to_string(),
@@ -1850,7 +1855,7 @@ fn test_portable_ejection_watcher_zeroizes_key() {
     )
     .unwrap();
 
-    unlock_vault_from_drive(drive.to_str().unwrap(), "EjectionTest99!", &vaults).unwrap();
+    unlock_vault_from_drive(drive.to_str().unwrap(), "EjectionTest99!", &vaults, &mounts).unwrap();
     assert!(
         vaults.lock().unwrap().contains_key(&vault_id),
         "vault must be unlocked before simulating ejection"

@@ -31,6 +31,8 @@ export interface DriveInfo {
   free_space: number;
   total_space: number;
   is_qre_portable: boolean;
+  /** UUID read from keychain.qre at scan time. Shown in unlock modal for evil-maid verification. */
+  vault_uuid?: string;
 }
 
 export interface PortableVaultState {

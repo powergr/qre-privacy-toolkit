@@ -23,12 +23,16 @@ import {
   ChevronRight,
   Brush,
   FileSearch,
+  Usb,
+  LockOpen,
+  RefreshCw as RefreshIcon,
+  Plus,
 } from "lucide-react";
+import type { PortableDriveState } from "../../hooks/usePortableVault";
 
 interface SidebarProps {
   activeTab: string;
   setTab: (t: string) => void;
-  // Kept for desktop popup menus (still work fine on desktop)
   onOpenHelpModal: () => void;
   onOpenAboutModal: () => void;
   onLogout: () => void;
@@ -37,6 +41,13 @@ interface SidebarProps {
   onChangePassword: () => void;
   onReset2FA: () => void;
   onUpdate: () => void;
+  // --- Portable Vault (Phase 3) ---
+  portableDrives: PortableDriveState[];
+  isScanning: boolean;
+  onScanDrives: () => void;
+  onInitDrive: (drivePath: string) => void;
+  onUnlockDrive: (drivePath: string) => void;
+  onLockDrive: (drivePath: string) => void;
 }
 
 export function Sidebar({
@@ -50,6 +61,12 @@ export function Sidebar({
   onChangePassword,
   onReset2FA,
   onUpdate,
+  portableDrives,
+  isScanning,
+  onScanDrives,
+  onInitDrive,
+  onUnlockDrive,
+  onLockDrive,
 }: SidebarProps) {
   const [menuState, setMenuState] = useState<"none" | "help" | "settings">(
     "none",
@@ -199,6 +216,80 @@ export function Sidebar({
             </div>
           </div>
         ))}
+
+        {/* ── Portable Drives ─────────────────────────────────────────────── */}
+        {/* SECURITY: Scan is triggered only by explicit user action (clicking  */}
+        {/* Refresh), never on mount or a polling interval. Auto-scanning leaks */}
+        {/* portable vault presence over the IPC bridge (S-09).                */}
+        <div className="sidebar-group-divider" />
+        <div className="nav-group">
+          <div className="portable-drives-header">
+            <Usb size={14} />
+            <span>Portable Drives</span>
+            <button
+              className="portable-scan-btn"
+              onClick={onScanDrives}
+              title="Refresh drive list"
+              disabled={isScanning}
+            >
+              <RefreshIcon size={13} className={isScanning ? "spin" : ""} />
+            </button>
+          </div>
+
+          {portableDrives.length === 0 && (
+            <p className="portable-empty">
+              {isScanning ? "Scanning…" : "No drives found"}
+            </p>
+          )}
+
+          {portableDrives.map((d) => (
+            <div key={d.drive.path} className="portable-drive-row">
+              <div className="portable-drive-info">
+                <Usb
+                  size={14}
+                  color={
+                    d.isUnlocked ? "var(--btn-success)" : "var(--text-dim)"
+                  }
+                />
+                <span className="portable-drive-name" title={d.drive.path}>
+                  {d.drive.name || d.drive.path}
+                </span>
+                {d.isUnlocked && (
+                  <span className="portable-unlocked-badge">●</span>
+                )}
+              </div>
+              <div className="portable-drive-actions">
+                {!d.drive.is_qre_portable && (
+                  <button
+                    className="portable-action-btn"
+                    title="Format as QRE vault"
+                    onClick={() => onInitDrive(d.drive.path)}
+                  >
+                    <Plus size={13} />
+                  </button>
+                )}
+                {d.drive.is_qre_portable && !d.isUnlocked && (
+                  <button
+                    className="portable-action-btn"
+                    title="Unlock vault"
+                    onClick={() => onUnlockDrive(d.drive.path)}
+                  >
+                    <LockOpen size={13} />
+                  </button>
+                )}
+                {d.drive.is_qre_portable && d.isUnlocked && (
+                  <button
+                    className="portable-action-btn danger"
+                    title="Lock vault"
+                    onClick={() => onLockDrive(d.drive.path)}
+                  >
+                    <Lock size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="sidebar-bottom">

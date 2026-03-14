@@ -130,6 +130,26 @@ pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Given a file path, returns the VaultId whose portable drive mount contains it,
+/// or "local" if no portable mount matches. Used by unlock_file to route decryption
+/// to the correct key when the user has a portable vault mounted.
+///
+/// NOTE: This is a best-effort path match. If a .qre file encrypted with the
+/// local vault has been manually copied to a USB drive, this will incorrectly
+/// try the portable key first. Future improvement: embed vault UUID in the .qre header.
+pub(crate) fn get_vault_id_for_path(
+    path: &Path,
+    mounts: &std::collections::HashMap<String, crate::state::VaultId>,
+) -> crate::state::VaultId {
+    let path_str = path.to_string_lossy().to_lowercase();
+    for (mount, vault_id) in mounts {
+        if path_str.starts_with(&mount.to_lowercase()) {
+            return vault_id.clone();
+        }
+    }
+    "local".to_string()
+}
+
 // --- CRYPTO LOGIC ---
 
 /// Tauri command to encrypt a batch of files/directories.
@@ -157,6 +177,8 @@ pub async fn lock_file(
 
     // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
     let vaults_arc = state.vaults.clone();
+    // Clone portable_mounts for ghost-file detection inside the thread.
+    let portable_mounts_arc = state.portable_mounts.clone();
 
     // Move the heavy lifting into a background blocking thread to prevent freezing the Tauri UI.
     tauri::async_runtime::spawn_blocking(move || {
@@ -173,6 +195,38 @@ pub async fn lock_file(
                     message: e,
                 });
                 continue;
+            }
+
+            // SECURITY GUARD — Ghost-file / Flash wear-leveling (S-Ghost):
+            // USB NAND flash controllers do NOT overwrite sectors on delete — they
+            // mark the old sector as free while the plaintext bytes remain on the
+            // physical chip. Encrypting a file that is already on a USB drive and
+            // then deleting the original leaves the plaintext forensically recoverable.
+            //
+            // Enforcement: reject any encrypt operation whose SOURCE file lives on a
+            // registered portable drive mount point. The correct workflow is:
+            //   1. Copy the file to your PC.
+            //   2. Encrypt it here (on the local disk).
+            //   3. Move the resulting .qre file to the USB drive.
+            {
+                let mounts = portable_mounts_arc
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let path_lower = path.to_string_lossy().to_lowercase();
+                if mounts
+                    .keys()
+                    .any(|m| path_lower.starts_with(&m.to_lowercase()))
+                {
+                    results.push(BatchItemResult {
+                        name: path.to_string_lossy().to_string(),
+                        success: false,
+                        message: "Ghost-file protection: files on a portable USB drive cannot be \
+                             encrypted directly. Copy the file to your PC first, encrypt it \
+                             there, then move the .qre file to the USB drive."
+                            .to_string(),
+                    });
+                    continue;
+                }
             }
 
             // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
@@ -338,6 +392,9 @@ pub async fn unlock_file(
 
     // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
     let vaults_arc = state.vaults.clone();
+    // Clone portable_mounts for vault routing (decrypt with the key that matches
+    // the drive the .qre file lives on).
+    let portable_mounts_arc = state.portable_mounts.clone();
 
     // Move the heavy lifting into a background thread
     tauri::async_runtime::spawn_blocking(move || {
@@ -352,8 +409,14 @@ pub async fn unlock_file(
                 .to_string();
 
             // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
-            // Phase 1: Hardcoded to "local"
-            let vault_id = "local".to_string();
+            // Route to the portable vault key if the .qre file lives on a
+            // registered USB mount, otherwise fall back to "local".
+            let vault_id = {
+                let mounts = portable_mounts_arc
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                get_vault_id_for_path(path, &mounts)
+            };
 
             let master_key = {
                 let guard = match vaults_arc.lock() {

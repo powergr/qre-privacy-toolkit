@@ -303,3 +303,133 @@
     }
   }
 }
+
+/* =========================================
+   3. PORTABLE DRIVES SECTION (Phase 3)
+   ========================================= */
+
+.portable-drives-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.portable-scan-btn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.portable-scan-btn:hover {
+  color: var(--text-main);
+}
+.portable-scan-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+.portable-empty {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  margin: 0;
+}
+
+.portable-drive-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px 5px 12px;
+  border-radius: 6px;
+  gap: 6px;
+}
+.portable-drive-row:hover {
+  background: var(--highlight);
+}
+
+.portable-drive-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.portable-drive-name {
+  font-size: 0.82rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Green dot shown when vault is unlocked */
+.portable-unlocked-badge {
+  color: var(--btn-success);
+  font-size: 0.6rem;
+  flex-shrink: 0;
+}
+
+.portable-drive-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.portable-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 5px;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+.portable-action-btn:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+}
+.portable-action-btn.danger:hover {
+  background: rgba(217, 64, 64, 0.15);
+  border-color: var(--btn-danger);
+  color: var(--btn-danger);
+}
+
+/* Hide portable section text on mobile — show icon only */
+@media (max-width: 600px) {
+  .portable-drives-header,
+  .portable-empty,
+  .portable-drive-name,
+  .portable-unlocked-badge {
+    display: none !important;
+  }
+  .portable-drive-row {
+    padding: 0 !important;
+    justify-content: center !important;
+  }
+  .portable-drive-info {
+    justify-content: center !important;
+  }
+}

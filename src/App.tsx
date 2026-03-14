@@ -14,6 +14,7 @@ import "./components/views/NotesView.css";
 // Hooks
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
+import { usePortableVault } from "./hooks/usePortableVault";
 
 // Components (Layout & Views)
 import { Sidebar } from "./components/layout/Sidebar";
@@ -46,11 +47,15 @@ import {
   BackupReminderModal,
   InfoModal,
   TimeoutWarningModal,
+  DriveInitModal,
+  DriveInitSuccessModal,
+  DriveUnlockModal,
 } from "./components/modals/AppModals";
 
 function App() {
   const { theme, setTheme } = useTheme();
   const auth = useAuth();
+  const portable = usePortableVault();
 
   // --- GLOBAL STATE ---
   const [activeTab, setActiveTab] = useState("home");
@@ -64,6 +69,40 @@ function App() {
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
+
+  // --- PORTABLE VAULT MODAL STATE ---
+  // Which drive path is currently being acted on (init or unlock).
+  const [portableTargetPath, setPortableTargetPath] = useState<string | null>(
+    null,
+  );
+  // Portable password field — cleared after every operation.
+  const [portablePassword, setPortablePassword] = useState("");
+  const [portableConfirm, setPortableConfirm] = useState("");
+  const [portableTier, setPortableTier] = useState<
+    "Standard" | "High" | "Paranoid"
+  >("Standard");
+  const [portableError, setPortableError] = useState<string | null>(null);
+  // Which modal is open: "init" | "unlock" | "init_success" | null
+  const [portableModal, setPortableModal] = useState<
+    "init" | "unlock" | "init_success" | null
+  >(null);
+  // Stored after a successful init so DriveInitSuccessModal can display them.
+  const [portableInitResult, setPortableInitResult] = useState<{
+    recoveryCode: string;
+    vaultId: string;
+  } | null>(null);
+  // Tracks whether the trusted-computer warning has been acknowledged for each
+  // vault UUID this session. Stored as a Set so it survives re-renders.
+  const [acknowledgedVaults] = useState<Set<string>>(() => new Set());
+
+  function closePortableModal() {
+    setPortableModal(null);
+    setPortableTargetPath(null);
+    setPortablePassword("");
+    setPortableConfirm("");
+    setPortableError(null);
+    setPortableInitResult(null);
+  }
 
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   // Tracks validation/backend errors from the change-password flow so they are
@@ -182,6 +221,18 @@ function App() {
         onChangePassword={() => setShowChangePass(true)}
         onReset2FA={() => setShowResetConfirm(true)}
         onUpdate={() => setShowUpdateModal(true)}
+        portableDrives={portable.drives}
+        isScanning={portable.isScanning}
+        onScanDrives={portable.scanDrives}
+        onInitDrive={(path) => {
+          setPortableTargetPath(path);
+          setPortableModal("init");
+        }}
+        onUnlockDrive={(path) => {
+          setPortableTargetPath(path);
+          setPortableModal("unlock");
+        }}
+        onLockDrive={(path) => portable.lockVault(path)}
       />
 
       <div className="content-area">
@@ -189,14 +240,14 @@ function App() {
 
         {activeTab === "files" && (
           <FilesView
-            // FIX F-09: Use backend-persisted `backupDone` state instead of
-            // localStorage so the flag survives browser storage clears and cannot
-            // be trivially tampered with from the webview.
             onShowBackupReminder={() => {
               if (!backupDone) {
                 setShowBackupReminder(true);
               }
             }}
+            portableMountPaths={portable.drives
+              .filter((d) => d.isUnlocked)
+              .map((d) => d.drive.path)}
           />
         )}
 
@@ -321,6 +372,105 @@ function App() {
           }}
         />
       )}
+
+      {/* --- PORTABLE VAULT MODALS --- */}
+      {portableModal === "init" && portableTargetPath && (
+        <DriveInitModal
+          driveName={
+            portable.drives.find((d) => d.drive.path === portableTargetPath)
+              ?.drive.name ?? portableTargetPath
+          }
+          password={portablePassword}
+          setPassword={(v) => {
+            setPortableError(null);
+            setPortablePassword(v);
+          }}
+          confirm={portableConfirm}
+          setConfirm={(v) => {
+            setPortableError(null);
+            setPortableConfirm(v);
+          }}
+          tier={portableTier}
+          setTier={setPortableTier}
+          error={portableError ?? undefined}
+          onCancel={closePortableModal}
+          onInit={async () => {
+            if (!portablePassword || portablePassword !== portableConfirm) {
+              setPortableError("Passwords do not match.");
+              return;
+            }
+            const res = await portable.initVault(
+              portableTargetPath,
+              portablePassword,
+              portableTier,
+            );
+            if (!res.success) {
+              setPortableError(res.msg ?? "Initialization failed.");
+            } else {
+              setPortableInitResult({
+                recoveryCode: res.recoveryCode!,
+                vaultId: res.vaultId!,
+              });
+              setPortablePassword("");
+              setPortableConfirm("");
+              setPortableError(null);
+              setPortableModal("init_success");
+            }
+          }}
+        />
+      )}
+
+      {portableModal === "init_success" && portableInitResult && (
+        <DriveInitSuccessModal
+          recoveryCode={portableInitResult.recoveryCode}
+          vaultUuid={portableInitResult.vaultId}
+          onClose={closePortableModal}
+        />
+      )}
+
+      {portableModal === "unlock" &&
+        portableTargetPath &&
+        (() => {
+          const entry = portable.drives.find(
+            (d) => d.drive.path === portableTargetPath,
+          );
+          const vaultUuid = entry?.drive.vault_uuid;
+          // Show the trusted-computer warning until the user acknowledges it
+          // for this specific vault UUID. Acknowledgment persists for the session.
+          const warningAcknowledged = vaultUuid
+            ? acknowledgedVaults.has(vaultUuid)
+            : true; // no UUID = can't track, skip warning
+          return (
+            <DriveUnlockModal
+              driveName={entry?.drive.name ?? portableTargetPath}
+              vaultUuid={vaultUuid}
+              password={portablePassword}
+              setPassword={(v) => {
+                setPortableError(null);
+                setPortablePassword(v);
+              }}
+              error={portableError ?? undefined}
+              showTrustedWarning={!warningAcknowledged}
+              onAcknowledgeWarning={() => {
+                if (vaultUuid) acknowledgedVaults.add(vaultUuid);
+                // Force re-render by setting a benign state update
+                setPortableError(null);
+              }}
+              onCancel={closePortableModal}
+              onUnlock={async () => {
+                const res = await portable.unlockVault(
+                  portableTargetPath,
+                  portablePassword,
+                );
+                if (!res.success) {
+                  setPortableError(res.msg ?? "Incorrect password.");
+                } else {
+                  closePortableModal();
+                }
+              }}
+            />
+          );
+        })()}
 
       {infoMsg && (
         <InfoModal message={infoMsg} onClose={() => setInfoMsg(null)} />
