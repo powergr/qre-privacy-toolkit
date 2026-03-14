@@ -180,6 +180,8 @@ If you lose your **Master Password** AND your **Recovery Code**, your data is ma
 
 **Backup your `keychain.json` file and store your Recovery Code safely.**
 
+Read a detailed blog post: [Authentication System Deep Dive](https://projectqre.com/blog-auth-deep-dive.html)
+
 ---
 
 ## 🛡️ Download Security
