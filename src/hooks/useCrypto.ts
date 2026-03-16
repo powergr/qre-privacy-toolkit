@@ -5,13 +5,15 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { platform } from "@tauri-apps/plugin-os";
 import { generateBrowserEntropy } from "../utils/security";
+import { BatchResult } from "../types";
 
 interface ProgressEvent {
   status: string;
   percentage: number;
 }
 
-export function useCrypto(reloadDir: () => void) {
+// FIX 1: Pass the raw loadDir function instead of a captured closure
+export function useCrypto(loadDir: (path: string) => Promise<void>) {
   const [keyFilePath, setKeyFilePath] = useState<string | null>(null);
   const [keyFileBytes, setKeyFileBytes] = useState<Uint8Array | null>(null);
   const [isParanoid, setIsParanoid] = useState(false);
@@ -24,7 +26,6 @@ export function useCrypto(reloadDir: () => void) {
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Detect Platform on Mount
   useEffect(() => {
     const os = platform();
     setCurrentPlatform(os);
@@ -45,10 +46,6 @@ export function useCrypto(reloadDir: () => void) {
       const selected = await open({ multiple: false });
       if (typeof selected === "string") {
         setKeyFilePath(selected);
-
-        // HYBRID LOGIC:
-        // Only read file into memory if on Android/iOS (to handle Content URIs)
-        // On Desktop, we avoid this to prevent freezing with large files
         if (currentPlatform === "android" || currentPlatform === "ios") {
           try {
             const bytes = await readFile(selected);
@@ -56,10 +53,9 @@ export function useCrypto(reloadDir: () => void) {
           } catch (readErr) {
             console.error("Failed to read keyfile bytes:", readErr);
             setErrorMsg("Failed to load keyfile data.");
-            setKeyFilePath(null); // Revert
+            setKeyFilePath(null);
           }
         } else {
-          // Desktop: Clear bytes to ensure we use the Path in backend
           setKeyFileBytes(null);
         }
       }
@@ -68,13 +64,6 @@ export function useCrypto(reloadDir: () => void) {
     }
   }
 
-  /**
-   * FIX: Zero the keyfile byte array before releasing it.
-   *
-   * JavaScript's GC doesn't guarantee when memory is collected or wiped, so
-   * filling the buffer with zeros before clearing the reference is the best
-   * defence against the bytes lingering in a heap inspection or memory dump.
-   */
   function clearKeyFile() {
     if (keyFileBytes) {
       keyFileBytes.fill(0);
@@ -91,14 +80,17 @@ export function useCrypto(reloadDir: () => void) {
     }
   }
 
+  // FIX 1: Require currentPath so we reload exactly where we are
   async function runCrypto(
     cmd: "lock_file" | "unlock_file",
     targets: string[],
+    currentPath: string, // <--- NEW PARAMETER
     explicitEntropy?: number[],
-  ) {
+    outputDir?: string,
+  ): Promise<BatchResult[] | null> {
     if (targets.length === 0) {
       setErrorMsg("No files selected.");
-      return;
+      return null;
     }
 
     setProgress({ status: "Preparing...", percentage: 0 });
@@ -108,36 +100,35 @@ export function useCrypto(reloadDir: () => void) {
 
       if (cmd === "lock_file") {
         if (explicitEntropy) {
-          // FIX: Clamp all entropy values to the valid u8 range [0, 255].
-          // The Rust backend deserialises this as Vec<u8>; values outside this
-          // range would cause a Tauri serialisation error with a confusing
-          // message. Clamping here is cheap and makes the contract explicit.
           finalEntropy = explicitEntropy.map((v) =>
             Math.max(0, Math.min(255, Math.floor(v))),
           );
         } else if (isParanoid) {
           const raw = generateBrowserEntropy();
-          // Apply the same clamp to auto-generated entropy for consistency.
           finalEntropy = raw.map((v) =>
             Math.max(0, Math.min(255, Math.floor(v))),
           );
         }
       }
 
-      // Convert Uint8Array to regular Array for serialization
       const keyFileArray = keyFileBytes ? Array.from(keyFileBytes) : null;
 
-      await invoke(cmd, {
+      const results = await invoke<BatchResult[]>(cmd, {
         filePaths: targets,
-        keyfilePath: keyFilePath, // Always send path (Rust decides if it uses it)
-        keyfileBytes: keyFileArray, // Sent only on mobile
+        keyfilePath: keyFilePath,
+        keyfileBytes: keyFileArray,
         extraEntropy: finalEntropy,
         compressionMode: cmd === "lock_file" ? compressionMode : null,
+        outputDir: cmd === "unlock_file" ? outputDir || null : null,
       });
 
-      reloadDir();
+      // FIX 1: Explicitly reload the exact path we were in
+      await loadDir(currentPath);
+      return results;
     } catch (e) {
+      console.error(`Crypto Command Error (${cmd}):`, e);
       setErrorMsg(String(e));
+      return null;
     } finally {
       clearProgress(500);
     }

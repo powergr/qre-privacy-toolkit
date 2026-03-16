@@ -106,6 +106,7 @@ pub fn run() {
             commands::files::unlock_file,
             commands::files::delete_items,
             commands::files::trash_items,
+            commands::files::paste_items,
             commands::files::create_dir,
             commands::files::rename_item,
             commands::files::show_in_folder,

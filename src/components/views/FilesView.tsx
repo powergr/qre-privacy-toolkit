@@ -1,13 +1,26 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { join } from "@tauri-apps/api/path";
-import { UploadCloud, ShieldAlert, Usb } from "lucide-react";
+import {
+  join,
+  downloadDir,
+  desktopDir,
+  documentDir,
+  homeDir,
+} from "@tauri-apps/api/path";
+import {
+  UploadCloud,
+  ShieldAlert,
+  FolderOpen,
+  AlertTriangle,
+  X,
+} from "lucide-react";
 import { formatSize } from "../../utils/formatting";
 
 // Hooks
 import { useFileSystem } from "../../hooks/useFileSystem";
 import { useCrypto } from "../../hooks/useCrypto";
 import { useDragDrop } from "../../hooks/useDragDrop";
+import type { PortableDriveState } from "../../hooks/usePortableVault";
 
 // Components
 import { Toolbar } from "../dashboard/Toolbar";
@@ -27,22 +40,19 @@ import { BatchResult } from "../../types";
 
 interface FilesViewProps {
   onShowBackupReminder: () => void;
-  /** Drive paths of currently unlocked portable vaults — used to show
-   *  the context banner and enforce ghost-file protection feedback. */
-  portableMountPaths?: string[];
+  portable: {
+    drives: PortableDriveState[];
+    isScanning: boolean;
+    scanDrives: () => void;
+    lockVault: (p: string) => void;
+  };
+  onInitDrive: (path: string) => void;
+  onUnlockDrive: (path: string) => void;
 }
 
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
-  const crypto = useCrypto(() => fs.loadDir(fs.currentPath));
-
-  // Detect if the current directory is on an unlocked portable vault.
-  // Used to render the persistent context banner warning the user which
-  // key is in use, and to surface ghost-file errors with helpful text.
-  const activePortableMount =
-    (props.portableMountPaths ?? []).find((mount) =>
-      fs.currentPath.toLowerCase().startsWith(mount.toLowerCase()),
-    ) ?? null;
+  const crypto = useCrypto(fs.loadDir);
 
   // State
   const [showCompression, setShowCompression] = useState(false);
@@ -50,6 +60,20 @@ export function FilesView(props: FilesViewProps) {
   const [pendingLockTargets, setPendingLockTargets] = useState<string[] | null>(
     null,
   );
+
+  // Custom Modal States
+  const [showGhostWarning, setShowGhostWarning] = useState(false);
+  const [showExtractModal, setShowExtractModal] = useState(false);
+  const [pendingUnlockTargets, setPendingUnlockTargets] = useState<
+    string[] | null
+  >(null);
+
+  // Clipboard State for Cut/Copy/Paste functionality
+  const [fileClipboard, setFileClipboard] = useState<{
+    paths: string[];
+    isCut: boolean;
+  } | null>(null);
+
   const [menuData, setMenuData] = useState<{
     x: number;
     y: number;
@@ -65,43 +89,32 @@ export function FilesView(props: FilesViewProps) {
   // --- KEYBOARD SHORTCUTS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if modals are open or typing in inputs
       if (inputModal || itemsToDelete || showEntropyModal || showCompression)
         return;
       if ((e.target as HTMLElement).tagName === "INPUT") return;
 
-      // Select All (Ctrl+A / Cmd+A)
       if ((e.ctrlKey || e.metaKey) && e.key === "a") {
         e.preventDefault();
         fs.selectAll();
       }
-
-      // Delete
       if (e.key === "Delete" && fs.selectedPaths.length > 0) {
         e.preventDefault();
         setItemsToDelete(fs.selectedPaths);
       }
-
-      // Escape (Clear Selection)
       if (e.key === "Escape") {
         e.preventDefault();
         fs.clearSelection();
+        setFileClipboard(null);
       }
-
-      // Backspace (Go Up)
       if (e.key === "Backspace") {
         fs.goUp();
       }
 
-      // Enter (Open if 1 item selected and is dir)
       if (e.key === "Enter" && fs.selectedPaths.length === 1) {
         const entry = fs.entries.find((en) => en.path === fs.selectedPaths[0]);
-        if (entry && entry.isDirectory) {
-          fs.loadDir(entry.path);
-        }
+        if (entry && entry.isDirectory) fs.loadDir(entry.path);
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
@@ -113,26 +126,87 @@ export function FilesView(props: FilesViewProps) {
     showCompression,
   ]);
 
-  // --- LOGIC ---
+  // --- CUSTOM UX ROUTING LOGIC ---
+  const isPortableTarget = (targets: string[]) => {
+    const portableMountPaths = props.portable.drives
+      .filter((d) => d.isUnlocked)
+      .map((d) => d.drive.path);
+    return targets.some((t) =>
+      portableMountPaths.some((mount) =>
+        t.toLowerCase().startsWith(mount.toLowerCase()),
+      ),
+    );
+  };
+
   const requestLock = useCallback(
     async (targets: string[]) => {
-      if (crypto.isParanoid) {
+      if (isPortableTarget(targets)) {
         setPendingLockTargets(targets);
-        setShowEntropyModal(true);
+        setShowGhostWarning(true);
       } else {
-        await crypto.runCrypto("lock_file", targets);
-        props.onShowBackupReminder();
+        executeLock(targets);
       }
     },
-    [crypto, props],
+    [props.portable.drives],
+  );
+
+  const executeLock = async (targets: string[], explicitEntropy?: number[]) => {
+    if (crypto.isParanoid && !explicitEntropy) {
+      setPendingLockTargets(targets);
+      setShowEntropyModal(true);
+    } else {
+      // FIX 1: Corrected if (results) statement
+      const results = await crypto.runCrypto(
+        "lock_file",
+        targets,
+        fs.currentPath,
+        explicitEntropy,
+      );
+      if (results) {
+        const failures = results.filter((r) => !r.success);
+        if (failures.length > 0) {
+          crypto.setErrorMsg(
+            "Locking failed for some items:\n" +
+              failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+          );
+        } else {
+          props.onShowBackupReminder();
+        }
+      }
+    }
+  };
+
+  const requestUnlock = useCallback(
+    async (targets: string[]) => {
+      if (isPortableTarget(targets)) {
+        setPendingUnlockTargets(targets);
+        setShowExtractModal(true);
+      } else {
+        // FIX 2: Added fs.currentPath to the function call
+        const results = await crypto.runCrypto(
+          "unlock_file",
+          targets,
+          fs.currentPath,
+        );
+        if (results) {
+          const failures = results.filter((r) => !r.success);
+          if (failures.length > 0) {
+            crypto.setErrorMsg(
+              "Unlock failed:\n" +
+                failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+            );
+          }
+        }
+      }
+    },
+    [props.portable.drives, fs.currentPath],
   );
 
   const handleEntropyComplete = async (entropy: number[]) => {
     setShowEntropyModal(false);
     if (pendingLockTargets) {
-      await crypto.runCrypto("lock_file", pendingLockTargets, entropy);
+      await executeLock(pendingLockTargets, entropy);
       setPendingLockTargets(null);
-      props.onShowBackupReminder();
     }
   };
 
@@ -140,10 +214,10 @@ export function FilesView(props: FilesViewProps) {
     async (paths: string[]) => {
       const toUnlock = paths.filter((p) => p.endsWith(".qre"));
       const toLock = paths.filter((p) => !p.endsWith(".qre"));
-      if (toUnlock.length > 0) await crypto.runCrypto("unlock_file", toUnlock);
+      if (toUnlock.length > 0) requestUnlock(toUnlock);
       if (toLock.length > 0) requestLock(toLock);
     },
-    [crypto, requestLock],
+    [requestLock, requestUnlock],
   );
 
   const { isDragging } = useDragDrop(handleDrop);
@@ -167,19 +241,50 @@ export function FilesView(props: FilesViewProps) {
     if (action === "refresh") return fs.loadDir(fs.currentPath);
     if (action === "new_folder")
       return setInputModal({ mode: "create", path: fs.currentPath });
+
+    if (action === "paste" && fileClipboard) {
+      try {
+        crypto.setErrorMsg(null);
+        const results = await invoke<BatchResult[]>("paste_items", {
+          sources: fileClipboard.paths,
+          destDir: fs.currentPath,
+          isCut: fileClipboard.isCut,
+        });
+
+        const failures = results.filter((r) => !r.success);
+        if (failures.length > 0) {
+          crypto.setErrorMsg(
+            "Paste failed:\n" +
+              failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+          );
+        }
+
+        if (fileClipboard.isCut) setFileClipboard(null);
+        fs.loadDir(fs.currentPath);
+      } catch (e) {
+        crypto.setErrorMsg(String(e));
+      } finally {
+        crypto.clearProgress(500);
+      }
+      return;
+    }
+
     if (isBg) return;
 
     let targets = [path];
     if (fs.selectedPaths.includes(path)) targets = fs.selectedPaths;
 
     if (action === "lock") requestLock(targets);
-    if (action === "unlock") crypto.runCrypto("unlock_file", targets);
+    if (action === "unlock") requestUnlock(targets);
     if (action === "share")
       invoke("show_in_folder", { path }).catch((e) =>
         crypto.setErrorMsg(String(e)),
       );
     if (action === "rename") setInputModal({ mode: "rename", path });
     if (action === "delete") setItemsToDelete(targets);
+
+    if (action === "cut") setFileClipboard({ paths: targets, isCut: true });
+    if (action === "copy") setFileClipboard({ paths: targets, isCut: false });
   }
 
   async function performDeleteAction(mode: "trash" | "shred") {
@@ -221,6 +326,30 @@ export function FilesView(props: FilesViewProps) {
     }
   }
 
+  const executeExtract = async (dir: string | undefined) => {
+    setShowExtractModal(false);
+    if (!pendingUnlockTargets) return;
+
+    // FIX 3: Added fs.currentPath to the function call
+    const results = await crypto.runCrypto(
+      "unlock_file",
+      pendingUnlockTargets,
+      fs.currentPath,
+      undefined,
+      dir,
+    );
+    if (results) {
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        crypto.setErrorMsg(
+          "Unlock failed:\n" +
+            failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+        );
+      }
+    }
+    setPendingUnlockTargets(null);
+  };
+
   return (
     <div
       style={{
@@ -233,8 +362,9 @@ export function FilesView(props: FilesViewProps) {
     >
       <Toolbar
         onLock={() => requestLock(fs.selectedPaths)}
-        onUnlock={() => crypto.runCrypto("unlock_file", fs.selectedPaths)}
-        onRefresh={() => fs.loadDir(fs.currentPath)}
+        onUnlock={() => requestUnlock(fs.selectedPaths)}
+        onNavigate={fs.loadDir}
+        // FIX 4: Removed onRefresh from the Toolbar component props here
         keyFile={crypto.keyFile}
         setKeyFile={crypto.setKeyFile}
         selectKeyFile={crypto.selectKeyFile}
@@ -242,49 +372,26 @@ export function FilesView(props: FilesViewProps) {
         setIsParanoid={crypto.setIsParanoid}
         compressionMode={crypto.compressionMode}
         onOpenCompression={() => setShowCompression(true)}
+        portable={props.portable}
+        onInitDrive={props.onInitDrive}
+        onUnlockDrive={props.onUnlockDrive}
       />
-
       <AddressBar
         currentPath={fs.currentPath}
         onGoUp={fs.goUp}
-        onGoHome={fs.goHome}
         onNavigate={fs.loadDir}
+        onGoHome={async () => {
+          try {
+            const dir = await homeDir();
+            fs.loadDir(dir);
+          } catch (e) {
+            console.error("Failed to resolve Home dir", e);
+          }
+        }}
       />
-
-      {/* Portable vault context banner — shown whenever the user is browsing
-          a path on an unlocked USB vault. Makes it visually unambiguous which
-          key is in use and reminds the user not to encrypt files directly here. */}
-      {activePortableMount && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 14px",
-            background: "rgba(13, 115, 119, 0.12)",
-            borderBottom: "1px solid rgba(13, 115, 119, 0.35)",
-            fontSize: "0.8rem",
-            color: "var(--text-main)",
-          }}
-        >
-          <Usb size={14} color="var(--btn-success)" style={{ flexShrink: 0 }} />
-          <span>
-            <strong style={{ color: "var(--btn-success)" }}>
-              Portable Vault
-            </strong>{" "}
-            — files here are encrypted with the USB key.{" "}
-            <span style={{ color: "var(--text-dim)" }}>
-              Do not encrypt files directly on this drive — copy them to your PC
-              first.
-            </span>
-          </span>
-        </div>
-      )}
-
       <FileGrid
         entries={fs.entries}
         selectedPaths={fs.selectedPaths}
-        // Updated Signature:
         onSelect={(path, idx, multi, range) =>
           fs.handleSelection(path, idx, multi, range)
         }
@@ -305,7 +412,6 @@ export function FilesView(props: FilesViewProps) {
         </div>
       )}
 
-      {/* Modern Status Bar */}
       <div className="status-bar">
         <span>{fs.entries.length} items</span>
         <div
@@ -322,6 +428,20 @@ export function FilesView(props: FilesViewProps) {
             : "No selection"}
         </span>
         <div style={{ flex: 1 }}></div>
+
+        {fileClipboard && (
+          <span
+            style={{
+              color: "var(--accent)",
+              fontSize: "0.75rem",
+              marginRight: 15,
+            }}
+          >
+            {fileClipboard.paths.length} item(s){" "}
+            {fileClipboard.isCut ? "cut" : "copied"}
+          </span>
+        )}
+
         {crypto.keyFile && (
           <span style={{ color: "var(--btn-success)", fontSize: "0.75rem" }}>
             Keyfile Active
@@ -337,8 +457,10 @@ export function FilesView(props: FilesViewProps) {
           isBackground={menuData.isBg}
           onClose={() => setMenuData(null)}
           onAction={handleContextAction}
+          canPaste={fileClipboard !== null}
         />
       )}
+
       {inputModal && (
         <InputModal
           mode={inputModal.mode}
@@ -351,6 +473,7 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setInputModal(null)}
         />
       )}
+
       {itemsToDelete && (
         <DeleteConfirmModal
           items={itemsToDelete}
@@ -359,6 +482,7 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setItemsToDelete(null)}
         />
       )}
+
       {showCompression && (
         <CompressionModal
           current={crypto.compressionMode}
@@ -369,6 +493,142 @@ export function FilesView(props: FilesViewProps) {
           onCancel={() => setShowCompression(false)}
         />
       )}
+
+      {/* GHOST WARNING MODAL */}
+      {showGhostWarning && pendingLockTargets && (
+        <div className="modal-overlay" style={{ zIndex: 100005 }}>
+          <div className="auth-card">
+            <div
+              className="modal-header"
+              style={{ borderBottomColor: "var(--warning)" }}
+            >
+              <AlertTriangle size={24} color="var(--warning)" />
+              <h2 style={{ color: "var(--warning)" }}>
+                USB Encryption Warning
+              </h2>
+            </div>
+            <div className="modal-body">
+              <p
+                style={{
+                  color: "var(--text-main)",
+                  fontSize: "0.95rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                You are about to encrypt a file directly on a USB drive.
+              </p>
+              <p
+                style={{
+                  color: "var(--text-dim)",
+                  fontSize: "0.85rem",
+                  lineHeight: 1.5,
+                  background: "rgba(245, 158, 11, 0.1)",
+                  padding: 15,
+                  borderRadius: 8,
+                }}
+              >
+                <strong>Hardware Risk:</strong> USB Flash memory uses
+                "wear-leveling". When QRE deletes the original unencrypted file,
+                the USB hardware might leave a hidden ghost copy of the
+                plaintext intact.
+                <br />
+                <br />
+                <strong>Best Practice:</strong> Encrypt the file on your PC
+                first, then copy the locked <code>.qre</code> file to the USB.
+              </p>
+              <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+                <button
+                  className="secondary-btn"
+                  style={{ flex: 1 }}
+                  onClick={() => {
+                    setShowGhostWarning(false);
+                    setPendingLockTargets(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="auth-btn"
+                  style={{
+                    flex: 1,
+                    background: "var(--warning)",
+                    color: "#000",
+                  }}
+                  onClick={() => {
+                    setShowGhostWarning(false);
+                    executeLock(pendingLockTargets);
+                  }}
+                >
+                  I Understand, Proceed
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EXTRACT LOCATION MODAL */}
+      {showExtractModal && pendingUnlockTargets && (
+        <div className="modal-overlay" style={{ zIndex: 100005 }}>
+          <div className="auth-card" style={{ width: 400 }}>
+            <div className="modal-header">
+              <FolderOpen size={24} color="var(--accent)" />
+              <h2>Extract Files</h2>
+              <div style={{ flex: 1 }}></div>
+              <X
+                size={20}
+                style={{ cursor: "pointer" }}
+                onClick={() => {
+                  setShowExtractModal(false);
+                  setPendingUnlockTargets(null);
+                }}
+              />
+            </div>
+            <div className="modal-body">
+              <p
+                style={{
+                  color: "var(--text-dim)",
+                  fontSize: "0.9rem",
+                  marginBottom: 20,
+                }}
+              >
+                Select where to save the decrypted files. Saving them back to
+                the USB is not recommended.
+              </p>
+
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <ExtractOption
+                  label="Downloads"
+                  onClick={async () => executeExtract(await downloadDir())}
+                />
+                <ExtractOption
+                  label="Desktop"
+                  onClick={async () => executeExtract(await desktopDir())}
+                />
+                <ExtractOption
+                  label="Documents"
+                  onClick={async () => executeExtract(await documentDir())}
+                />
+                <div
+                  style={{
+                    height: 1,
+                    background: "var(--border)",
+                    margin: "5px 0",
+                  }}
+                ></div>
+                <ExtractOption
+                  label="Extract Here (USB)"
+                  color="var(--warning)"
+                  onClick={() => executeExtract(undefined)}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showEntropyModal && (
         <EntropyModal
           onComplete={handleEntropyComplete}
@@ -378,6 +638,7 @@ export function FilesView(props: FilesViewProps) {
           }}
         />
       )}
+
       {crypto.errorMsg && (
         <ErrorModal
           message={crypto.errorMsg}
@@ -385,7 +646,6 @@ export function FilesView(props: FilesViewProps) {
         />
       )}
 
-      {/* ACCESS DENIED MODAL */}
       {fs.accessDenied && (
         <div className="modal-overlay" style={{ zIndex: 99999 }}>
           <div
@@ -445,5 +705,32 @@ export function FilesView(props: FilesViewProps) {
         />
       )}
     </div>
+  );
+}
+
+function ExtractOption({ label, onClick, color }: any) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%",
+        padding: "12px 15px",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--bg-color)",
+        color: color || "var(--text-main)",
+        fontSize: "0.95rem",
+        fontWeight: "bold",
+        textAlign: "left",
+        cursor: "pointer",
+        transition: "background 0.2s",
+      }}
+      onMouseOver={(e) =>
+        (e.currentTarget.style.background = "var(--highlight)")
+      }
+      onMouseOut={(e) => (e.currentTarget.style.background = "var(--bg-color)")}
+    >
+      {label}
+    </button>
   );
 }

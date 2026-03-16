@@ -33,6 +33,7 @@ const VALIDATION_MAGIC: &[u8] = b"QRE_VALID"; // Quick password verification str
 /// The unencrypted V5 file header. This sits at the very beginning of the `.qre` file.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StreamHeader {
+    pub vault_id: Option<String>,
     pub validation_nonce: Vec<u8>,
     pub encrypted_validation_tag: Vec<u8>, // Encrypted version of VALIDATION_MAGIC
     pub key_wrapping_nonce: Vec<u8>,
@@ -105,7 +106,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 pub fn encrypt_file_stream(
     input_path: &str,
     output_path: &str,
-    master_key: &MasterKey, // <--- Now explicit reference
+    master_key: &MasterKey,
+    vault_id: &str, // <--- NEW PARAMETER
     keyfile_bytes: Option<&[u8]>,
     entropy_seed: Option<[u8; 32]>,
     compression_level: i32,
@@ -202,6 +204,7 @@ pub fn encrypt_file_stream(
     rng.fill_bytes(&mut base_nonce);
 
     let header = StreamHeader {
+        vault_id: Some(vault_id.to_string()),
         validation_nonce: val_nonce.to_vec(),
         encrypted_validation_tag: encrypted_validation,
         key_wrapping_nonce: key_wrap_nonce.to_vec(),

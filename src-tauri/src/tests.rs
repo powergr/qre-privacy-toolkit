@@ -100,6 +100,7 @@ mod tests {
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
             &mk,
+            "local", // <--- ADDED VAULT ID
             None,
             None,
             1,
@@ -149,8 +150,9 @@ mod tests {
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
             &mk,
+            "local", // <--- ADDED VAULT ID
             Some(keyfile_data),
-            Some(entropy_seed),
+            Some(entropy_seed), // <--- REMOVED REFERENCE '&'
             3,
             progress_cb,
         )
@@ -195,6 +197,7 @@ mod tests {
             input_path.to_str().unwrap(),
             encrypted_path.to_str().unwrap(),
             &correct_mk,
+            "local", // <--- ADDED VAULT ID
             None,
             None,
             1,
@@ -221,7 +224,6 @@ mod tests {
 
         let _ = fs::remove_dir_all(test_dir);
     }
-
     // =========================================================================
     // SECTION 2 — V4 IN-MEMORY ENGINE (original tests, unchanged)
     // =========================================================================
@@ -698,8 +700,17 @@ mod tests {
         let out_dir_str = out_dir.to_str().unwrap().to_owned();
         let mk = mk(40);
 
-        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input,
+            &encrypted,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         // Remove the last 64 KB to simulate a truncation attack
         let mut bytes = fs::read(&encrypted).unwrap();
@@ -735,8 +746,17 @@ mod tests {
         let out_dir = dir.to_str().unwrap().to_owned();
         let mk = mk(41);
 
-        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input,
+            &encrypted,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         // Flip a byte in the second half of the file (inside the chunk body, past the header)
         let mut bytes = fs::read(&encrypted).unwrap();
@@ -764,13 +784,31 @@ mod tests {
 
         let input_a = write_file(&dir, "a.txt", content);
         let enc_a = dir.join("a.txt.qre").to_str().unwrap().to_owned();
-        crypto_stream::encrypt_file_stream(&input_a, &enc_a, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input_a,
+            &enc_a,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         let input_b = write_file(&dir, "b.txt", content);
         let enc_b = dir.join("b.txt.qre").to_str().unwrap().to_owned();
-        crypto_stream::encrypt_file_stream(&input_b, &enc_b, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input_b,
+            &enc_b,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         assert_ne!(
             fs::read(&enc_a).unwrap(),
@@ -799,8 +837,17 @@ mod tests {
         let out_dir_str = out_dir.to_str().unwrap().to_owned();
         let mk = mk(43);
 
-        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input,
+            &encrypted,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         let out_name =
             crypto_stream::decrypt_file_stream(&encrypted, &out_dir_str, &mk, None, |_, _| {})
@@ -829,6 +876,7 @@ mod tests {
             &input_a,
             &enc_a,
             &mk,
+            "local",
             None,
             Some(zero_seed),
             3,
@@ -842,6 +890,7 @@ mod tests {
             &input_b,
             &enc_b,
             &mk,
+            "local",
             None,
             Some(zero_seed),
             3,
@@ -867,8 +916,17 @@ mod tests {
         let encrypted = dir.join("v.txt.qre").to_str().unwrap().to_owned();
         let mk = mk(45);
 
-        crypto_stream::encrypt_file_stream(&input, &encrypted, &mk, None, None, 3, |_, _| {})
-            .unwrap();
+        crypto_stream::encrypt_file_stream(
+            &input,
+            &encrypted,
+            &mk,
+            "local",
+            None,
+            None,
+            3,
+            |_, _| {},
+        )
+        .unwrap();
 
         let bytes = fs::read(&encrypted).unwrap();
         assert!(bytes.len() >= 4);
@@ -877,7 +935,6 @@ mod tests {
 
         let _ = fs::remove_dir_all(dir);
     }
-
     // ── Path Security tests call pub(crate) helpers in commands/files.rs ────────
 
     use crate::commands::files::{
@@ -1631,9 +1688,14 @@ fn test_portable_full_init_unlock_lock_cycle() {
     );
 
     // ── UNLOCK ───────────────────────────────────────────────────────────────
-    let returned_id =
-        unlock_vault_from_drive(drive.to_str().unwrap(), "PortablePass99!", &vaults, &mounts)
-            .expect("unlock must succeed with correct password");
+    let returned_id = unlock_vault_from_drive(
+        None,
+        drive.to_str().unwrap(),
+        "PortablePass99!",
+        &vaults,
+        &mounts,
+    )
+    .expect("unlock must succeed with correct password");
 
     assert_eq!(
         returned_id, vault_id,
@@ -1690,8 +1752,13 @@ fn test_portable_unlock_wrong_password_fails() {
     )
     .unwrap();
 
-    let result =
-        unlock_vault_from_drive(drive.to_str().unwrap(), "WrongPassword!!", &vaults, &mounts);
+    let result = unlock_vault_from_drive(
+        None,
+        drive.to_str().unwrap(),
+        "WrongPassword!!",
+        &vaults,
+        &mounts,
+    );
 
     assert!(result.is_err(), "wrong password must return an error");
     assert!(
@@ -1722,7 +1789,13 @@ fn test_portable_unlock_missing_vault_fails() {
     let vaults: Arc<Mutex<HashMap<VaultId, _>>> = Arc::new(Mutex::new(HashMap::new()));
     let mounts: Arc<Mutex<HashMap<String, VaultId>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    let result = unlock_vault_from_drive(drive.to_str().unwrap(), "AnyPassword!", &vaults, &mounts);
+    let result = unlock_vault_from_drive(
+        None,
+        drive.to_str().unwrap(),
+        "AnyPassword!",
+        &vaults,
+        &mounts,
+    );
 
     assert!(result.is_err(), "unlock on unformatted drive must fail");
     assert!(
@@ -1790,8 +1863,22 @@ fn test_portable_two_vaults_coexist_and_lock_independently() {
     )
     .unwrap();
 
-    unlock_vault_from_drive(drive_a.to_str().unwrap(), "PassA_99!", &vaults, &mounts).unwrap();
-    unlock_vault_from_drive(drive_b.to_str().unwrap(), "PassB_99!", &vaults, &mounts).unwrap();
+    unlock_vault_from_drive(
+        None,
+        drive_a.to_str().unwrap(),
+        "PassA_99!",
+        &vaults,
+        &mounts,
+    )
+    .unwrap();
+    unlock_vault_from_drive(
+        None,
+        drive_b.to_str().unwrap(),
+        "PassB_99!",
+        &vaults,
+        &mounts,
+    )
+    .unwrap();
 
     // Both must be in RAM simultaneously
     {
@@ -1855,7 +1942,14 @@ fn test_portable_ejection_watcher_zeroizes_key() {
     )
     .unwrap();
 
-    unlock_vault_from_drive(drive.to_str().unwrap(), "EjectionTest99!", &vaults, &mounts).unwrap();
+    unlock_vault_from_drive(
+        None,
+        drive.to_str().unwrap(),
+        "EjectionTest99!",
+        &vaults,
+        &mounts,
+    )
+    .unwrap();
     assert!(
         vaults.lock().unwrap().contains_key(&vault_id),
         "vault must be unlocked before simulating ejection"

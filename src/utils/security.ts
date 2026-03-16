@@ -12,7 +12,7 @@ export function generateBrowserEntropy(): number[] {
 export const getPasswordStrength = (password: string) => {
   if (!password) return { score: 0, feedback: "Enter a password" };
 
-  // 1. PASSPHRASE DETECTION (Fix for the "Yellow Bar" issue)
+  // 1. PASSPHRASE DETECTION
   // If it's very long (>20 chars) and uses separators (- or space), it's a strong passphrase.
   if (
     password.length > 20 &&
@@ -21,7 +21,19 @@ export const getPasswordStrength = (password: string) => {
     return { score: 4, feedback: "Excellent Passphrase" };
   }
 
-  // 2. STANDARD SCORING
+  // 2. IMMEDIATE REJECTION FOR SHORT PASSWORDS
+  // A password under 8 characters is mathematically weak against modern cracking,
+  // regardless of how many symbols it contains.
+  if (password.length < 8) {
+    return {
+      score: 0,
+      feedback: "Very Weak (Too short)",
+      label: "Very Weak",
+      color: "#dc2626",
+    };
+  }
+
+  // 3. STANDARD SCORING
   let score = 0;
 
   // Length Bonus
@@ -44,18 +56,20 @@ export const getPasswordStrength = (password: string) => {
   // Cap score at 4
   if (score > 4) score = 4;
 
-  // Feedback Messages
+  // Feedback Messages mapping
   const messages = [
-    "Very Weak (Too short)", // 0
-    "Weak (Add numbers/symbols)", // 1
-    "Okay (Reasonable)", // 2
-    "Good (Hard to crack)", // 3
-    "Strong (Excellent)", // 4
+    { feedback: "Very Weak (Too short)", label: "Very Weak", color: "#dc2626" }, // 0
+    { feedback: "Weak (Add numbers/symbols)", label: "Weak", color: "#ea580c" }, // 1
+    { feedback: "Okay (Reasonable)", label: "Okay", color: "#eab308" }, // 2
+    { feedback: "Good (Hard to crack)", label: "Good", color: "#84cc16" }, // 3
+    { feedback: "Strong (Excellent)", label: "Strong", color: "#15803d" }, // 4
   ];
 
   return {
     score: score,
-    feedback: messages[score],
+    feedback: messages[score].feedback,
+    label: messages[score].label,
+    color: messages[score].color,
   };
 };
 

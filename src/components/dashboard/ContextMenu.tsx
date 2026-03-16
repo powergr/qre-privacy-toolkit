@@ -6,6 +6,9 @@ import {
   Trash2,
   RefreshCw,
   Share2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
 } from "lucide-react";
 
 interface ContextMenuProps {
@@ -15,6 +18,7 @@ interface ContextMenuProps {
   isBackground: boolean;
   onClose: () => void;
   onAction: (action: string) => void;
+  canPaste?: boolean;
 }
 
 export function ContextMenu({
@@ -24,12 +28,11 @@ export function ContextMenu({
   isBackground,
   onClose,
   onAction,
+  canPaste,
 }: ContextMenuProps) {
   const isQre = targetPath.endsWith(".qre");
 
   // --- SMART POSITIONING ---
-  // We must explicitly initialize top/left/right/bottom to "auto"
-  // to override the default .dropdown-menu CSS (which has top: 100%)
   const style: React.CSSProperties = {
     position: "fixed",
     width: 200,
@@ -41,21 +44,15 @@ export function ContextMenu({
     right: "auto",
   };
 
-  // 1. Horizontal: If click is near right edge (within 200px), grow to the Left
   if (x + 200 > window.innerWidth) {
-    // Anchor to the right side
     style.right = window.innerWidth - x;
   } else {
-    // Anchor to the left side
     style.left = x;
   }
 
-  // 2. Vertical: If click is in bottom half, grow Upwards
   if (y > window.innerHeight / 2) {
-    // Anchor to the bottom
     style.bottom = window.innerHeight - y;
   } else {
-    // Anchor to the top
     style.top = y;
   }
 
@@ -75,40 +72,62 @@ export function ContextMenu({
         style={style}
         onClick={(e) => e.stopPropagation()}
       >
-        {!isBackground && (
+        {isBackground ? (
           <>
-            <div className="dropdown-item" onClick={() => onAction("lock")}>
-              <Lock size={16} color="var(--btn-success)" /> Lock
+            <div className="dropdown-item" onClick={() => onAction("refresh")}>
+              <RefreshCw size={16} /> Refresh
             </div>
-            {isQre && (
+            <div
+              className="dropdown-item"
+              onClick={() => onAction("new_folder")}
+            >
+              <FolderPlus size={16} /> New Folder
+            </div>
+            {canPaste && (
+              <>
+                <div className="dropdown-divider"></div>
+                <div
+                  className="dropdown-item"
+                  onClick={() => onAction("paste")}
+                >
+                  <ClipboardPaste size={16} color="var(--accent)" /> Paste Here
+                </div>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            {isQre ? (
               <div className="dropdown-item" onClick={() => onAction("unlock")}>
                 <Unlock size={16} color="var(--btn-danger)" /> Unlock
               </div>
+            ) : (
+              <div className="dropdown-item" onClick={() => onAction("lock")}>
+                <Lock size={16} color="var(--btn-success)" /> Lock
+              </div>
             )}
+            <div className="dropdown-divider"></div>
+            <div className="dropdown-item" onClick={() => onAction("cut")}>
+              <Scissors size={16} /> Cut
+            </div>
+            <div className="dropdown-item" onClick={() => onAction("copy")}>
+              <Copy size={16} /> Copy
+            </div>
             <div className="dropdown-divider"></div>
             <div className="dropdown-item" onClick={() => onAction("rename")}>
               <Edit size={16} /> Rename
             </div>
+            <div className="dropdown-item" onClick={() => onAction("share")}>
+              <Share2 size={16} /> Reveal in Explorer
+            </div>
+            <div className="dropdown-divider"></div>
             <div
               className="dropdown-item danger"
               onClick={() => onAction("delete")}
             >
               <Trash2 size={16} /> Delete
             </div>
-            <div className="dropdown-divider"></div>
           </>
-        )}
-
-        <div className="dropdown-item" onClick={() => onAction("new_folder")}>
-          <FolderPlus size={16} /> New Folder
-        </div>
-        <div className="dropdown-item" onClick={() => onAction("refresh")}>
-          <RefreshCw size={16} /> Refresh
-        </div>
-        {!isBackground && (
-          <div className="dropdown-item" onClick={() => onAction("share")}>
-            <Share2 size={16} /> Reveal in Explorer
-          </div>
         )}
       </div>
     </>

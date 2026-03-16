@@ -8,20 +8,17 @@ use crate::utils;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use tauri::AppHandle;
 
-// Platform-specific imports for desktop platforms (Windows, macOS, Linux)
 #[cfg(not(target_os = "android"))]
 use std::process::Command;
 
 #[cfg(not(target_os = "android"))]
 use sysinfo::Disks;
 
-/// Standardized result type for Tauri commands in this module, mapping errors to Strings.
 pub type CommandResult<T> = Result<T, String>;
 
-/// Represents the outcome of processing a single file during a batch operation (e.g., lock, unlock, delete).
 #[derive(serde::Serialize)]
 pub struct BatchItemResult {
     pub name: String,
@@ -29,11 +26,6 @@ pub struct BatchItemResult {
     pub message: String,
 }
 
-// --- HELPER: Smart Compression Detection ---
-
-/// Checks if a file is likely already compressed based on its extension.
-/// This prevents wasting CPU cycles trying to compress formats that are already highly compressed
-/// (like archives, images, and videos) before encrypting them.
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn is_already_compressed(filename: &str) -> bool {
     let ext = Path::new(filename)
@@ -68,38 +60,20 @@ pub(crate) fn is_already_compressed(filename: &str) -> bool {
     )
 }
 
-// --- HELPER: Path Security Checks ---
-
-/// Checks if a path is a critical OS directory.
-/// Acts as a safety net to prevent users (or malicious payloads) from accidentally
-/// encrypting, deleting, or shredding files essential to the operating system.
 pub(crate) fn is_system_critical(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
 
-    // Windows Critical Paths
     if cfg!(target_os = "windows") {
         if path_str.starts_with("c:\\windows")
             || path_str.starts_with("c:\\program files")
             || path_str.starts_with("c:\\program files (x86)")
             || path_str == "c:\\"
         {
-            // Block root C: lock to avoid crippling the drive
             return true;
         }
-    }
-    // Linux/macOS Critical Paths
-    else {
+    } else {
         let critical = [
-            "/bin",
-            "/sbin",
-            "/usr/bin",
-            "/usr/sbin",
-            "/etc",
-            "/var",
-            "/boot",
-            "/proc",
-            "/sys",
-            "/dev",
+            "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc", "/var", "/boot", "/proc", "/sys", "/dev",
         ];
         if critical.iter().any(|c| path_str.starts_with(c)) || path_str == "/" {
             return true;
@@ -108,7 +82,6 @@ pub(crate) fn is_system_critical(path: &Path) -> bool {
     false
 }
 
-/// Comprehensive path security check: blocks path traversal ('..') and system critical paths.
 pub(crate) fn reject_critical_path(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
@@ -122,7 +95,6 @@ pub(crate) fn reject_critical_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Basic path traversal check: ensures operations don't escape their intended directory using '..'.
 pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err("Path traversal not allowed: path must not contain '..'".to_string());
@@ -130,29 +102,8 @@ pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Given a file path, returns the VaultId whose portable drive mount contains it,
-/// or "local" if no portable mount matches. Used by unlock_file to route decryption
-/// to the correct key when the user has a portable vault mounted.
-///
-/// NOTE: This is a best-effort path match. If a .qre file encrypted with the
-/// local vault has been manually copied to a USB drive, this will incorrectly
-/// try the portable key first. Future improvement: embed vault UUID in the .qre header.
-pub(crate) fn get_vault_id_for_path(
-    path: &Path,
-    mounts: &std::collections::HashMap<String, crate::state::VaultId>,
-) -> crate::state::VaultId {
-    let path_str = path.to_string_lossy().to_lowercase();
-    for (mount, vault_id) in mounts {
-        if path_str.starts_with(&mount.to_lowercase()) {
-            return vault_id.clone();
-        }
-    }
-    "local".to_string()
-}
-
 // --- CRYPTO LOGIC ---
 
-/// Tauri command to encrypt a batch of files/directories.
 #[tauri::command]
 pub async fn lock_file(
     app: AppHandle,
@@ -163,7 +114,6 @@ pub async fn lock_file(
     extra_entropy: Option<Vec<u8>>,
     compression_mode: Option<String>,
 ) -> CommandResult<Vec<BatchItemResult>> {
-    // Process the keyfile hash once up front to save time.
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -175,63 +125,33 @@ pub async fn lock_file(
     let raw_entropy: Option<Vec<u8>> = extra_entropy;
     let mode_str = compression_mode.unwrap_or("auto".to_string());
 
-    // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
     let vaults_arc = state.vaults.clone();
-    // Clone portable_mounts for ghost-file detection inside the thread.
     let portable_mounts_arc = state.portable_mounts.clone();
 
-    // Move the heavy lifting into a background blocking thread to prevent freezing the Tauri UI.
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
         for (file_index, file_path) in file_paths.into_iter().enumerate() {
             let path = Path::new(&file_path);
 
-            // SECURITY CHECK: Ensure we aren't locking OS files.
             if let Err(e) = reject_critical_path(path) {
-                results.push(BatchItemResult {
-                    name: path.to_string_lossy().to_string(),
-                    success: false,
-                    message: e,
-                });
+                results.push(BatchItemResult { name: path.to_string_lossy().to_string(), success: false, message: e });
                 continue;
             }
 
-            // SECURITY GUARD — Ghost-file / Flash wear-leveling (S-Ghost):
-            // USB NAND flash controllers do NOT overwrite sectors on delete — they
-            // mark the old sector as free while the plaintext bytes remain on the
-            // physical chip. Encrypting a file that is already on a USB drive and
-            // then deleting the original leaves the plaintext forensically recoverable.
-            //
-            // Enforcement: reject any encrypt operation whose SOURCE file lives on a
-            // registered portable drive mount point. The correct workflow is:
-            //   1. Copy the file to your PC.
-            //   2. Encrypt it here (on the local disk).
-            //   3. Move the resulting .qre file to the USB drive.
             {
-                let mounts = portable_mounts_arc
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let mounts = portable_mounts_arc.lock().unwrap_or_else(|e| e.into_inner());
                 let path_lower = path.to_string_lossy().to_lowercase();
-                if mounts
-                    .keys()
-                    .any(|m| path_lower.starts_with(&m.to_lowercase()))
-                {
+                if mounts.keys().any(|m| path_lower.starts_with(&m.to_lowercase())) {
                     results.push(BatchItemResult {
                         name: path.to_string_lossy().to_string(),
                         success: false,
-                        message: "Ghost-file protection: files on a portable USB drive cannot be \
-                             encrypted directly. Copy the file to your PC first, encrypt it \
-                             there, then move the .qre file to the USB drive."
-                            .to_string(),
+                        message: "Ghost-file protection: files on a portable USB drive cannot be encrypted directly. Copy the file to your PC first, encrypt it there, then move the .qre file to the USB drive.".to_string(),
                     });
                     continue;
                 }
             }
 
-            // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
-            // Because we don't have the full `state` here, we simulate `get_vault_id_for_path`
-            // Phase 1: Hardcoded to "local"
             let vault_id = "local".to_string();
 
             let master_key = {
@@ -246,65 +166,40 @@ pub async fn lock_file(
                 match guard.get(&vault_id) {
                     Some(mk) => mk.clone(),
                     None => {
-                        results.push(BatchItemResult {
-                            name: path.to_string_lossy().to_string(),
-                            success: false,
-                            message: format!("Vault '{}' is locked.", vault_id),
-                        });
+                        results.push(BatchItemResult { name: path.to_string_lossy().to_string(), success: false, message: format!("Vault '{}' is locked.", vault_id) });
                         continue;
                     }
                 }
             };
 
-            let filename = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
+            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
 
-            // Determine Zstd compression level.
             let level = match mode_str.as_str() {
                 "store" => 0,
                 "extreme" => 19,
-                _ => {
-                    if is_already_compressed(&filename) {
-                        1
-                    } else {
-                        3
-                    }
-                }
+                _ => { if is_already_compressed(&filename) { 1 } else { 3 } }
             };
 
-            // If the target is a directory, zip it into a temporary archive first.
             let (input_path_str, is_temp) = if path.is_dir() {
                 let parent = path.parent().unwrap_or(Path::new("."));
                 let temp_zip_name = format!("{}.zip", filename);
                 let temp_zip_path = utils::get_unique_path(&parent.join(&temp_zip_name));
 
                 utils::emit_progress(&app, &format!("Zipping Folder: {}", filename), 10);
-
                 if let Err(e) = utils::zip_directory_to_file(path, &temp_zip_path) {
-                    results.push(BatchItemResult {
-                        name: filename.to_string(),
-                        success: false,
-                        message: format!("Zip failed: {}", e),
-                    });
+                    results.push(BatchItemResult { name: filename.to_string(), success: false, message: format!("Zip failed: {}", e) });
                     continue;
                 }
-
                 (temp_zip_path.to_string_lossy().to_string(), true)
             } else {
                 (file_path.clone(), false)
             };
 
-            // Define output file path (*.qre)
             let raw_output = format!("{}.qre", file_path);
             let final_path = utils::get_unique_path(Path::new(&raw_output));
             let final_path_str = final_path.to_string_lossy().to_string();
 
-            // Mix extra entropy with the file index to create a unique seed per file.
             let entropy_seed: Option<[u8; 32]> = raw_entropy.as_ref().map(|bytes| {
                 let mut hasher = Sha256::new();
                 hasher.update(bytes);
@@ -315,54 +210,25 @@ pub async fn lock_file(
             let app_handle = app.clone();
             let f_name_clone = filename.to_string();
 
-            // Progress callback for the frontend UI
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
                     let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
-                    let display_pct = if is_temp {
-                        20u8.saturating_add((pct as f64 * 0.8) as u8).min(100)
-                    } else {
-                        pct
-                    };
-                    utils::emit_progress(
-                        &app_handle,
-                        &format!("Encrypting: {}", f_name_clone),
-                        display_pct,
-                    );
+                    let display_pct = if is_temp { 20u8.saturating_add((pct as f64 * 0.8) as u8).min(100) } else { pct };
+                    utils::emit_progress(&app_handle, &format!("Encrypting: {}", f_name_clone), display_pct);
                 }
             };
 
-            // Execute Stream Encryption
             let encryption_result = crypto_stream::encrypt_file_stream(
-                &input_path_str,
-                &final_path_str,
-                &master_key,
-                keyfile_hash.as_deref(),
-                entropy_seed,
-                level,
-                progress_cb,
+                &input_path_str, &final_path_str, &master_key, &vault_id, keyfile_hash.as_deref(), entropy_seed, level, progress_cb,
             );
 
-            // Cleanup the temporary zip file if we created one
-            if is_temp {
-                let _ = fs::remove_file(&input_path_str);
-            }
+            if is_temp { let _ = fs::remove_file(&input_path_str); }
 
             match encryption_result {
-                Ok(_) => {
-                    results.push(BatchItemResult {
-                        name: filename.to_string(),
-                        success: true,
-                        message: "Locked".into(),
-                    });
-                }
+                Ok(_) => results.push(BatchItemResult { name: filename.to_string(), success: true, message: "Locked".into() }),
                 Err(e) => {
                     let _ = fs::remove_file(&final_path);
-                    results.push(BatchItemResult {
-                        name: filename.to_string(),
-                        success: false,
-                        message: e.to_string(),
-                    });
+                    results.push(BatchItemResult { name: filename.to_string(), success: false, message: e.to_string() });
                 }
             }
         }
@@ -372,7 +238,6 @@ pub async fn lock_file(
     .map_err(|e| e.to_string())?
 }
 
-/// Tauri command to decrypt a batch of files.
 #[tauri::command]
 pub async fn unlock_file(
     app: AppHandle,
@@ -380,8 +245,8 @@ pub async fn unlock_file(
     file_paths: Vec<String>,
     keyfile_path: Option<String>,
     keyfile_bytes: Option<Vec<u8>>,
+    output_dir: Option<String>,
 ) -> CommandResult<Vec<BatchItemResult>> {
-    // Process the keyfile hash
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
@@ -390,133 +255,88 @@ pub async fn unlock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
-    // FIX S-04 / LIFETIME: Clone the Arc containing the HashMap so we can move it into the thread
     let vaults_arc = state.vaults.clone();
-    // Clone portable_mounts for vault routing (decrypt with the key that matches
-    // the drive the .qre file lives on).
-    let portable_mounts_arc = state.portable_mounts.clone();
 
-    // Move the heavy lifting into a background thread
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = Vec::new();
 
         for file_path in file_paths {
             let path = Path::new(&file_path);
-            let filename = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            // --- KEY ROUTING (MULTI-VAULT SUPPORT) ---
-            // Route to the portable vault key if the .qre file lives on a
-            // registered USB mount, otherwise fall back to "local".
-            let vault_id = {
-                let mounts = portable_mounts_arc
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                get_vault_id_for_path(path, &mounts)
-            };
-
-            let master_key = {
-                let guard = match vaults_arc.lock() {
-                    Ok(g) => g,
-                    Err(poisoned) => {
-                        let mut p = poisoned.into_inner();
-                        p.clear();
-                        return Err("Session state corrupted.".to_string());
-                    }
-                };
-                match guard.get(&vault_id) {
-                    Some(mk) => mk.clone(),
-                    None => {
-                        results.push(BatchItemResult {
-                            name: filename.clone(),
-                            success: false,
-                            message: format!("Vault '{}' is locked.", vault_id),
-                        });
-                        continue;
-                    }
-                }
-            };
+            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
             utils::emit_progress(&app, &format!("Checking: {}", filename), 5);
 
             let mut file = match fs::File::open(path) {
                 Ok(f) => f,
-                Err(e) => {
-                    results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e.to_string(),
-                    });
-                    continue;
-                }
+                Err(e) => { results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }); continue; }
             };
 
-            // Read the file's Magic Version Bytes to figure out how to decrypt it.
             let mut ver_buf = [0u8; 4];
             if file.read_exact(&mut ver_buf).is_err() {
-                results.push(BatchItemResult {
-                    name: filename,
-                    success: false,
-                    message: "Invalid file".into(),
-                });
+                results.push(BatchItemResult { name: filename, success: false, message: "Invalid file".into() });
                 continue;
             }
             let version = u32::from_le_bytes(ver_buf);
 
+            let target_dir_path = match &output_dir {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            };
+            let target_dir_str = target_dir_path.to_string_lossy().to_string();
+
             if version == 4 {
+                let master_key = {
+                    let guard = vaults_arc.lock().unwrap();
+                    match guard.get("local") {
+                        Some(mk) => mk.clone(),
+                        None => {
+                            results.push(BatchItemResult { name: filename.clone(), success: false, message: "Local Vault is locked.".to_string() });
+                            continue;
+                        }
+                    }
+                };
+
                 match crypto::EncryptedFileContainer::load(&file_path) {
                     Ok(container) => {
                         utils::emit_progress(&app, &format!("Decrypting: {}", filename), 50);
-                        match crypto::decrypt_file_with_master_key(
-                            &master_key,
-                            keyfile_hash.as_deref(),
-                            &container,
-                        ) {
+                        match crypto::decrypt_file_with_master_key(&master_key, keyfile_hash.as_deref(), &container) {
                             Ok(payload) => {
-                                utils::emit_progress(
-                                    &app,
-                                    &format!("Writing: {}", payload.filename),
-                                    80,
-                                );
-                                let parent =
-                                    Path::new(&file_path).parent().unwrap_or(Path::new("."));
-                                let final_path =
-                                    utils::get_unique_path(&parent.join(&payload.filename));
+                                utils::emit_progress(&app, &format!("Writing: {}", payload.filename), 80);
+                                let final_path = utils::get_unique_path(&target_dir_path.join(&payload.filename));
 
                                 if let Err(e) = fs::write(&final_path, &payload.content) {
                                     let _ = fs::remove_file(&final_path);
-                                    results.push(BatchItemResult {
-                                        name: filename,
-                                        success: false,
-                                        message: e.to_string(),
-                                    });
+                                    results.push(BatchItemResult { name: filename, success: false, message: e.to_string() });
                                 } else {
-                                    results.push(BatchItemResult {
-                                        name: filename,
-                                        success: true,
-                                        message: "Unlocked".into(),
-                                    });
+                                    results.push(BatchItemResult { name: filename, success: true, message: "Unlocked".into() });
                                 }
                             }
-                            Err(e) => results.push(BatchItemResult {
-                                name: filename,
-                                success: false,
-                                message: e.to_string(),
-                            }),
+                            Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                         }
                     }
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e.to_string(),
-                    }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
             } else if version == 5 {
-                let parent = Path::new(&file_path).parent().unwrap_or(Path::new("."));
-                let output_dir_str = parent.to_string_lossy().to_string();
+                let header: Result<crypto_stream::StreamHeader, _> = bincode::deserialize_from(&mut file);
+                let vault_id = match header {
+                    Ok(h) => h.vault_id.unwrap_or_else(|| "local".to_string()),
+                    Err(_) => "local".to_string(), 
+                };
+
+                let master_key = {
+                    let guard = vaults_arc.lock().unwrap();
+                    match guard.get(&vault_id) {
+                        Some(mk) => mk.clone(),
+                        None => {
+                            results.push(BatchItemResult { 
+                                name: filename.clone(), 
+                                success: false, 
+                                message: if vault_id == "local" { "Local Vault is locked.".to_string() } else { "This file belongs to a Portable USB Vault. Please unlock the USB drive first.".to_string() }
+                            });
+                            continue;
+                        }
+                    }
+                };
 
                 let app_handle = app.clone();
                 let f_name = filename.clone();
@@ -528,30 +348,12 @@ pub async fn unlock_file(
                     }
                 };
 
-                match crypto_stream::decrypt_file_stream(
-                    &file_path,
-                    &output_dir_str,
-                    &master_key,
-                    keyfile_hash.as_deref(),
-                    progress_cb,
-                ) {
-                    Ok(out_name) => results.push(BatchItemResult {
-                        name: filename,
-                        success: true,
-                        message: format!("Unlocked: {}", out_name),
-                    }),
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e.to_string(),
-                    }),
+                match crypto_stream::decrypt_file_stream(&file_path, &target_dir_str, &master_key, keyfile_hash.as_deref(), progress_cb) {
+                    Ok(out_name) => results.push(BatchItemResult { name: filename, success: true, message: format!("Unlocked: {}", out_name) }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
             } else {
-                results.push(BatchItemResult {
-                    name: filename,
-                    success: false,
-                    message: format!("Unsupported Version: {}", version),
-                });
+                results.push(BatchItemResult { name: filename, success: false, message: format!("Unsupported Version: {}", version) });
             }
         }
         Ok(results)
@@ -562,7 +364,6 @@ pub async fn unlock_file(
 
 // --- FILE OPERATIONS ---
 
-/// Irreversibly deletes (or shreds on desktop) a batch of files/folders.
 #[tauri::command]
 pub async fn delete_items(
     app: AppHandle,
@@ -574,60 +375,29 @@ pub async fn delete_items(
         for path in paths {
             let p = Path::new(&path);
 
-            // SECURITY CHECK: Protect against deleting OS files
             if let Err(e) = reject_critical_path(p) {
-                results.push(BatchItemResult {
-                    name: p.to_string_lossy().to_string(),
-                    success: false,
-                    message: e,
-                });
+                results.push(BatchItemResult { name: p.to_string_lossy().to_string(), success: false, message: e });
                 continue;
             }
 
-            let filename = p
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-            // On Android, we do a standard hard deletion (shredding usually ineffective on Flash storage/Android limitations).
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
-                let res = if p.is_dir() {
-                    fs::remove_dir_all(p)
-                } else {
-                    fs::remove_file(p)
-                };
+                let res = if p.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) };
                 match res {
-                    Ok(_) => results.push(BatchItemResult {
-                        name: filename,
-                        success: true,
-                        message: "Deleted".into(),
-                    }),
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e.to_string(),
-                    }),
+                    Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Deleted".into() }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
             }
 
-            // On Desktop, trigger a recursive shred before deletion.
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Preparing to shred {}", filename), 0);
                 match utils::shred_recursive(&app, p) {
-                    Ok(_) => results.push(BatchItemResult {
-                        name: filename,
-                        success: true,
-                        message: "Deleted".into(),
-                    }),
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e,
-                    }),
+                    Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Deleted".into() }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e }),
                 }
             }
         }
@@ -637,7 +407,6 @@ pub async fn delete_items(
     .map_err(|e| e.to_string())?
 }
 
-/// Moves a batch of files to the system recycle bin / trash (desktop only).
 #[tauri::command]
 pub async fn trash_items(
     app: AppHandle,
@@ -649,60 +418,29 @@ pub async fn trash_items(
         for path in paths {
             let p = Path::new(&path);
 
-            // SECURITY CHECK
             if let Err(e) = reject_critical_path(p) {
-                results.push(BatchItemResult {
-                    name: p.to_string_lossy().to_string(),
-                    success: false,
-                    message: e,
-                });
+                results.push(BatchItemResult { name: p.to_string_lossy().to_string(), success: false, message: e });
                 continue;
             }
 
-            let filename = p
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+            let filename = p.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-            // Android lacks a unified "Trash" system accessible via standard API, fallback to standard delete
             #[cfg(target_os = "android")]
             {
                 utils::emit_progress(&app, &format!("Deleting {}", filename), 50);
-                let res = if p.is_dir() {
-                    fs::remove_dir_all(p)
-                } else {
-                    fs::remove_file(p)
-                };
+                let res = if p.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) };
                 match res {
-                    Ok(_) => results.push(BatchItemResult {
-                        name: filename,
-                        success: true,
-                        message: "Deleted (No Trash on Mobile)".into(),
-                    }),
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e.to_string(),
-                    }),
+                    Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Deleted (No Trash)".into() }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
             }
 
-            // Move to system trash using the trash crate (or similar utility)
             #[cfg(not(target_os = "android"))]
             {
                 utils::emit_progress(&app, &format!("Trashing {}", filename), 50);
                 match utils::move_to_trash(p) {
-                    Ok(_) => results.push(BatchItemResult {
-                        name: filename,
-                        success: true,
-                        message: "Moved to Trash".into(),
-                    }),
-                    Err(e) => results.push(BatchItemResult {
-                        name: filename,
-                        success: false,
-                        message: e,
-                    }),
+                    Ok(_) => results.push(BatchItemResult { name: filename, success: true, message: "Moved to Trash".into() }),
+                    Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e }),
                 }
             }
         }
@@ -712,26 +450,87 @@ pub async fn trash_items(
     .map_err(|e| e.to_string())?
 }
 
-/// Creates a new directory at the specified path (including parent directories).
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst.join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn paste_items(
+    app: AppHandle,
+    sources: Vec<String>,
+    dest_dir: String,
+    is_cut: bool,
+) -> CommandResult<Vec<BatchItemResult>> {
+    
+    // FIX: Clone dest_dir into a PathBuf so it can be moved into the thread
+    let dest_base = PathBuf::from(dest_dir);
+
+    // Initial sanity check before thread
+    reject_critical_path(&dest_base)?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut results = Vec::new();
+        
+        for src_str in sources {
+            let src = Path::new(&src_str);
+            
+            if let Err(e) = reject_critical_path(src) {
+                results.push(BatchItemResult { name: src.to_string_lossy().to_string(), success: false, message: e });
+                continue;
+            }
+            
+            let filename = src.file_name().unwrap_or_default();
+            let dest = utils::get_unique_path(&dest_base.join(filename));
+
+            utils::emit_progress(&app, &format!("Pasting: {}", filename.to_string_lossy()), 50);
+
+            if is_cut {
+                if fs::rename(src, &dest).is_ok() {
+                    results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Moved".into() });
+                    continue;
+                }
+            }
+
+            let res = if src.is_dir() {
+                copy_dir_recursive(src, &dest)
+            } else {
+                fs::copy(src, &dest).map(|_| ())
+            };
+
+            match res {
+                Ok(_) => {
+                    if is_cut {
+                        let _ = if src.is_dir() { fs::remove_dir_all(src) } else { fs::remove_file(src) };
+                    }
+                    results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Copied".into() });
+                }
+                Err(e) => results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: false, message: e.to_string() }),
+            }
+        }
+        Ok(results)
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn create_dir(path: String) -> CommandResult<()> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Renames a file or folder in place, ensuring the new name is valid.
 #[tauri::command]
 pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
-    // Validate the new name to prevent path traversal or moving files to unintended directories.
-    if new_name.is_empty()
-        || new_name == "."
-        || new_name == ".."
-        || new_name.contains('/')
-        || new_name.contains('\\')
-    {
-        return Err(
-            "Invalid name: must not be empty, '.', '..', or contain path separators".to_string(),
-        );
+    if new_name.is_empty() || new_name == "." || new_name == ".." || new_name.contains('/') || new_name.contains('\\') {
+        return Err("Invalid name".to_string());
     }
 
     let old_path = Path::new(&path);
@@ -741,7 +540,6 @@ pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
     Ok(())
 }
 
-/// Opens the system's native file explorer and selects the file.
 #[tauri::command]
 pub fn show_in_folder(path: String) -> CommandResult<()> {
     #[cfg(target_os = "android")]
@@ -751,28 +549,18 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
     }
     #[cfg(not(target_os = "android"))]
     {
-        // OS-specific commands to open the file explorer and select the item.
         #[cfg(target_os = "windows")]
-        Command::new("explorer")
-            .args(["/select,", &path])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("explorer").args(["/select,", &path]).spawn().map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "linux")]
         {
             let p = Path::new(&path);
             let parent = p.parent().unwrap_or(p);
-            Command::new("xdg-open")
-                .arg(parent) // xdg-open doesn't select files natively, opens the directory instead
-                .spawn()
-                .map_err(|e| e.to_string())?;
+            Command::new("xdg-open").arg(parent).spawn().map_err(|e| e.to_string())?;
         }
 
         #[cfg(target_os = "macos")]
-        Command::new("open")
-            .args(["-R", &path]) // The -R flag in macOS 'open' reveals the file in Finder
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("open").args(["-R", &path]).spawn().map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -780,14 +568,12 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
 
 // --- HELPER COMMANDS FOR IMPORT/EXPORT ---
 
-/// Reads the contents of a text file. Used mostly for importing configuration/keys.
 #[tauri::command]
 pub fn read_text_file_content(path: String) -> CommandResult<String> {
     reject_path_traversal(Path::new(&path))?;
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
-/// Writes string content to a text file. Used mostly for exporting configuration/keys.
 #[tauri::command]
 pub fn write_text_file_content(path: String, content: String) -> CommandResult<()> {
     reject_path_traversal(Path::new(&path))?;
@@ -796,37 +582,29 @@ pub fn write_text_file_content(path: String, content: String) -> CommandResult<(
 
 // --- SHREDDER COMMANDS ---
 
-/// Performs a dry run to calculate how many files/bytes will be shredded without actually altering data.
 #[tauri::command]
 pub async fn dry_run_shred(paths: Vec<String>) -> CommandResult<shredder::DryRunResult> {
     shredder::dry_run(paths).map_err(|e| e.to_string())
 }
 
-/// Securely overwrites (shreds) a batch of files/folders based on a specific algorithm (e.g., DOD 5220.22-M).
 #[tauri::command]
 pub async fn batch_shred_files(
     paths: Vec<String>,
     method: shredder::ShredMethod,
     app_handle: tauri::AppHandle,
 ) -> CommandResult<shredder::ShredResult> {
-    // SECURITY CHECK: Pre-verify all paths in the batch before starting the shred operation.
-    // We don't want to start shredding 3 valid files and accidentally shred C:\Windows on the 4th.
     for path in &paths {
         reject_critical_path(Path::new(path))?;
     }
-
     shredder::batch_shred(paths, method, &app_handle).map_err(|e| e.to_string())
 }
 
-/// Signals the active shredding thread to abort its operation early.
 #[tauri::command]
 pub async fn cancel_shred() -> CommandResult<()> {
     shredder::cancel_shred();
     Ok(())
 }
 
-/// Wipes unallocated (free) space on an HDD by filling it with zeros then cleaning up.
-/// Emits `wipe-progress` events to the frontend during the operation.
 #[tauri::command]
 pub async fn wipe_free_space(
     drive_path: String,
@@ -836,7 +614,7 @@ pub async fn wipe_free_space(
     {
         let _ = drive_path;
         let _ = app_handle;
-        Err("Free space wiping is not supported on Android due to flash storage wear-leveling constraints.".to_string())
+        Err("Free space wiping is not supported on Android.".to_string())
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -845,7 +623,6 @@ pub async fn wipe_free_space(
     }
 }
 
-/// Issues a TRIM command to an SSD, signalling which blocks the controller may erase.
 #[tauri::command]
 pub async fn trim_drive(drive_path: String) -> CommandResult<shredder::TrimResult> {
     #[cfg(target_os = "android")]
@@ -862,39 +639,38 @@ pub async fn trim_drive(drive_path: String) -> CommandResult<shredder::TrimResul
 
 // --- SYSTEM UTILS ---
 
-/// Retrieves the available mount points/drives on the system to populate a file explorer UI.
 #[tauri::command]
-pub fn get_drives() -> Vec<String> {
+pub fn get_drives(_app: AppHandle) -> Vec<String> {
+    let mut drives = Vec::new();
+    
     #[cfg(not(target_os = "android"))]
     {
-        // Query system disks dynamically (e.g. C:\, D:\ on Windows, / on Unix)
         let disks = Disks::new_with_refreshed_list();
-        disks
-            .list()
-            .iter()
-            .map(|disk| disk.mount_point().to_string_lossy().to_string())
-            .collect()
+        for disk in disks.list() {
+            // SECURITY: Do NOT call app.fs_scope().allow_directory() here.
+            // We only return the strings for the UI. The user cannot browse
+            // C:\ or D:\ unless those paths are specifically allowed in default.json.
+            // Only USB drives unlocked via portable.rs will inject into fs:scope.
+            drives.push(disk.mount_point().to_string_lossy().to_string());
+        }
     }
+    
     #[cfg(target_os = "android")]
     {
-        // Hardcode standard Android user storage location
-        vec!["/storage/emulated/0".to_string()]
+        drives.push("/storage/emulated/0".to_string());
     }
+    
+    drives
 }
 
-/// Grabs the file path passed via command-line arguments when the application was opened
-/// (e.g., "Open With..." from the OS context menu).
 #[tauri::command]
 pub fn get_startup_file() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         let path = args[1].clone();
-        // Ignore Tauri/Chromium CLI flags
         if !path.starts_with("--") {
             return Some(path);
         }
     }
     None
 }
-
-// --- END OF FILE files.rs ---

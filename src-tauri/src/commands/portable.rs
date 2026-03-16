@@ -7,10 +7,8 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
-use argon2::password_hash::rand_core::OsRng as Argon2OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -34,8 +32,6 @@ pub struct DriveInfo {
     pub free_space: u64,
     pub total_space: u64,
     pub is_qre_portable: bool,
-    /// UUID read from keychain.qre at scan time.
-    /// Shown in the unlock modal for out-of-band evil-maid verification (S-05).
     pub vault_uuid: Option<String>,
 }
 
@@ -44,9 +40,8 @@ pub enum KdfTier {
     Standard, // 256 MB RAM, 5 Iterations
     High,     // 512 MB RAM, 8 Iterations
     Paranoid, // 1 GB RAM,  10 Iterations
-    // Fast params used only in `cargo test` — never exposed to production.
     #[cfg(test)]
-    Test, // 8 MB RAM, 1 Iteration, 1 Thread
+    Test,
 }
 
 impl KdfTier {
@@ -61,7 +56,6 @@ impl KdfTier {
     }
 }
 
-/// Identical to the local keychain, but stores the UUID natively.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PortableKeychainStore {
     pub vault_id: String,
@@ -106,12 +100,11 @@ fn derive_kek(
 // --- COMMANDS ---
 // ==========================================
 
-/// Scans the system for Removable USB Drives.
 #[tauri::command]
 pub fn enumerate_removable_drives() -> CommandResult<Vec<DriveInfo>> {
     #[cfg(target_os = "android")]
     {
-        Ok(vec![]) // Handled via SAF File Picker on Android (Phase 4)
+        Ok(vec![])
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -123,8 +116,6 @@ pub fn enumerate_removable_drives() -> CommandResult<Vec<DriveInfo>> {
                 let path = disk.mount_point().to_string_lossy().to_string();
                 let is_qre_portable = disk.mount_point().join(".qre_portable").exists();
 
-                // Read the vault UUID from keychain.qre so the unlock modal can
-                // display it for out-of-band evil-maid verification (S-05).
                 let vault_uuid = if is_qre_portable {
                     let kc = disk
                         .mount_point()
@@ -152,7 +143,6 @@ pub fn enumerate_removable_drives() -> CommandResult<Vec<DriveInfo>> {
     }
 }
 
-/// Formats a USB drive as a Portable QRE Vault.
 #[tauri::command]
 pub fn init_portable_vault(
     drive_path: String,
@@ -180,28 +170,40 @@ pub fn init_portable_vault(
         fs::create_dir_all(&qre_dir).map_err(|e| e.to_string())?;
         fs::create_dir_all(base_path.join("Secure_Locker")).map_err(|e| e.to_string())?;
 
-        // Cross-platform attempt to hide the directory (Windows specific flag)
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
             let _ = std::process::Command::new("attrib")
                 .args(["+h", qre_dir.to_str().unwrap()])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
         }
 
         let (mem, iter, par) = tier.get_params();
         let vault_id = uuid::Uuid::new_v4().to_string();
 
+        use rand::Rng;
         let mut rng = rand::rng();
 
         let mut mk_bytes = [0u8; 32];
         rng.fill(&mut mk_bytes);
         let master_key = MasterKey(mk_bytes);
 
-        // --- SALT GENERATION ---
-        // SaltString::generate uses the provided RNG to produce a properly encoded
-        // PHC base64 salt. This is the correct API — from_b64 is for loading an
-        // existing encoded salt, not creating a new one.
-        let pass_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+        let raw_pass_salt: String = {
+            let mut bytes = [0u8; 16];
+            rng.fill(&mut bytes);
+            bytes
+                .iter()
+                .map(|&b| ALPHABET[(b as usize) % ALPHABET.len()] as char)
+                .collect()
+        };
+        let pass_salt = argon2::password_hash::SaltString::from_b64(&raw_pass_salt)
+            .unwrap()
+            .as_str()
+            .to_string();
 
         let pass_kek =
             derive_kek(&password, &pass_salt, mem, iter, par).map_err(|e| e.to_string())?;
@@ -214,17 +216,24 @@ pub fn init_portable_vault(
             .encrypt(Nonce::from_slice(&pass_nonce_bytes), master_key.0.as_ref())
             .unwrap();
 
-        // Recovery Slot
-        // FIX: rand::random::<u16>() gave only 64 bits total (4 × 16 bits).
-        // Using u32 with {:08X} gives 128 bits (4 × 32 bits), matching the
-        // implementation plan and keychain.rs.
         let raw_recovery: String = (0..4)
             .map(|_| format!("{:08X}", rand::random::<u32>()))
             .collect::<Vec<_>>()
             .join("-");
         let recovery_code = format!("QRE-{}", raw_recovery);
 
-        let rec_salt = SaltString::generate(&mut Argon2OsRng).as_str().to_string();
+        let raw_rec_salt: String = {
+            let mut bytes = [0u8; 16];
+            rng.fill(&mut bytes);
+            bytes
+                .iter()
+                .map(|&b| ALPHABET[(b as usize) % ALPHABET.len()] as char)
+                .collect()
+        };
+        let rec_salt = argon2::password_hash::SaltString::from_b64(&raw_rec_salt)
+            .unwrap()
+            .as_str()
+            .to_string();
 
         let rec_kek =
             derive_kek(&recovery_code, &rec_salt, mem, iter, par).map_err(|e| e.to_string())?;
@@ -250,16 +259,16 @@ pub fn init_portable_vault(
             encrypted_master_key_recovery: enc_mk_rec,
         };
 
-        let file = fs::File::create(qre_dir.join("keychain.qre")).map_err(|e| e.to_string())?;
+        let file =
+            std::fs::File::create(qre_dir.join("keychain.qre")).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(file, &store).map_err(|e| e.to_string())?;
 
         Ok((recovery_code, vault_id))
     }
 }
 
-/// Core unlock logic, extracted so tests can call it without tauri::State.
-/// The Tauri command is a thin wrapper around this function.
 pub(crate) fn unlock_vault_from_drive(
+    app_opt: Option<&AppHandle>, // <--- FIX: Made optional for testing
     drive_path: &str,
     password: &str,
     vaults: &std::sync::Arc<
@@ -314,44 +323,47 @@ pub(crate) fn unlock_vault_from_drive(
         guard.insert(vault_id.clone(), master_key);
     }
 
-    // Register drive path → vault UUID so files.rs can route by path.
+    // Register drive path
     {
         let mut guard = mounts.lock().unwrap();
         guard.insert(drive_path.to_string(), vault_id.clone());
     }
 
-    // SECURITY FIX S-03: Spawn a watcher thread that zeroizes the key if the
-    // drive is physically ejected while the vault is still unlocked.
+    // SECURITY: Dynamically authorize the USB drive in the frontend scope
+    // FIX: Only execute if we have a real AppHandle (skips in unit tests)
+    if let Some(app) = app_opt {
+        use tauri_plugin_fs::FsExt;
+        let _ = app
+            .fs_scope()
+            .allow_directory(PathBuf::from(drive_path), true);
+    }
+
     let watch_path = keychain_path.clone();
     let vaults_arc = vaults.clone();
     let mounts_arc = mounts.clone();
     let drive_path_owned = drive_path.to_string();
     let vid_clone = vault_id.clone();
 
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(2));
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
 
-            // Drive ejected — path disappeared.
-            if !watch_path.exists() {
-                if let Ok(mut guard) = vaults_arc.lock() {
-                    guard.remove(&vid_clone);
-                    println!("🔒 Portable Drive Ejected. Master Key wiped from RAM.");
-                }
-                if let Ok(mut guard) = mounts_arc.lock() {
-                    guard.remove(&drive_path_owned);
+        if !watch_path.exists() {
+            if let Ok(mut guard) = vaults_arc.lock() {
+                guard.remove(&vid_clone);
+                println!("🔒 Portable Drive Ejected. Master Key wiped from RAM.");
+            }
+            if let Ok(mut guard) = mounts_arc.lock() {
+                guard.remove(&drive_path_owned);
+            }
+            break;
+        }
+
+        if let Ok(guard) = vaults_arc.lock() {
+            if !guard.contains_key(&vid_clone) {
+                if let Ok(mut mg) = mounts_arc.lock() {
+                    mg.remove(&drive_path_owned);
                 }
                 break;
-            }
-
-            // User locked via UI — stop the watcher.
-            if let Ok(guard) = vaults_arc.lock() {
-                if !guard.contains_key(&vid_clone) {
-                    if let Ok(mut mg) = mounts_arc.lock() {
-                        mg.remove(&drive_path_owned);
-                    }
-                    break;
-                }
             }
         }
     });
@@ -359,15 +371,15 @@ pub(crate) fn unlock_vault_from_drive(
     Ok(vault_id)
 }
 
-/// Unlocks a portable USB vault and spawns a background Watcher to monitor for sudden drive removal.
 #[tauri::command]
 pub fn unlock_portable_vault(
-    _app: AppHandle,
+    app: AppHandle,
     state: tauri::State<SessionState>,
     drive_path: String,
     password: String,
 ) -> CommandResult<String> {
     unlock_vault_from_drive(
+        Some(&app), // <--- FIX: Pass Some(&app) here
         &drive_path,
         &password,
         &state.vaults,
@@ -375,7 +387,6 @@ pub fn unlock_portable_vault(
     )
 }
 
-/// Core lock logic, extracted so tests can call it without tauri::State.
 pub(crate) fn lock_vault_by_id(
     vault_id: &str,
     vaults: &std::sync::Arc<
@@ -390,14 +401,12 @@ pub(crate) fn lock_vault_by_id(
         .map_err(|_| "Session state corrupted".to_string())?;
     guard.remove(vault_id);
 
-    // Remove any drive path that maps to this vault UUID.
     if let Ok(mut mg) = mounts.lock() {
         mg.retain(|_, v| v != vault_id);
     }
     Ok(())
 }
 
-/// Manually locks the portable vault, wiping it from RAM.
 #[tauri::command]
 pub fn lock_portable_vault(
     state: tauri::State<SessionState>,
@@ -405,5 +414,4 @@ pub fn lock_portable_vault(
 ) -> CommandResult<()> {
     lock_vault_by_id(&vault_id, &state.vaults, &state.portable_mounts)
 }
-
 // --- END OF FILE portable.rs ---

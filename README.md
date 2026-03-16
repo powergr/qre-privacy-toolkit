@@ -167,6 +167,18 @@ npm run tauri build
 
 ---
 
+### 🔐 New in v2.7.3: Portable USB Vaults
+
+Transform any standard USB flash drive into a highly secure, offline, cross-platform encrypted vault—no hardware encryption chips required.
+
+- **True Portability:** Initialize a USB drive on your PC, unplug it, and securely unlock your files on any Windows, macOS, or Linux machine running QRE.
+- **Multi-Vault Architecture:** QRE’s rewritten Rust backend now functions as a dynamic Key Manager, securely holding multiple active `MasterKeys` in isolated memory environments simultaneously.
+- **Ghost-File Protection (NAND Defense):** Because flash memory hardware uses wear-leveling algorithms that can leave deleted plaintext data forensically recoverable, QRE features an active path-routing guard. It strictly prohibits encrypting files directly on the USB, enforcing a safe "Encrypt locally, copy securely" workflow.
+- **Sudden Ejection Watcher:** If a malicious actor (or clumsy user) physically yanks the unlocked USB drive out of the machine, a dedicated Rust background thread instantly detects the hardware removal and zeroes the Master Key from RAM, sealing the vault perfectly.
+- **Evil-Maid Verification:** During initialization, a unique Vault UUID is generated alongside the Recovery Code. Every time you unlock the drive on a new computer, the UUID is displayed, allowing you to verify out-of-band that an attacker hasn't stealthily swapped your USB's keychain file.
+
+---
+
 ## ✴️ Auto Update System
 
 Please read the file [QRE Auto Update System](AUTO_UPDATE_README.md)

@@ -23,12 +23,7 @@ import {
   ChevronRight,
   Brush,
   FileSearch,
-  Usb,
-  LockOpen,
-  RefreshCw as RefreshIcon,
-  Plus,
 } from "lucide-react";
-import type { PortableDriveState } from "../../hooks/usePortableVault";
 
 interface SidebarProps {
   activeTab: string;
@@ -41,13 +36,6 @@ interface SidebarProps {
   onChangePassword: () => void;
   onReset2FA: () => void;
   onUpdate: () => void;
-  // --- Portable Vault (Phase 3) ---
-  portableDrives: PortableDriveState[];
-  isScanning: boolean;
-  onScanDrives: () => void;
-  onInitDrive: (drivePath: string) => void;
-  onUnlockDrive: (drivePath: string) => void;
-  onLockDrive: (drivePath: string) => void;
 }
 
 export function Sidebar({
@@ -61,12 +49,6 @@ export function Sidebar({
   onChangePassword,
   onReset2FA,
   onUpdate,
-  portableDrives,
-  isScanning,
-  onScanDrives,
-  onInitDrive,
-  onUnlockDrive,
-  onLockDrive,
 }: SidebarProps) {
   const [menuState, setMenuState] = useState<"none" | "help" | "settings">(
     "none",
@@ -74,12 +56,10 @@ export function Sidebar({
   const helpRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // Close menus when tab changes
   useEffect(() => {
     setMenuState("none");
   }, [activeTab]);
 
-  // Click outside to close desktop menus
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
@@ -101,7 +81,6 @@ export function Sidebar({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuState]);
 
-  // Grouped Tabs
   const groups = [
     {
       items: [
@@ -131,7 +110,7 @@ export function Sidebar({
           id: "vault",
           label: "Passwords Vault",
           icon: <Key size={20} strokeWidth={2.5} />,
-          desc: "Offline credential vault ",
+          desc: "Offline credential vault",
         },
         {
           id: "bookmarks",
@@ -216,84 +195,9 @@ export function Sidebar({
             </div>
           </div>
         ))}
-
-        {/* ── Portable Drives ─────────────────────────────────────────────── */}
-        {/* SECURITY: Scan is triggered only by explicit user action (clicking  */}
-        {/* Refresh), never on mount or a polling interval. Auto-scanning leaks */}
-        {/* portable vault presence over the IPC bridge (S-09).                */}
-        <div className="sidebar-group-divider" />
-        <div className="nav-group">
-          <div className="portable-drives-header">
-            <Usb size={14} />
-            <span>Portable Drives</span>
-            <button
-              className="portable-scan-btn"
-              onClick={onScanDrives}
-              title="Refresh drive list"
-              disabled={isScanning}
-            >
-              <RefreshIcon size={13} className={isScanning ? "spin" : ""} />
-            </button>
-          </div>
-
-          {portableDrives.length === 0 && (
-            <p className="portable-empty">
-              {isScanning ? "Scanning…" : "No drives found"}
-            </p>
-          )}
-
-          {portableDrives.map((d) => (
-            <div key={d.drive.path} className="portable-drive-row">
-              <div className="portable-drive-info">
-                <Usb
-                  size={14}
-                  color={
-                    d.isUnlocked ? "var(--btn-success)" : "var(--text-dim)"
-                  }
-                />
-                <span className="portable-drive-name" title={d.drive.path}>
-                  {d.drive.name || d.drive.path}
-                </span>
-                {d.isUnlocked && (
-                  <span className="portable-unlocked-badge">●</span>
-                )}
-              </div>
-              <div className="portable-drive-actions">
-                {!d.drive.is_qre_portable && (
-                  <button
-                    className="portable-action-btn"
-                    title="Format as QRE vault"
-                    onClick={() => onInitDrive(d.drive.path)}
-                  >
-                    <Plus size={13} />
-                  </button>
-                )}
-                {d.drive.is_qre_portable && !d.isUnlocked && (
-                  <button
-                    className="portable-action-btn"
-                    title="Unlock vault"
-                    onClick={() => onUnlockDrive(d.drive.path)}
-                  >
-                    <LockOpen size={13} />
-                  </button>
-                )}
-                {d.drive.is_qre_portable && d.isUnlocked && (
-                  <button
-                    className="portable-action-btn danger"
-                    title="Lock vault"
-                    onClick={() => onLockDrive(d.drive.path)}
-                  >
-                    <Lock size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
 
       <div className="sidebar-bottom">
-        {/* HELP — desktop: popup menu | mobile: navigate to help tab */}
         <div style={{ position: "relative" }} ref={helpRef}>
           {menuState === "help" && (
             <div className="desktop-popup-menu">
@@ -319,17 +223,12 @@ export function Sidebar({
             </div>
           )}
           <button
-            className={`nav-btn btn-split ${
-              activeTab === "help" || menuState === "help" ? "menu-open" : ""
-            }`}
+            className={`nav-btn btn-split ${activeTab === "help" || menuState === "help" ? "menu-open" : ""}`}
             onClick={(e) => {
               e.stopPropagation();
-              // Mobile: go to help tab. Desktop (has hover): open popup.
-              if (window.matchMedia("(max-width: 600px)").matches) {
+              if (window.matchMedia("(max-width: 600px)").matches)
                 setTab("help");
-              } else {
-                setMenuState(menuState === "help" ? "none" : "help");
-              }
+              else setMenuState(menuState === "help" ? "none" : "help");
             }}
           >
             <div className="btn-inner">
@@ -340,7 +239,6 @@ export function Sidebar({
           </button>
         </div>
 
-        {/* SETTINGS — desktop: popup menu | mobile: navigate to settings tab */}
         <div style={{ position: "relative" }} ref={settingsRef}>
           {menuState === "settings" && (
             <div className="desktop-popup-menu">
@@ -404,19 +302,12 @@ export function Sidebar({
             </div>
           )}
           <button
-            className={`nav-btn btn-split ${
-              activeTab === "settings" || menuState === "settings"
-                ? "menu-open"
-                : ""
-            }`}
+            className={`nav-btn btn-split ${activeTab === "settings" || menuState === "settings" ? "menu-open" : ""}`}
             onClick={(e) => {
               e.stopPropagation();
-              // Mobile: go to settings tab. Desktop: open popup.
-              if (window.matchMedia("(max-width: 600px)").matches) {
+              if (window.matchMedia("(max-width: 600px)").matches)
                 setTab("settings");
-              } else {
-                setMenuState(menuState === "settings" ? "none" : "settings");
-              }
+              else setMenuState(menuState === "settings" ? "none" : "settings");
             }}
           >
             <div className="btn-inner">
