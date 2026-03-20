@@ -2,8 +2,8 @@ name: Fuzz
 
 on:
   schedule:
-    - cron: '0 2 * * 1'   # Every Monday at 2 AM UTC
-  workflow_dispatch:       # Allow manual trigger from GitHub UI
+    - cron: "0 2 * * 1" # Every Monday at 2 AM UTC
+  workflow_dispatch: # Allow manual trigger from GitHub UI
 
 jobs:
   fuzz:
@@ -42,6 +42,22 @@ jobs:
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
+
+      - name: Pin tauri version in fuzz workspace to match main workspace
+        working-directory: src-tauri
+        run: |
+          TAURI_VER=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c "
+          import json, sys
+          pkgs = json.load(sys.stdin)['packages']
+          match = next((p['version'] for p in pkgs if p['name'] == 'tauri'), None)
+          print(match or '')
+          ")
+          echo "Resolved tauri version: $TAURI_VER"
+          if [ -n "$TAURI_VER" ]; then
+            cd fuzz
+            cargo +nightly update -p tauri --precise "$TAURI_VER"
+          fi
 
       - name: Run fuzz target
         working-directory: src-tauri

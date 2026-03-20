@@ -433,3 +433,9 @@
     justify-content: center !important;
   }
 }
+/* Hide the Portable USB feature on Android/iOS since it relies on desktop filesystem paths */
+@media (max-width: 600px) {
+  .dropdown-container:has(> button[title="Portable USB Vaults"]) {
+    display: none !important;
+  }
+}
