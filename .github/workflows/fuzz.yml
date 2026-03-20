@@ -36,69 +36,51 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: fuzz-${{ runner.os }}-${{ hashFiles('src-tauri/fuzz/Cargo.lock') }}
+          key: fuzz-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: fuzz-${{ runner.os }}-
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
 
-      - name: Diagnose and pin tauri versions in fuzz workspace
+      - name: Pin fuzz workspace tauri version to match main Cargo.lock
         working-directory: src-tauri
         run: |
-          echo "=== Main workspace toolchain ==="
-          cargo +nightly --version
-          rustc +nightly --version
+          # Read the tauri version directly from the committed main Cargo.lock.
+          # This is more reliable than cargo metadata because:
+          #   1. tauri is not a direct dep of the fuzz workspace (only transitive
+          #      through qre-gui), so cargo update --precise needs it already in
+          #      a lockfile to work.
+          #   2. The main Cargo.lock is the ground truth — it is what the working
+          #      local build uses.
+          #
+          # The grep pattern matches the exact package block:
+          #   [[package]]
+          #   name = "tauri"
+          #   version = "X.Y.Z"
+          TAURI_VER=$(awk '/^name = "tauri"$/{found=1} found && /^version =/{
+            gsub(/version = "|"/, ""); print; exit}' Cargo.lock)
 
-          echo "=== Resolving tauri versions from main workspace ==="
-          # Use nightly for metadata so the resolver matches the fuzz build exactly.
-          # Using stable here while the fuzz build uses nightly can produce different
-          # resolution results for the same version constraints.
-          METADATA=$(cargo +nightly metadata --format-version 1)
-
-          TAURI_VER=$(echo "$METADATA" | python3 -c "
-          import json, sys
-          pkgs = json.load(sys.stdin)['packages']
-          match = next((p['version'] for p in pkgs if p['name'] == 'tauri'), None)
-          print(match or '')
-          ")
-
-          TAURI_BUILD_VER=$(echo "$METADATA" | python3 -c "
-          import json, sys
-          pkgs = json.load(sys.stdin)['packages']
-          match = next((p['version'] for p in pkgs if p['name'] == 'tauri-build'), None)
-          print(match or '')
-          ")
-
-          echo "Main workspace: tauri=$TAURI_VER  tauri-build=$TAURI_BUILD_VER"
+          echo "Main Cargo.lock tauri version: '$TAURI_VER'"
 
           if [ -z "$TAURI_VER" ]; then
-            echo "ERROR: tauri not found in main workspace metadata — aborting"
+            echo "ERROR: could not read tauri version from src-tauri/Cargo.lock"
+            echo "Make sure Cargo.lock is committed (git add src-tauri/Cargo.lock)"
             exit 1
           fi
 
-          echo "=== Fuzz workspace Cargo.toml ==="
-          cat fuzz/Cargo.toml
-
-          echo "=== Generating initial fuzz Cargo.lock ==="
-          # cargo update --precise only works if Cargo.lock already exists.
-          # cargo fetch creates it if missing. Without this step the pin
-          # commands below silently do nothing and the mismatch persists.
+          # Generate the fuzz lockfile from scratch using nightly.
+          # Without this file cargo update --precise silently does nothing.
           cd fuzz
-          cargo +nightly fetch 2>&1
+          cargo +nightly generate-lockfile 2>&1
 
-          echo "=== Pinning tauri in fuzz workspace ==="
+          echo "=== Fuzz Cargo.lock tauri version BEFORE pin ==="
+          awk '/^name = "tauri"$/{found=1} found && /^version =/{print; exit}' Cargo.lock
+
+          # Force the fuzz workspace to use the same tauri as the main workspace.
           cargo +nightly update -p tauri --precise "$TAURI_VER" 2>&1
 
-          if [ -n "$TAURI_BUILD_VER" ]; then
-            echo "=== Pinning tauri-build in fuzz workspace ==="
-            # tauri-build may not be a direct dep of the fuzz workspace --
-            # if it isn't, this will print a warning and continue, which is fine.
-            cargo +nightly update -p tauri-build --precise "$TAURI_BUILD_VER" 2>&1 || \
-              echo "tauri-build not a direct fuzz dep — skipping pin (this is expected)"
-          fi
-
-          echo "=== Fuzz Cargo.lock tauri entries after pin ==="
-          grep -A2 'name = "tauri"' Cargo.lock || echo "WARNING: no tauri entry in fuzz Cargo.lock"
+          echo "=== Fuzz Cargo.lock tauri version AFTER pin ==="
+          awk '/^name = "tauri"$/{found=1} found && /^version =/{print; exit}' Cargo.lock
 
       - name: Run fuzz target
         working-directory: src-tauri
