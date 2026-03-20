@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install system libraries required by Tauri's dependency tree
         run: |
@@ -28,11 +28,10 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
-          # cargo-fuzz requires the sanitizer component for -Zsanitizer=address
           components: rust-src
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -43,13 +42,18 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
 
-      - name: Pin tauri versions in fuzz workspace to match main workspace
+      - name: Diagnose and pin tauri versions in fuzz workspace
         working-directory: src-tauri
         run: |
-          # cargo metadata WITHOUT --no-deps so transitive dependencies are included.
-          # With --no-deps only workspace members are listed; tauri and tauri-build
-          # are dependencies, not members, so they were silently missing before.
-          METADATA=$(cargo metadata --format-version 1)
+          echo "=== Main workspace toolchain ==="
+          cargo +nightly --version
+          rustc +nightly --version
+
+          echo "=== Resolving tauri versions from main workspace ==="
+          # Use nightly for metadata so the resolver matches the fuzz build exactly.
+          # Using stable here while the fuzz build uses nightly can produce different
+          # resolution results for the same version constraints.
+          METADATA=$(cargo +nightly metadata --format-version 1)
 
           TAURI_VER=$(echo "$METADATA" | python3 -c "
           import json, sys
@@ -65,30 +69,47 @@ jobs:
           print(match or '')
           ")
 
-          echo "Main workspace resolved: tauri=$TAURI_VER  tauri-build=$TAURI_BUILD_VER"
+          echo "Main workspace: tauri=$TAURI_VER  tauri-build=$TAURI_BUILD_VER"
 
-          if [ -z "$TAURI_VER" ] || [ -z "$TAURI_BUILD_VER" ]; then
-            echo "ERROR: could not resolve tauri or tauri-build version from main workspace"
+          if [ -z "$TAURI_VER" ]; then
+            echo "ERROR: tauri not found in main workspace metadata — aborting"
             exit 1
           fi
 
+          echo "=== Fuzz workspace Cargo.toml ==="
+          cat fuzz/Cargo.toml
+
+          echo "=== Generating initial fuzz Cargo.lock ==="
+          # cargo update --precise only works if Cargo.lock already exists.
+          # cargo fetch creates it if missing. Without this step the pin
+          # commands below silently do nothing and the mismatch persists.
           cd fuzz
-          echo "Pinning fuzz workspace to same versions..."
-          cargo +nightly update -p tauri --precise "$TAURI_VER"
-          cargo +nightly update -p tauri-build --precise "$TAURI_BUILD_VER"
-          echo "Pin complete. Fuzz Cargo.lock:"
-          grep -A1 'name = "tauri"' Cargo.lock | head -20
+          cargo +nightly fetch 2>&1
+
+          echo "=== Pinning tauri in fuzz workspace ==="
+          cargo +nightly update -p tauri --precise "$TAURI_VER" 2>&1
+
+          if [ -n "$TAURI_BUILD_VER" ]; then
+            echo "=== Pinning tauri-build in fuzz workspace ==="
+            # tauri-build may not be a direct dep of the fuzz workspace --
+            # if it isn't, this will print a warning and continue, which is fine.
+            cargo +nightly update -p tauri-build --precise "$TAURI_BUILD_VER" 2>&1 || \
+              echo "tauri-build not a direct fuzz dep — skipping pin (this is expected)"
+          fi
+
+          echo "=== Fuzz Cargo.lock tauri entries after pin ==="
+          grep -A2 'name = "tauri"' Cargo.lock || echo "WARNING: no tauri entry in fuzz Cargo.lock"
 
       - name: Run fuzz target
         working-directory: src-tauri
-        # -max_total_time=300 → stop after 5 minutes (keeps CI bill reasonable)
-        # -jobs=2             → use both vCPUs on the runner
-        # -runs=-1            → don't limit by iteration count, only by time
+        # -max_total_time=300 -> stop after 5 minutes (keeps CI bill reasonable)
+        # -jobs=2             -> use both vCPUs on the runner
+        # -runs=-1            -> don't limit by iteration count, only by time
         run: cargo +nightly fuzz run fuzz_decrypt -- -max_total_time=300 -jobs=2 -runs=-1
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-crashes-${{ github.run_id }}
           path: src-tauri/fuzz/artifacts/fuzz_decrypt/
