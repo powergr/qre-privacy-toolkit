@@ -43,21 +43,41 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
 
-      - name: Pin tauri version in fuzz workspace to match main workspace
+      - name: Pin tauri versions in fuzz workspace to match main workspace
         working-directory: src-tauri
         run: |
-          TAURI_VER=$(cargo metadata --format-version 1 --no-deps \
-            | python3 -c "
+          # cargo metadata WITHOUT --no-deps so transitive dependencies are included.
+          # With --no-deps only workspace members are listed; tauri and tauri-build
+          # are dependencies, not members, so they were silently missing before.
+          METADATA=$(cargo metadata --format-version 1)
+
+          TAURI_VER=$(echo "$METADATA" | python3 -c "
           import json, sys
           pkgs = json.load(sys.stdin)['packages']
           match = next((p['version'] for p in pkgs if p['name'] == 'tauri'), None)
           print(match or '')
           ")
-          echo "Resolved tauri version: $TAURI_VER"
-          if [ -n "$TAURI_VER" ]; then
-            cd fuzz
-            cargo +nightly update -p tauri --precise "$TAURI_VER"
+
+          TAURI_BUILD_VER=$(echo "$METADATA" | python3 -c "
+          import json, sys
+          pkgs = json.load(sys.stdin)['packages']
+          match = next((p['version'] for p in pkgs if p['name'] == 'tauri-build'), None)
+          print(match or '')
+          ")
+
+          echo "Main workspace resolved: tauri=$TAURI_VER  tauri-build=$TAURI_BUILD_VER"
+
+          if [ -z "$TAURI_VER" ] || [ -z "$TAURI_BUILD_VER" ]; then
+            echo "ERROR: could not resolve tauri or tauri-build version from main workspace"
+            exit 1
           fi
+
+          cd fuzz
+          echo "Pinning fuzz workspace to same versions..."
+          cargo +nightly update -p tauri --precise "$TAURI_VER"
+          cargo +nightly update -p tauri-build --precise "$TAURI_BUILD_VER"
+          echo "Pin complete. Fuzz Cargo.lock:"
+          grep -A1 'name = "tauri"' Cargo.lock | head -20
 
       - name: Run fuzz target
         working-directory: src-tauri
