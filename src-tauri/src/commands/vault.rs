@@ -7,11 +7,13 @@ use crate::keychain;
 use crate::notes::NotesVault;
 use crate::passwords::PasswordVault;
 use crate::state::SessionState;
+use data_encoding::BASE32_NOPAD;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
+use totp_rs::{Algorithm, TOTP};
 
 pub type CommandResult<T> = Result<T, String>;
 
@@ -635,4 +637,49 @@ pub fn add_clipboard_entry(
     vault.add_entry(entry).map_err(|e| e.to_string())?;
     save_clipboard_vault(app, vault_id, state, vault)?;
     Ok(())
+}
+
+/// Generates a Time-Based One-Time Password (TOTP) from a provided secret key.
+/// Returns the 6-digit code and the number of seconds remaining until it expires.
+#[tauri::command]
+pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
+    // 1. Clean up the secret: Remove spaces, dashes, make uppercase
+    let clean_secret = secret
+        .split_whitespace()
+        .collect::<String>()
+        .replace("-", "")
+        .to_uppercase();
+
+    // Some keys come with padding (=), some don't. We strip padding and use the NOPAD decoder.
+    let stripped_secret = clean_secret.trim_end_matches('=');
+
+    // 2. Parse the Base32 secret robustly into raw bytes
+    let secret_bytes = match BASE32_NOPAD.decode(stripped_secret.as_bytes()) {
+        Ok(b) => b,
+        Err(e) => {
+            println!(
+                "Base32 Decode Error: {} for string '{}'",
+                e, stripped_secret
+            );
+            return Err("Invalid 2FA Secret Key (Must be valid Base32)".to_string());
+        }
+    };
+
+    // 3. Standard TOTP configuration: SHA-1, 6 digits, 30-second steps
+    let totp = TOTP::new_unchecked(Algorithm::SHA1, 6, 1, 30, secret_bytes);
+
+    // 4. Generate the code based on the current Unix timestamp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let code = totp
+        .generate_current()
+        .map_err(|e| format!("Failed to generate code: {}", e))?;
+
+    // Calculate remaining seconds in the current 30-second window
+    let remaining_seconds = 30 - (now % 30);
+
+    Ok((code, remaining_seconds))
 }

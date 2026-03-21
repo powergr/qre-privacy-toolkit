@@ -19,46 +19,25 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// the plaintext data via memory dumps.
 #[derive(Serialize, Deserialize, Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct VaultEntry {
-    pub id: String, // Unique UUID for precise frontend rendering and database updates
-
-    /// The name of the website or service (e.g., "Google", "Netflix").
+    pub id: String,
     pub service: String,
-
-    /// The login username or email address.
     pub username: String,
-
-    /// The secret password.
-    ///
-    /// SECURITY: This field is zeroed in memory on drop via ZeroizeOnDrop.
     pub password: String,
-
-    /// Optional free-text notes.
-    /// (Often contains highly sensitive 2FA recovery codes — also zeroed on drop).
     pub notes: String,
-
-    pub created_at: i64, // Unix timestamp in seconds
-
-    // `#[serde(default)]` allows older vault files that didn't have this field
-    // to load successfully. The deserializer will just fill it with `0`.
+    pub created_at: i64,
     #[serde(default)]
     pub updated_at: i64,
-
-    // --- NEW FIELDS (v2.5.5+) ---
-    // The following fields were added in a later update. `#[serde(default)]` ensures
-    // that when an older V1 vault is loaded, it doesn't crash the app. Instead, it
-    // initializes these with empty strings/false booleans. When the user saves next,
-    // the vault is seamlessly upgraded to the new schema.
-    /// The website URL (e.g., "https://google.com").
     #[serde(default)]
     pub url: String,
-
-    /// The visual card color (Hex Code) used to customize the UI.
     #[serde(default)]
     pub color: String,
-
-    /// Whether the entry is pinned to the top of the user's list.
     #[serde(default)]
     pub is_pinned: bool,
+
+    // --- NEW: OFFLINE 2FA (TOTP) ---
+    // The secret key (usually a base32 string) provided by the website to generate 2FA codes.
+    #[serde(default)]
+    pub totp_secret: Option<String>,
 }
 
 /// The root container for the Password Vault.
@@ -177,6 +156,7 @@ mod tests {
             url: "https://github.com".to_string(),
             color: "#000000".to_string(),
             is_pinned: false,
+            totp_secret: None,
         }
     }
 

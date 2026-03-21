@@ -256,7 +256,7 @@ cd /src-tauri
 cargo test
 ```
 
-- 256 tests passed from 256 total
+- 270 tests passed from 270 total
 
 For the frontend run
 
@@ -264,7 +264,7 @@ For the frontend run
 npm test
 ```
 
-- 182 tests passed from 182 total
+- 185 tests passed from 185 total
 
 ---
 

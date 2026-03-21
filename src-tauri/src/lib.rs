@@ -139,6 +139,7 @@ pub fn run() {
             // Password Vault
             commands::vault::load_password_vault,
             commands::vault::save_password_vault,
+            commands::vault::generate_totp_code,
             // Notes Vault
             commands::vault::load_notes_vault,
             commands::vault::save_notes_vault,

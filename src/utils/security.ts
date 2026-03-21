@@ -10,7 +10,14 @@ export function generateBrowserEntropy(): number[] {
 // --- LIGHTWEIGHT PASSWORD STRENGTH LOGIC ---
 
 export const getPasswordStrength = (password: string) => {
-  if (!password) return { score: 0, feedback: "Enter a password" };
+  if (!password) {
+    return {
+      score: 0,
+      feedback: "Enter a password",
+      label: "Empty",
+      color: "#454545",
+    };
+  }
 
   // 1. PASSPHRASE DETECTION
   // If it's very long (>20 chars) and uses separators (- or space), it's a strong passphrase.
@@ -18,7 +25,12 @@ export const getPasswordStrength = (password: string) => {
     password.length > 20 &&
     (password.includes("-") || password.includes(" "))
   ) {
-    return { score: 4, feedback: "Excellent Passphrase" };
+    return {
+      score: 4,
+      feedback: "Excellent Passphrase",
+      label: "Excellent",
+      color: "#15803d",
+    };
   }
 
   // 2. IMMEDIATE REJECTION FOR SHORT PASSWORDS

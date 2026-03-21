@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   List as ListIcon,
   HeartPulse,
+  ShieldCheck,
 } from "lucide-react";
 import { useVault, VaultEntry } from "../../hooks/useVault";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -42,7 +43,6 @@ const BRAND_COLORS = [
   "#f1c40f",
 ];
 
-// 30s Clipboard Timeout
 const CLIPBOARD_CLEAR_DELAY_MS = 30_000;
 
 function generateUUID(): string {
@@ -54,7 +54,6 @@ function generateUUID(): string {
   );
 }
 
-// Unbiased Password Generator
 function generateStrongPassword(length = 20): string {
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const lower = "abcdefghijklmnopqrstuvwxyz";
@@ -91,7 +90,6 @@ function generateStrongPassword(length = 20): string {
   return combined.join("");
 }
 
-// RFC 4180 CSV Parser
 function parseCSV(raw: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -148,17 +146,170 @@ function parseCSV(raw: string): string[][] {
 }
 
 function csvEscape(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
 }
 
 function getInitial(name: string): string {
   if (!name) return "?";
-  const clean = name.toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, "");
-  return clean.charAt(0).toUpperCase();
+  return name
+    .toLowerCase()
+    .replace(/^(https?:\/\/)?(www\.)?/, "")
+    .charAt(0)
+    .toUpperCase();
 }
+
+// -----------------------------------------------------------------------------
+// TOTP Code Display Component (Live refreshing 6-digit code)
+// -----------------------------------------------------------------------------
+function TotpDisplay({
+  secret,
+  onCopy,
+  compact = false,
+}: {
+  secret: string;
+  onCopy: (code: string) => void;
+  compact?: boolean;
+}) {
+  const [code, setCode] = useState<string>("------");
+  const [timeLeft, setTimeLeft] = useState<number>(30);
+  const [error, setError] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function fetchCode() {
+      // Allow standard 16-char and longer 32-char base32 secrets
+      if (!secret || secret.trim().length < 16) {
+        if (isMounted) {
+          setCode("------");
+          setError(false);
+        }
+        return;
+      }
+
+      try {
+        const [newCode, remaining] = await invoke<[string, number]>(
+          "generate_totp_code",
+          { secret: secret.trim() }, // ← trim here too
+        );
+        if (isMounted) {
+          setCode(newCode);
+          setTimeLeft(remaining);
+          setError(false);
+        }
+      } catch (e) {
+        console.error("TOTP Error:", e);
+        if (isMounted) {
+          setCode("ERROR");
+          setError(true);
+        }
+      }
+    }
+
+    fetchCode();
+    const interval = setInterval(fetchCode, 1000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [secret]);
+
+  const radius = compact ? 6 : 8;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (timeLeft / 30) * circumference;
+
+  const dangerColor = "var(--btn-danger)";
+  const activeColor = "var(--accent)";
+
+  return (
+    <div
+      className={compact ? "" : "secret-pill"}
+      style={
+        compact
+          ? { display: "flex", alignItems: "center", gap: 8 }
+          : {
+              marginTop: 8,
+              background: "rgba(0,0,0,0.15)",
+              borderColor: "var(--highlight)",
+              cursor: "pointer",
+            }
+      }
+      // FIX: Clicking ANYWHERE on the pill copies the code
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!error && code !== "------" && code !== "ERROR") onCopy(code);
+      }}
+      title={error ? "Invalid Secret Key" : "Click to Copy 2FA Code"}
+    >
+      <div
+        style={{ display: "flex", alignItems: "center", gap: compact ? 6 : 10 }}
+      >
+        {/* Animated Countdown Circle */}
+        <svg
+          width={compact ? "16" : "20"}
+          height={compact ? "16" : "20"}
+          style={{ transform: "rotate(-90deg)" }}
+        >
+          <circle
+            cx={compact ? "8" : "10"}
+            cy={compact ? "8" : "10"}
+            r={radius}
+            stroke="var(--border)"
+            strokeWidth={compact ? "2" : "3"}
+            fill="transparent"
+          />
+          <circle
+            cx={compact ? "8" : "10"}
+            cy={compact ? "8" : "10"}
+            r={radius}
+            stroke={
+              error ? dangerColor : timeLeft <= 5 ? dangerColor : activeColor
+            }
+            strokeWidth={compact ? "2" : "3"}
+            fill="transparent"
+            strokeDasharray={circumference}
+            strokeDashoffset={error ? 0 : strokeDashoffset}
+            style={{
+              transition: "stroke-dashoffset 1s linear, stroke 0.3s ease",
+            }}
+          />
+        </svg>
+
+        {/* The 6 Digit Code */}
+        <span
+          style={{
+            fontWeight: "bold",
+            fontSize: compact ? "0.95rem" : "1.1rem",
+            letterSpacing: compact ? "1px" : "2px",
+            color: error
+              ? dangerColor
+              : timeLeft <= 5
+                ? dangerColor
+                : "var(--text-main)",
+          }}
+        >
+          {error
+            ? "INVALID KEY"
+            : code.length === 6
+              ? `${code.slice(0, 3)} ${code.slice(3, 6)}`
+              : code}
+        </span>
+      </div>
+
+      {/* Visual copy icon indicator for the main grid card */}
+      {!compact && (
+        <button className="icon-btn-ghost" title="Copy 2FA Code">
+          <Copy size={16} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// MAIN COMPONENT
+// -----------------------------------------------------------------------------
 
 export function VaultView() {
   const { entries, loading, saveEntry, deleteEntry, importEntries } =
@@ -188,7 +339,7 @@ export function VaultView() {
 
   const strength = editing
     ? getPasswordStrength(editing.password || "")
-    : { score: 0, feedback: "" };
+    : { score: 0, feedback: "", label: "", color: "" };
 
   const visibleEntries = useMemo(() => {
     let filtered = entries;
@@ -208,7 +359,7 @@ export function VaultView() {
     });
   }, [entries, searchQuery]);
 
-  const handleCopy = async (text: string) => {
+  const handleCopy = async (text: string, isTotp = false) => {
     await writeText(text);
     if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
     clipboardTimerRef.current = setTimeout(async () => {
@@ -216,8 +367,10 @@ export function VaultView() {
         await writeText("");
       } catch {}
     }, CLIPBOARD_CLEAR_DELAY_MS);
+
+    // FIX: Set the exact message string so InfoModal appears
     setCopyModalMsg(
-      `Password copied — clipboard will be cleared in ${CLIPBOARD_CLEAR_DELAY_MS / 1000} seconds.`,
+      `${isTotp ? "2FA Code" : "Password"} copied — clipboard will be cleared in 30 seconds.`,
     );
   };
 
@@ -233,8 +386,8 @@ export function VaultView() {
       const contents = await invoke<string>("read_text_file_content", {
         path: selected,
       });
-
       const rows = parseCSV(contents);
+
       if (rows.length === 0) {
         setCopyModalMsg("No data found in the selected file.");
         return;
@@ -307,7 +460,7 @@ export function VaultView() {
       });
       if (!path) return;
 
-      const header = "name,url,username,password,note\n";
+      const header = "name,url,username,password,note,totp_secret\n";
       const rows = entries
         .map((e) =>
           [
@@ -316,6 +469,7 @@ export function VaultView() {
             csvEscape(e.username),
             csvEscape(e.password),
             csvEscape(e.notes),
+            csvEscape(e.totp_secret || ""),
           ].join(","),
         )
         .join("\n");
@@ -339,7 +493,6 @@ export function VaultView() {
 
   return (
     <div className="vault-view">
-      {/* HEADER */}
       <div className="vault-header">
         <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
           <div
@@ -422,6 +575,7 @@ export function VaultView() {
                 notes: "",
                 color: BRAND_COLORS[0],
                 is_pinned: false,
+                totp_secret: "",
               })
             }
           >
@@ -479,6 +633,22 @@ export function VaultView() {
                 className="list-actions"
                 onClick={(e) => e.stopPropagation()}
               >
+                {/* LIST 2FA BADGE */}
+                {entry.totp_secret && (
+                  <span
+                    style={{
+                      fontSize: "0.7rem",
+                      background: "var(--highlight)",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      marginRight: 10,
+                      fontWeight: "bold",
+                    }}
+                  >
+                    2FA
+                  </span>
+                )}
+
                 <button
                   className="icon-btn-ghost"
                   title="Copy Password"
@@ -519,6 +689,7 @@ export function VaultView() {
                   fill="currentColor"
                 />
               )}
+
               <div className="vault-service-row">
                 <div
                   className="service-icon"
@@ -543,6 +714,8 @@ export function VaultView() {
                   </div>
                 </div>
               </div>
+
+              {/* Password Copier */}
               <div className="secret-pill" onClick={(e) => e.stopPropagation()}>
                 <span className="secret-text">
                   {showPass === entry.id ? entry.password : "•".repeat(12)}
@@ -566,12 +739,28 @@ export function VaultView() {
                   <Copy size={16} />
                 </button>
               </div>
-              <div className="card-actions">
+
+              {/* 2FA Live Display */}
+              {entry.totp_secret && (
+                <TotpDisplay
+                  secret={entry.totp_secret}
+                  onCopy={(code) => handleCopy(code, true)}
+                />
+              )}
+
+              <div className="card-actions" style={{ marginTop: 10 }}>
                 <button
                   className="icon-btn-ghost"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    saveEntry({ ...entry, is_pinned: !entry.is_pinned });
+                    try {
+                      await saveEntry({
+                        ...entry,
+                        is_pinned: !entry.is_pinned,
+                      });
+                    } catch (err) {
+                      setSaveError(String(err)); // <--- SHOW THE ERROR IN THE UI
+                    }
                   }}
                 >
                   {entry.is_pinned ? <PinOff size={16} /> : <Pin size={16} />}
@@ -591,36 +780,32 @@ export function VaultView() {
         </div>
       )}
 
-      {/* --- EXPORT WARNING MODAL --- */}
       {showExportWarning && (
         <ExportWarningModal
           onConfirm={executeExport}
           onCancel={() => setShowExportWarning(false)}
         />
       )}
-
-      {/* --- HEALTH CHECK MODAL --- */}
-      {/* FIX: Removed setShowHealth(false) so it stays open when clicking fix */}
       {showHealth && (
         <VaultHealthModal
           entries={entries}
           onClose={() => setShowHealth(false)}
-          onEditEntry={(entry) => {
-            // DO NOT CLOSE HEALTH MODAL
-            setEditing(entry); // Just open the editor on top
-          }}
+          onEditEntry={(entry) => setEditing(entry)}
         />
       )}
 
       {/* --- EDIT / ADD MODAL --- */}
       {editing && (
-        // FIX: High Z-Index (100010) ensures it sits ABOVE the Health Modal (100000)
         <div
           className="modal-overlay"
           style={{ zIndex: 100010 }}
           onClick={() => setEditing(null)}
         >
-          <div className="auth-card" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="auth-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 500, width: "100%" }}
+          >
             <div
               style={{
                 display: "flex",
@@ -678,6 +863,7 @@ export function VaultView() {
                   autoFocus
                 />
               </div>
+
               <div
                 style={{
                   position: "relative",
@@ -703,6 +889,7 @@ export function VaultView() {
                   }
                 />
               </div>
+
               <div
                 style={{
                   position: "relative",
@@ -761,6 +948,7 @@ export function VaultView() {
                     {showEditPass ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
+
                 {editing.password && editing.password.length > 0 && (
                   <div style={{ marginTop: 8 }}>
                     <div
@@ -793,12 +981,7 @@ export function VaultView() {
                       }}
                     >
                       <span style={{ color: getStrengthColor(strength.score) }}>
-                        {strength.score >= 4 &&
-                        strength.feedback === "Excellent Passphrase"
-                          ? "Excellent"
-                          : ["Very Weak", "Weak", "Okay", "Good", "Strong"][
-                              strength.score
-                            ]}
+                        {strength.label}
                       </span>
                       <span>{strength.feedback}</span>
                     </div>
@@ -806,21 +989,81 @@ export function VaultView() {
                 )}
               </div>
 
-              <div>
-                <label
-                  style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}
+              {/* 2FA SETUP FIELD */}
+              <div
+                style={{
+                  borderTop: "1px solid var(--border)",
+                  paddingTop: 15,
+                  marginTop: 5,
+                }}
+              >
+                <div
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "center",
+                  }}
                 >
-                  Card Color
-                </label>
-                <div className="color-picker">
-                  {BRAND_COLORS.map((c) => (
+                  <ShieldCheck
+                    size={16}
+                    style={{
+                      position: "absolute",
+                      left: 12,
+                      color: "var(--text-dim)",
+                    }}
+                  />
+                  <input
+                    className="auth-input"
+                    style={{
+                      paddingLeft: 40,
+                      fontFamily: "monospace",
+                      textTransform: "uppercase",
+                      flex: 1,
+                    }}
+                    placeholder="2FA Authenticator Key (e.g. JBSWY3DP...)"
+                    value={editing.totp_secret || ""}
+                    onChange={(e) =>
+                      setEditing({ ...editing, totp_secret: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: 8,
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--text-dim)",
+                      margin: 0,
+                      flex: 1,
+                    }}
+                  >
+                    Paste the Secret Key provided by the website.
+                  </p>
+
+                  {/* LIVE FEEDBACK: Show the generated code instantly! */}
+                  {editing.totp_secret && editing.totp_secret.length >= 16 && (
                     <div
-                      key={c}
-                      className={`color-dot ${editing.color === c ? "selected" : ""}`}
-                      style={{ backgroundColor: c }}
-                      onClick={() => setEditing({ ...editing, color: c })}
-                    />
-                  ))}
+                      style={{
+                        background: "var(--bg-color)",
+                        border: "1px solid var(--border)",
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                      }}
+                    >
+                      <TotpDisplay
+                        secret={editing.totp_secret}
+                        compact={true}
+                        onCopy={(code) => handleCopy(code, true)}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -858,6 +1101,16 @@ export function VaultView() {
 
                     try {
                       const now = Math.floor(Date.now() / 1000);
+
+                      // FIX: Properly handle the optional TOTP field
+                      // If it's empty, we make it undefined so Rust parses it as None.
+                      const cleanTotp =
+                        editing.totp_secret && editing.totp_secret.trim() !== ""
+                          ? editing.totp_secret
+                              .replace(/\s+/g, "")
+                              .toUpperCase()
+                          : undefined;
+
                       await saveEntry({
                         id: editing.id || generateUUID(),
                         service: trimmedService,
@@ -867,9 +1120,10 @@ export function VaultView() {
                         url: editing.url || "",
                         color: editing.color || BRAND_COLORS[0],
                         is_pinned: editing.is_pinned || false,
+                        totp_secret: cleanTotp, // <--- Correctly passing undefined or the clean string
                         created_at: editing.created_at || now,
                         updated_at: now,
-                      } as VaultEntry);
+                      });
                       setEditing(null);
                     } catch (e) {
                       setSaveError("Error saving: " + e);
@@ -905,10 +1159,21 @@ export function VaultView() {
         />
       )}
       {copyModalMsg && (
-        <InfoModal
-          message={copyModalMsg}
-          onClose={() => setCopyModalMsg(null)}
-        />
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 200000,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ pointerEvents: "auto" }}>
+            <InfoModal
+              message={copyModalMsg}
+              onClose={() => setCopyModalMsg(null)}
+            />
+          </div>
+        </div>
       )}
       {exportedPath && (
         <ExportSuccessModal

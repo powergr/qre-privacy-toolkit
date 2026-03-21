@@ -1166,6 +1166,7 @@ mod tests {
             url: "".to_string(),
             color: "".to_string(),
             is_pinned: false,
+            totp_secret: None, // ← add this
         };
         vault.entries.push(bad_entry.clone());
         assert!(vault.validate().is_err(), "Empty ID must fail");
