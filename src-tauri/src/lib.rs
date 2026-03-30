@@ -169,6 +169,7 @@ pub fn run() {
             commands::tools::batch_clean_metadata,
             commands::tools::cancel_metadata_clean,
             commands::tools::compare_metadata_files,
+            commands::tools::detect_steganography,
             // Hasher
             commands::tools::calculate_file_hashes,
             commands::tools::get_file_metadata,

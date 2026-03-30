@@ -616,4 +616,14 @@ pub fn clean_registry(
     registry_cleaner::clean_registry_entries(entries)
 }
 
+#[tauri::command]
+pub async fn detect_steganography(
+    paths: Vec<String>,
+    app_handle: tauri::AppHandle,
+) -> CommandResult<Vec<crate::cleaner::StegoReport>> {
+    crate::cleaner::detect_steganography(paths, app_handle)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // --- END OF FILE tools.rs ---

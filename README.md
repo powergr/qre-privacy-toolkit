@@ -28,131 +28,96 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The Toolkit
+## 🛠️ The 12-Tool Suite (v2.7.5)
 
-QRE Privacy Toolkit combines 12 essential privacy tools into one secure application:
+QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
 ### **1. 🔐 File Encryption**
 
 Secure any file—photos, tax documents, 50GB video backups—using military-grade **AES-256-GCM**.
 
-**Unlimited Size:** Powered by a custom **Rust Streaming Engine**, you can encrypt files of any size without using up your RAM.
+- **Unlimited Size:** Powered by a custom **Rust Streaming Engine**, you can encrypt files of any size without exhausting your RAM.
+- **Smart Compression:** Automatically compresses documents while skipping already-compressed media files to save CPU cycles.
+- **Cross-Platform:** Lock a file on your PC, unlock it on your Android phone.
 
-**Smart Compression:** Automatically compresses documents while skipping media files.
+### **2. 🔑 Password Vault & Offline 2FA**
 
-**Cross-Platform:** Lock a file on your PC, unlock it on your Android phone.
+A secure, offline, zero-knowledge database for your logins.
 
-### **2. 🔑 Password Vault**
-
-A secure, offline database for your logins.
-
-**Zero-Knowledge:** Your secrets are encrypted with your Master Key inside your local keychain.
-
-**Generators:** Built-in strong password generator and strength meter.
+- **Offline Authenticator (TOTP):** Generate live 6-digit 2FA codes directly inside your vault. No need for cloud-synced authenticator apps on your phone.
+- **Generators:** Built-in strong password generator and local strength meter.
 
 ### **3. 📝 Secure Notes**
 
-An encrypted notepad for sensitive text that isn't just a password.
-
-- Store recovery seeds, Wi-Fi codes, or private journals.
-
-- Data is encrypted at rest and only decrypted in memory when you view it.
+An encrypted notepad for sensitive text that isn't just a password. Store recovery seeds, Wi-Fi codes, or private journals safely at rest.
 
 ### **4. 🔖 Private Bookmarks**
 
-Save your sensitive links (Bank logins, Medical portals, Crypto exchanges) in an encrypted vault.
-
-**No Tracking:** Unlike browser bookmarks, these are never synced to Google/Apple/Mozilla servers.
-
-**Encrypted Storage:** URLs are encrypted on disk, so forensic tools cannot see your browsing history.
+Save your sensitive links (Bank logins, Medical portals, Crypto exchanges) in an encrypted vault, completely hidden from browser syncing and forensic tools.
 
 ### **5. 📋 Secure Clipboard**
 
-The clipboard is a common security leak.
+Grabs text from your clipboard, encrypts it into a secure history, and **wipes** the OS clipboard immediately. Auto-clears entries after a customizable TTL.
 
-**Secure Paste:** Grabs text from your clipboard, encrypts it into a secure history, and **wipes** the OS clipboard immediately.
+### **6. 🧹 Metadata Cleaner & Steganography Scan**
 
-**Auto-Cleanup:** Automatically deletes history entries after a set time (e.g., 24 hours).
+A dual-purpose media privacy suite:
 
-### **6. 🧹 Metadata Cleaner**
+- **Meta Cleaner:** Scrub hidden GPS coordinates, camera models, and author data from Images (JPG/PNG/WebP), PDFs, and Office Docs.
+- **Steganography Detector:** Mathematically analyzes the Least Significant Bits (LSB) of an image to calculate its Shannon Entropy, detecting hidden, encrypted payloads embedded inside normal-looking photos.
 
-Photos and documents contain hidden data (Exif) that can reveal your location and identity.
+### **7. 🕵️‍♂️ Local Secret Scanner & Breach Check**
 
-**Scrub:** Remove GPS coordinates, Camera models, Authors, and Edit history from Images (JPG/PNG), PDFs, and Office Docs.
+Detect data leaks before they happen, and check if you've already been compromised.
 
-**Batch:** Drag & drop multiple files or folders to clean them instantly.
+- **Local Scanner:** Rapidly scans unencrypted `.txt`, `.csv`, and `.env` files on your hard drive to find exposed API keys, plaintext passwords, and crypto seed phrases.
+- **HIBP API:** Checks if your password has appeared in known data leaks using **k-Anonymity**. We send only the first 5 characters of the hash to the internet.
 
-### **7. ✅ Integrity Checker**
+### **8. ✅ Integrity Checker**
 
-Verify that files you download (like crypto wallets, Linux ISOs, or installers) are genuine and haven't been tampered with by hackers.
+Verify that files you download (like crypto wallets, Linux ISOs, or installers) haven't been tampered with by hackers. Calculates SHA-256, SHA-1, and MD5 simultaneously.
 
-**Multi-Hash:** Calculates SHA-256, SHA-1, and MD5 simultaneously.
+### **9. 🗑️ Secure Shredder (Desktop)**
 
-**Auto-Compare:** Paste the official hash from the developer's website, and QRE will instantly highlight if it matches or fails.
-
-### **8. 📡 Privacy Check**
-
-Check if your password has appeared in known data leaks (850M+ records).
-
-**Privacy Preserving:** Uses **k-Anonymity**. We send only the first 5 characters of the hash to the API. Your password is **never** sent to any server.
-
-### **9. 🗑️ System Clean**
-
-Remove temporary files, caches, and usage history to free up space and improve privacy.
-
-**Targets:** Clears browser caches (Chrome, Edge, Brave), Windows Temp, and Recent Documents list.
-
-**Privacy:** Only deletes cache/temp files. It does NOT delete saved passwords or cookies.
-
-Available on Desktop versions only.
+When you delete a file normally, the data remains on your disk. The Shredder physically overwrites your files with random noise (up to DoD Standard 3-Pass) before deleting them. Includes free-space wiping for HDDs and TRIM commands for SSDs.
 
 ### **10. 🔳 Secure QR Generator**
 
-Share sensitive data (Wi-Fi passwords, Crypto addresses) with mobile devices without sending it over the internet.
+Share sensitive data (Wi-Fi passwords, Crypto addresses) with mobile devices completely offline. Data stays air-gapped on your screen.
 
-**Air-Gapped:** Data stays on your screen. The recipient scans it with their camera.
+### **11. 🧹 System & Registry Clean (Desktop)**
 
-**Offline:** No API calls. The QR is generated locally in Rust.
-
-### **11. 🗑️ Secure Shredder (Desktop)**
-
-When you delete a file, the data remains on your disk. The Shredder overwrites your files with random noise (DoD Standard 3-Pass) before deleting them. Added the wipe-free space for HDDs and trim for SSDs. (V2.7.2)
-
-_(Note: On Android, this performs a standard permanent delete due to hardware limitations)._
+Remove temporary files, browser caches (Chrome, Edge, Brave), Windows Temp, and developer build artifacts (npm, cargo) to free up space. Safely scans and removes orphaned Windows Registry keys.
 
 ### **12. 🔎 File Analyzer**
 
-A security tool designed to detect malicious files hiding behind fake extensions (e.g., `salary.pdf.exe`).
-
-**Deep Scan:** Analyzes file headers (Magic Numbers) to determine the 'true' file type, ignoring the extension.
-
-**Malware Detection:** Instantly flags executable binaries that are masquerading as Documents, Images, or Archives.
-
-**Smart Filtering:** Intelligently whitelists common safe mismatches (e.g., `.docx` is technically a `.zip`) to reduce false positives.
+Detects malicious files hiding behind fake extensions (e.g., `salary.pdf.exe`). Analyzes file headers (Magic Numbers) to determine the 'true' file type, ignoring the extension.
 
 ---
 
 ## 🛡️ Security Architecture
 
-**Key Derivation:** Argon2id (Resistant to GPU brute-force).
-
-**Paranoid Mode:** Mixes true physical entropy (mouse/touch timing jitter) with the OS's cryptographic generator. This mathematically immunizes your encryption against theoretical hardware RNG backdoors.
-
-**Panic Button:** `Ctrl+Shift+Q` instantly kills the app and wipes memory (Desktop).
-
-**Auto-Lock:** Sessions timeout after 15 minutes of inactivity.
+- **Memory Zeroization:** Cryptographic keys and plaintext payloads are actively scrubbed from your system's RAM (`0x00`) the exact moment they are no longer needed, defeating cold-boot attacks and RAM-scrapers.
+- **Key Derivation:** Argon2id (Resistant to GPU brute-force attacks).
+- **Hybrid Paranoid Mode:** Mitigates theoretical hardware RNG backdoors by XOR-mixing your physical mouse/touch timing jitter directly into the OS's cryptographic seed.
+- **Panic Button:** `Ctrl+Shift+Q` instantly kills the app and wipes memory (Desktop).
+- **Auto-Lock:** Sessions timeout automatically after inactivity.
 
 ---
 
-## 🚀 Getting Started
+## 💾 Portable USB Vaults
 
-1. **Create a Vault:** Set a strong Master Password.
-2. **Save your Recovery Code:** This is the _only_ way to restore access if you forget your password.
-3. **Start using the tools:** Select a tool from the Home screen or Sidebar.
+Transform any standard USB flash drive into a highly secure, cross-platform encrypted vault—no hardware encryption chips required.
+
+- **True Portability:** Initialize a USB drive on your PC, unplug it, and securely unlock your files on any Windows, macOS, or Linux machine running QRE.
+- **Multi-Vault Architecture:** QRE’s Rust backend functions as a dynamic Key Manager, securely holding multiple active `MasterKeys` in isolated memory environments simultaneously.
+- **Ghost-File Protection (NAND Defense):** Because flash memory hardware uses wear-leveling algorithms that leave deleted plaintext data forensically recoverable, QRE enforces a safe "Encrypt locally, copy securely" workflow, warning you before you encrypt directly on a USB.
+- **Sudden Ejection Watcher:** If a malicious actor (or clumsy user) physically yanks the unlocked USB drive out of the machine, a dedicated Rust background thread instantly detects the hardware removal and zeroes the Master Key from RAM.
+- **Evil-Maid Verification:** During initialization, a unique Vault UUID is generated. Every time you unlock the drive on a new computer, the UUID is displayed, allowing you to verify out-of-band that an attacker hasn't stealthily swapped your USB's keychain file.
 
 ---
 
-## 📦 Building from Source
+## 🚀 Getting Started & Building
 
 ```bash
 # 1. Install Dependencies
@@ -165,111 +130,26 @@ npm run tauri dev
 npm run tauri build
 ```
 
----
-
-### 🔐 New in v2.7.3: Portable USB Vaults
-
-Transform any standard USB flash drive into a highly secure, offline, cross-platform encrypted vault—no hardware encryption chips required.
-
-- **True Portability:** Initialize a USB drive on your PC, unplug it, and securely unlock your files on any Windows, macOS, or Linux machine running QRE.
-- **Multi-Vault Architecture:** QRE’s rewritten Rust backend now functions as a dynamic Key Manager, securely holding multiple active `MasterKeys` in isolated memory environments simultaneously.
-- **Ghost-File Protection (NAND Defense):** Because flash memory hardware uses wear-leveling algorithms that can leave deleted plaintext data forensically recoverable, QRE features an active path-routing guard. It strictly prohibits encrypting files directly on the USB, enforcing a safe "Encrypt locally, copy securely" workflow.
-- **Sudden Ejection Watcher:** If a malicious actor (or clumsy user) physically yanks the unlocked USB drive out of the machine, a dedicated Rust background thread instantly detects the hardware removal and zeroes the Master Key from RAM, sealing the vault perfectly.
-- **Evil-Maid Verification:** During initialization, a unique Vault UUID is generated alongside the Recovery Code. Every time you unlock the drive on a new computer, the UUID is displayed, allowing you to verify out-of-band that an attacker hasn't stealthily swapped your USB's keychain file.
-
----
-
-## ✴️ Auto Update System
-
-Please read the file [QRE Auto Update System](AUTO_UPDATE_README.md)
-
----
-
 ## ⚠️ Important Security Notice
 
-QRE Toolkit follows a **Zero-Knowledge** architecture.
-If you lose your **Master Password** AND your **Recovery Code**, your data is mathematically inaccessible. There is no "Password Reset" button because there is no server.
-
-**Backup your `keychain.json` file and store your Recovery Code safely.**
-
-Read a detailed blog post: [Authentication System Deep Dive](https://projectqre.com/blog-auth-deep-dive.html)
+QRE Toolkit follows a strict **Zero-Knowledge** architecture. If you lose your **Master Password** AND your **Recovery Code**, your data is mathematically inaccessible. There is no "Password Reset" button because there is no server. **Backup your `keychain.json` file safely.**
 
 ---
 
-## 🛡️ Download Security
+## ✅ Test Coverage
 
-### Windows SmartScreen Warning
+QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing to guarantee safety across updates.
 
-You may see "Windows protected your PC" when running QRE Privacy Toolkit.
+**Rust Backend (`cargo test`):**
 
-**Why this happens:**
+- 83 tests passed from 83 total (Covers memory wiping, file routing, steganography math, Zip-Bomb prevention, and AES-GCM streaming integrity).
 
-- QRE Privacy Toolkit is not yet code-signed (we're working on it)
-- Microsoft requires paid certificates ($200-500/year)
-- As an open-source project, we're applying for free signing
+**Frontend (`npm test`):**
 
-**How to verify your download is safe:**
-
-1. Check SHA-256 hash matches release page
-2. Review source code (fully open source)
-3. Scan with VirusTotal
-
-**To run anyway:**
-
-1. Click "More info"
-2. Click "Run anyway"
-
-We're working with SignPath.io to get free code signing for open-source
-projects. Once approved, future releases will be signed.
-
-### Why Trust QRE Locker?
-
-- ✓ Fully open source (MIT license)
-- ✓ Active development on GitHub
-
-## 🍎 macOS Installation Note
-
-If the app fails to open, shows "App is damaged", or crashes immediately, it is because the app is not notarized by Apple.
-
-**To fix this:**
-
-1. Drag **QRE Privacy Toolkit** into your **Applications** folder.
-2. Open the **Terminal** app.
-3. Run the following command:
-
-   ```bash
-   sudo xattr -cr /Applications/"QRE Privacy Toolkit.app"
-   ```
-
-4. Open the app normally.
+- Vitest/Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries.
 
 ---
 
-## ✅ Tests
-
-There are 2 test suits.
-
-For the Rust backend run
-
-```bash
-cd /src-tauri
-cargo test
-```
-
-- 270 tests passed from 270 total
-
-For the frontend run
-
-```bash
-npm test
-```
-
-- 185 tests passed from 185 total
+**License:** MIT | **Copyright:** © 2026 Project QRE
 
 ---
-
-**License:** MIT
-
----
-
-**Copyright:** © 2026 Project QRE

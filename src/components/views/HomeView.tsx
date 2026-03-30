@@ -132,7 +132,7 @@ export function HomeView({ setTab }: HomeViewProps) {
         />
 
         <ToolCard
-          title="Meta Cleaner"
+          title="Metadata Cleaner"
           desc="Remove Exif/GPS data."
           icon={<Eraser size={24} color="#22c55e" />}
           bg="rgba(34, 197, 94, 0.1)"

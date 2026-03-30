@@ -148,7 +148,7 @@ export function Sidebar({
         },
         {
           id: "cleaner",
-          label: "Meta Cleaner",
+          label: "Metadata Cleaner",
           icon: <Eraser size={20} strokeWidth={2.5} />,
           desc: "Remove EXIF/GPS data",
         },
