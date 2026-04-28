@@ -218,9 +218,9 @@ pub async fn lock_file(
                 }
             };
 
-            let encryption_result = crypto_stream::encrypt_file_stream(
-                &input_path_str, &final_path_str, &master_key, &vault_id, keyfile_hash.as_deref(), entropy_seed, level, progress_cb,
-            );
+let encryption_result = crypto_stream::encrypt_file_stream(
+    &input_path_str, &final_path_str, &master_key, &vault_id, keyfile_hash.as_deref(), None, entropy_seed, level, progress_cb,
+);
 
             if is_temp { let _ = fs::remove_file(&input_path_str); }
 
@@ -316,7 +316,7 @@ pub async fn unlock_file(
                     }
                     Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
-            } else if version == 5 {
+            } else if version == 5 || version == 6 {
                 let header: Result<crypto_stream::StreamHeader, _> = bincode::deserialize_from(&mut file);
                 let vault_id = match header {
                     Ok(h) => h.vault_id.unwrap_or_else(|| "local".to_string()),

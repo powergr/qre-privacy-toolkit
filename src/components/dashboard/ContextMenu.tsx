@@ -1,3 +1,10 @@
+// --- START OF FILE src/components/dashboard/ContextMenu.tsx ---
+// Changes from original:
+//   1. Added `CalendarClock` import from lucide-react.
+//   2. Added "Time-Lock…" menu item for non-.qre files (between Lock and the divider).
+//   3. Added `onTimeLock` optional prop — kept optional so existing call sites
+//      that haven't wired it yet don't break at compile time.
+
 import {
   Lock,
   Unlock,
@@ -9,16 +16,19 @@ import {
   Scissors,
   Copy,
   ClipboardPaste,
+  CalendarClock,
 } from "lucide-react";
 
 interface ContextMenuProps {
   x: number;
   y: number;
-  targetPath: string; // The file right-clicked, or current dir if background
+  targetPath: string;
   isBackground: boolean;
   onClose: () => void;
   onAction: (action: string) => void;
   canPaste?: boolean;
+  /** Called when the user clicks "Time-Lock…" — parent opens TimeLockModal. */
+  onTimeLock?: (filePath: string) => void;
 }
 
 export function ContextMenu({
@@ -29,13 +39,14 @@ export function ContextMenu({
   onClose,
   onAction,
   canPaste,
+  onTimeLock,
 }: ContextMenuProps) {
   const isQre = targetPath.endsWith(".qre");
 
   // --- SMART POSITIONING ---
   const style: React.CSSProperties = {
     position: "fixed",
-    width: 200,
+    width: 210,
     zIndex: 1000,
     display: "block",
     top: "auto",
@@ -44,7 +55,7 @@ export function ContextMenu({
     right: "auto",
   };
 
-  if (x + 200 > window.innerWidth) {
+  if (x + 210 > window.innerWidth) {
     style.right = window.innerWidth - x;
   } else {
     style.left = x;
@@ -102,10 +113,27 @@ export function ContextMenu({
                 <Unlock size={16} color="var(--btn-danger)" /> Unlock
               </div>
             ) : (
-              <div className="dropdown-item" onClick={() => onAction("lock")}>
-                <Lock size={16} color="var(--btn-success)" /> Lock
-              </div>
+              <>
+                <div className="dropdown-item" onClick={() => onAction("lock")}>
+                  <Lock size={16} color="var(--btn-success)" /> Lock
+                </div>
+
+                {/* TIME-LOCK entry — only for plaintext (non-.qre) files */}
+                {onTimeLock && (
+                  <div
+                    className="dropdown-item"
+                    onClick={() => {
+                      onClose();
+                      onTimeLock(targetPath);
+                    }}
+                  >
+                    <CalendarClock size={16} color="var(--accent)" />
+                    Time-Lock…
+                  </div>
+                )}
+              </>
             )}
+
             <div className="dropdown-divider"></div>
             <div className="dropdown-item" onClick={() => onAction("cut")}>
               <Scissors size={16} /> Cut
@@ -133,3 +161,5 @@ export function ContextMenu({
     </>
   );
 }
+
+// --- END OF FILE src/components/dashboard/ContextMenu.tsx ---

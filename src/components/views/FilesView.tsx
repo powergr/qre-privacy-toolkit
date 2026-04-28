@@ -1,3 +1,5 @@
+// --- START OF FILE src/components/views/FilesView.tsx ---
+
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -34,9 +36,12 @@ import {
   CompressionModal,
   ProcessingModal,
   ErrorModal,
+  TimeLockModal,
 } from "../modals/AppModals";
 
-import { BatchResult } from "../../types";
+import { BatchResult, FileEntry } from "../../types";
+
+// ─── TYPES ───────────────────────────────────────────────────────────────────
 
 interface FilesViewProps {
   onShowBackupReminder: () => void;
@@ -50,30 +55,27 @@ interface FilesViewProps {
   onUnlockDrive: (path: string) => void;
 }
 
+// ─── COMPONENT ───────────────────────────────────────────────────────────────
+
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(fs.loadDir);
 
-  // State
+  // ── Existing state ──────────────────────────────────────────────────────────
   const [showCompression, setShowCompression] = useState(false);
   const [showEntropyModal, setShowEntropyModal] = useState(false);
   const [pendingLockTargets, setPendingLockTargets] = useState<string[] | null>(
     null,
   );
-
-  // Custom Modal States
   const [showGhostWarning, setShowGhostWarning] = useState(false);
   const [showExtractModal, setShowExtractModal] = useState(false);
   const [pendingUnlockTargets, setPendingUnlockTargets] = useState<
     string[] | null
   >(null);
-
-  // Clipboard State for Cut/Copy/Paste functionality
   const [fileClipboard, setFileClipboard] = useState<{
     paths: string[];
     isCut: boolean;
   } | null>(null);
-
   const [menuData, setMenuData] = useState<{
     x: number;
     y: number;
@@ -86,7 +88,20 @@ export function FilesView(props: FilesViewProps) {
   } | null>(null);
   const [itemsToDelete, setItemsToDelete] = useState<string[] | null>(null);
 
-  // --- KEYBOARD SHORTCUTS ---
+  // ── Time-lock state ─────────────────────────────────────────────────────────
+  /** Path of the plaintext file to time-lock (opens TimeLockModal). */
+  const [timeLockTarget, setTimeLockTarget] = useState<string | null>(null);
+  /**
+   * Map of .qre path → locked_until timestamp for files in the current directory.
+   * Populated by loadTimeLockStatuses on every directory change.
+   * The Map (rather than a Set) lets FileGrid show the actual remaining time.
+   */
+  const [timeLockInfo, setTimeLockInfo] = useState<Map<string, number>>(
+    new Map(),
+  );
+
+  // ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (inputModal || itemsToDelete || showEntropyModal || showCompression)
@@ -106,13 +121,10 @@ export function FilesView(props: FilesViewProps) {
         fs.clearSelection();
         setFileClipboard(null);
       }
-      if (e.key === "Backspace") {
-        fs.goUp();
-      }
-
+      if (e.key === "Backspace") fs.goUp();
       if (e.key === "Enter" && fs.selectedPaths.length === 1) {
         const entry = fs.entries.find((en) => en.path === fs.selectedPaths[0]);
-        if (entry && entry.isDirectory) fs.loadDir(entry.path);
+        if (entry?.isDirectory) fs.loadDir(entry.path);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -126,7 +138,45 @@ export function FilesView(props: FilesViewProps) {
     showCompression,
   ]);
 
-  // --- CUSTOM UX ROUTING LOGIC ---
+  // ─── TIME-LOCK STATUS LOADING ─────────────────────────────────────────────
+  //
+  // Fires on every directory listing change. Calls get_file_timelock_status
+  // for each .qre file in parallel — the command reads only the plaintext
+  // StreamHeader and requires no master key, so this is fast.
+
+  useEffect(() => {
+    loadTimeLockStatuses(fs.entries);
+  }, [fs.entries]);
+
+  async function loadTimeLockStatuses(entries: FileEntry[]) {
+    const qreFiles = entries.filter(
+      (e) => !e.isDirectory && e.name.endsWith(".qre"),
+    );
+    if (qreFiles.length === 0) {
+      setTimeLockInfo(new Map());
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      qreFiles.map((e) =>
+        invoke<{ is_locked: boolean; locked_until: number }>(
+          "get_file_timelock_status",
+          { qrePath: e.path },
+        ),
+      ),
+    );
+
+    const info = new Map<string, number>();
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled" && r.value.is_locked) {
+        info.set(qreFiles[i].path, r.value.locked_until);
+      }
+    });
+    setTimeLockInfo(info);
+  }
+
+  // ─── PORTABLE DRIVE HELPERS ───────────────────────────────────────────────
+
   const isPortableTarget = (targets: string[]) => {
     const portableMountPaths = props.portable.drives
       .filter((d) => d.isUnlocked)
@@ -155,7 +205,6 @@ export function FilesView(props: FilesViewProps) {
       setPendingLockTargets(targets);
       setShowEntropyModal(true);
     } else {
-      // FIX 1: Corrected if (results) statement
       const results = await crypto.runCrypto(
         "lock_file",
         targets,
@@ -176,28 +225,53 @@ export function FilesView(props: FilesViewProps) {
     }
   };
 
+  // ─── UNLOCK — handles time-locked files transparently ────────────────────
+  //
+  // The regular unlock command (files.rs → decrypt_file_stream) now checks
+  // the embedded time-lock metadata and returns a TIME_LOCKED: error when
+  // appropriate. No special routing needed here — we just surface the message.
+
   const requestUnlock = useCallback(
     async (targets: string[]) => {
       if (isPortableTarget(targets)) {
         setPendingUnlockTargets(targets);
         setShowExtractModal(true);
-      } else {
-        // FIX 2: Added fs.currentPath to the function call
-        const results = await crypto.runCrypto(
-          "unlock_file",
-          targets,
-          fs.currentPath,
+        return;
+      }
+
+      const results = await crypto.runCrypto(
+        "unlock_file",
+        targets,
+        fs.currentPath,
+      );
+
+      if (results) {
+        const timeLocked = results.filter(
+          (r) => !r.success && r.message.startsWith("TIME_LOCKED:"),
         );
-        if (results) {
-          const failures = results.filter((r) => !r.success);
-          if (failures.length > 0) {
-            crypto.setErrorMsg(
-              "Unlock failed:\n" +
-                failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
-            );
-          }
+        const realFailures = results.filter(
+          (r) => !r.success && !r.message.startsWith("TIME_LOCKED:"),
+        );
+
+        if (timeLocked.length > 0) {
+          // Parse "TIME_LOCKED:<unix_ts>:<human message>" from Rust
+          const msgs = timeLocked.map((r) => {
+            const parts = r.message.split(":");
+            return `🔒 ${parts.slice(2).join(":")}`;
+          });
+          crypto.setErrorMsg(msgs.join("\n\n"));
+        }
+
+        if (realFailures.length > 0) {
+          crypto.setErrorMsg(
+            "Unlock failed:\n" +
+              realFailures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+          );
         }
       }
+
+      // Refresh so badges update if a lock just expired
+      fs.loadDir(fs.currentPath);
     },
     [props.portable.drives, fs.currentPath],
   );
@@ -221,6 +295,8 @@ export function FilesView(props: FilesViewProps) {
   );
 
   const { isDragging } = useDragDrop(handleDrop);
+
+  // ─── CONTEXT MENU ─────────────────────────────────────────────────────────
 
   function handleContextMenu(e: React.MouseEvent, path: string | null) {
     e.preventDefault();
@@ -250,7 +326,6 @@ export function FilesView(props: FilesViewProps) {
           destDir: fs.currentPath,
           isCut: fileClipboard.isCut,
         });
-
         const failures = results.filter((r) => !r.success);
         if (failures.length > 0) {
           crypto.setErrorMsg(
@@ -258,7 +333,6 @@ export function FilesView(props: FilesViewProps) {
               failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
           );
         }
-
         if (fileClipboard.isCut) setFileClipboard(null);
         fs.loadDir(fs.currentPath);
       } catch (e) {
@@ -282,10 +356,11 @@ export function FilesView(props: FilesViewProps) {
       );
     if (action === "rename") setInputModal({ mode: "rename", path });
     if (action === "delete") setItemsToDelete(targets);
-
     if (action === "cut") setFileClipboard({ paths: targets, isCut: true });
     if (action === "copy") setFileClipboard({ paths: targets, isCut: false });
   }
+
+  // ─── DELETE ───────────────────────────────────────────────────────────────
 
   async function performDeleteAction(mode: "trash" | "shred") {
     if (!itemsToDelete) return;
@@ -298,10 +373,10 @@ export function FilesView(props: FilesViewProps) {
       const results = await invoke<BatchResult[]>(command, { paths: targets });
       const failures = results.filter((r) => !r.success);
       if (failures.length > 0) {
-        const report = failures
-          .map((f) => `• ${f.name}: ${f.message}`)
-          .join("\n");
-        crypto.setErrorMsg(`Errors occurred:\n\n${report}`);
+        crypto.setErrorMsg(
+          "Errors occurred:\n\n" +
+            failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+        );
       }
       fs.loadDir(fs.currentPath);
       fs.setSelectedPaths([]);
@@ -311,6 +386,8 @@ export function FilesView(props: FilesViewProps) {
       crypto.clearProgress(500);
     }
   }
+
+  // ─── OTHER HANDLERS ───────────────────────────────────────────────────────
 
   async function handleInputConfirm(val: string) {
     if (!inputModal || !val.trim()) return;
@@ -330,7 +407,6 @@ export function FilesView(props: FilesViewProps) {
     setShowExtractModal(false);
     if (!pendingUnlockTargets) return;
 
-    // FIX 3: Added fs.currentPath to the function call
     const results = await crypto.runCrypto(
       "unlock_file",
       pendingUnlockTargets,
@@ -350,6 +426,11 @@ export function FilesView(props: FilesViewProps) {
     setPendingUnlockTargets(null);
   };
 
+  // Derive the Set<string> that FileGrid uses for badge display
+  const timeLockPaths = new Set(timeLockInfo.keys());
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+
   return (
     <div
       style={{
@@ -364,7 +445,6 @@ export function FilesView(props: FilesViewProps) {
         onLock={() => requestLock(fs.selectedPaths)}
         onUnlock={() => requestUnlock(fs.selectedPaths)}
         onNavigate={fs.loadDir}
-        // FIX 4: Removed onRefresh from the Toolbar component props here
         keyFile={crypto.keyFile}
         setKeyFile={crypto.setKeyFile}
         selectKeyFile={crypto.selectKeyFile}
@@ -382,13 +462,13 @@ export function FilesView(props: FilesViewProps) {
         onNavigate={fs.loadDir}
         onGoHome={async () => {
           try {
-            const dir = await homeDir();
-            fs.loadDir(dir);
+            fs.loadDir(await homeDir());
           } catch (e) {
             console.error("Failed to resolve Home dir", e);
           }
         }}
       />
+
       <FileGrid
         entries={fs.entries}
         selectedPaths={fs.selectedPaths}
@@ -401,6 +481,8 @@ export function FilesView(props: FilesViewProps) {
         sortField={fs.sortField}
         sortDirection={fs.sortDirection}
         onSort={fs.handleSort}
+        timeLockPaths={timeLockPaths}
+        timeLockInfo={timeLockInfo}
       />
 
       {isDragging && (
@@ -421,14 +503,13 @@ export function FilesView(props: FilesViewProps) {
             background: "var(--border)",
             margin: "0 10px",
           }}
-        ></div>
+        />
         <span>
           {fs.selectedPaths.length > 0
             ? `${fs.selectedPaths.length} selected (${formatSize(fs.selectionSize)})`
             : "No selection"}
         </span>
-        <div style={{ flex: 1 }}></div>
-
+        <div style={{ flex: 1 }} />
         {fileClipboard && (
           <span
             style={{
@@ -441,7 +522,6 @@ export function FilesView(props: FilesViewProps) {
             {fileClipboard.isCut ? "cut" : "copied"}
           </span>
         )}
-
         {crypto.keyFile && (
           <span style={{ color: "var(--btn-success)", fontSize: "0.75rem" }}>
             Keyfile Active
@@ -449,6 +529,7 @@ export function FilesView(props: FilesViewProps) {
         )}
       </div>
 
+      {/* CONTEXT MENU */}
       {menuData && (
         <ContextMenu
           x={menuData.x}
@@ -458,6 +539,10 @@ export function FilesView(props: FilesViewProps) {
           onClose={() => setMenuData(null)}
           onAction={handleContextAction}
           canPaste={fileClipboard !== null}
+          onTimeLock={(path) => {
+            setMenuData(null);
+            setTimeLockTarget(path);
+          }}
         />
       )}
 
@@ -494,7 +579,7 @@ export function FilesView(props: FilesViewProps) {
         />
       )}
 
-      {/* GHOST WARNING MODAL */}
+      {/* GHOST WARNING */}
       {showGhostWarning && pendingLockTargets && (
         <div className="modal-overlay" style={{ zIndex: 100005 }}>
           <div className="auth-card">
@@ -522,19 +607,18 @@ export function FilesView(props: FilesViewProps) {
                   color: "var(--text-dim)",
                   fontSize: "0.85rem",
                   lineHeight: 1.5,
-                  background: "rgba(245, 158, 11, 0.1)",
+                  background: "rgba(245,158,11,0.1)",
                   padding: 15,
                   borderRadius: 8,
                 }}
               >
                 <strong>Hardware Risk:</strong> USB Flash memory uses
-                "wear-leveling". When QRE deletes the original unencrypted file,
-                the USB hardware might leave a hidden ghost copy of the
-                plaintext intact.
+                "wear-leveling". When QRE deletes the original file, the USB
+                hardware may leave a hidden ghost copy of the plaintext intact.
                 <br />
                 <br />
-                <strong>Best Practice:</strong> Encrypt the file on your PC
-                first, then copy the locked <code>.qre</code> file to the USB.
+                <strong>Best Practice:</strong> Encrypt on your PC first, then
+                copy the <code>.qre</code> file to the USB.
               </p>
               <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
                 <button
@@ -574,7 +658,7 @@ export function FilesView(props: FilesViewProps) {
             <div className="modal-header">
               <FolderOpen size={24} color="var(--accent)" />
               <h2>Extract Files</h2>
-              <div style={{ flex: 1 }}></div>
+              <div style={{ flex: 1 }} />
               <X
                 size={20}
                 style={{ cursor: "pointer" }}
@@ -592,10 +676,8 @@ export function FilesView(props: FilesViewProps) {
                   marginBottom: 20,
                 }}
               >
-                Select where to save the decrypted files. Saving them back to
-                the USB is not recommended.
+                Select where to save the decrypted files.
               </p>
-
               <div
                 style={{ display: "flex", flexDirection: "column", gap: 10 }}
               >
@@ -617,7 +699,7 @@ export function FilesView(props: FilesViewProps) {
                     background: "var(--border)",
                     margin: "5px 0",
                   }}
-                ></div>
+                />
                 <ExtractOption
                   label="Extract Here (USB)"
                   color="var(--warning)"
@@ -675,7 +757,7 @@ export function FilesView(props: FilesViewProps) {
               </p>
               <div
                 style={{
-                  background: "rgba(217, 64, 64, 0.1)",
+                  background: "rgba(217,64,64,0.1)",
                   padding: 10,
                   borderRadius: 6,
                   margin: "15px 0",
@@ -704,11 +786,34 @@ export function FilesView(props: FilesViewProps) {
           percentage={crypto.progress.percentage}
         />
       )}
+
+      {/* TIME-LOCK MODAL */}
+      {timeLockTarget && (
+        <TimeLockModal
+          filePath={timeLockTarget}
+          onClose={() => setTimeLockTarget(null)}
+          onSuccess={(_msg) => {
+            crypto.clearProgress(0);
+            setTimeLockTarget(null);
+            fs.loadDir(fs.currentPath);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ExtractOption({ label, onClick, color }: any) {
+// ─── HELPER COMPONENT ─────────────────────────────────────────────────────────
+
+function ExtractOption({
+  label,
+  onClick,
+  color,
+}: {
+  label: string;
+  onClick: () => void;
+  color?: string;
+}) {
   return (
     <button
       onClick={onClick}
@@ -734,3 +839,5 @@ function ExtractOption({ label, onClick, color }: any) {
     </button>
   );
 }
+
+// --- END OF FILE src/components/views/FilesView.tsx ---

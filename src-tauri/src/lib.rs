@@ -24,6 +24,7 @@ mod state;
 mod system_cleaner;
 #[cfg(test)]
 mod tests; // Only compiled when running `cargo test`
+mod timelock;
 mod utils;
 mod wordlist;
 
@@ -187,6 +188,9 @@ pub fn run() {
             commands::tools::cancel_secret_scan,
             // Generator
             commands::tools::generate_passphrase,
+            // Timelock
+            commands::timelock::lock_file_with_timelock,
+            commands::timelock::get_file_timelock_status,
         ])
         // Boot the Tauri application loop. This will block the main thread and keep the app alive
         // until all windows are closed or `std::process::exit()` is called.

@@ -103,6 +103,7 @@ mod tests {
             "local", // <--- ADDED VAULT ID
             None,
             None,
+            None,
             1,
             progress_cb,
         )
@@ -143,7 +144,7 @@ mod tests {
 
         let mk = MasterKey([77u8; 32]);
         let keyfile_data = b"My Super Secret Keyfile Data";
-        let entropy_seed = [99u8; 32];
+        let _entropy_seed = [99u8; 32];
         let progress_cb = |_, _| {};
 
         crypto_stream::encrypt_file_stream(
@@ -152,7 +153,8 @@ mod tests {
             &mk,
             "local", // <--- ADDED VAULT ID
             Some(keyfile_data),
-            Some(entropy_seed), // <--- REMOVED REFERENCE '&'
+            None,
+            None, // <--- REMOVED REFERENCE '&'
             3,
             progress_cb,
         )
@@ -198,6 +200,7 @@ mod tests {
             encrypted_path.to_str().unwrap(),
             &correct_mk,
             "local", // <--- ADDED VAULT ID
+            None,
             None,
             None,
             1,
@@ -707,6 +710,7 @@ mod tests {
             "local",
             None,
             None,
+            None,
             3,
             |_, _| {},
         )
@@ -753,6 +757,7 @@ mod tests {
             "local",
             None,
             None,
+            None,
             3,
             |_, _| {},
         )
@@ -791,6 +796,7 @@ mod tests {
             "local",
             None,
             None,
+            None,
             3,
             |_, _| {},
         )
@@ -803,6 +809,7 @@ mod tests {
             &enc_b,
             &mk,
             "local",
+            None,
             None,
             None,
             3,
@@ -844,6 +851,7 @@ mod tests {
             "local",
             None,
             None,
+            None,
             3,
             |_, _| {},
         )
@@ -878,6 +886,7 @@ mod tests {
             &mk,
             "local",
             None,
+            None,
             Some(zero_seed),
             3,
             |_, _| {},
@@ -891,6 +900,7 @@ mod tests {
             &enc_b,
             &mk,
             "local",
+            None,
             None,
             Some(zero_seed),
             3,
@@ -921,6 +931,7 @@ mod tests {
             &encrypted,
             &mk,
             "local",
+            None,
             None,
             None,
             3,

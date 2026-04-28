@@ -1587,3 +1587,138 @@ export function DriveUnlockModal({
     </div>
   );
 }
+// =============================================================================
+// ADDITIONS TO AppModals.tsx
+// =============================================================================
+// Append these two items to the END of the existing AppModals.tsx file.
+// Do NOT replace the existing file — just paste this block at the bottom.
+// =============================================================================
+
+// --- RE-EXPORT: TimeLockModal ---
+// Keeps the import style consistent with the rest of the codebase.
+// Other views can now do:
+//   import { TimeLockModal } from "../modals/AppModals";
+// instead of importing directly from TimeLockModal.tsx.
+export { TimeLockModal } from "./TimeLockModal";
+
+// --- TIME-LOCK SIDECAR DELETE WARNING MODAL ---
+// Shown when the user tries to delete a .qre file that has a .tl sidecar.
+// Without this warning, users can accidentally destroy their only copy of the
+// binding_key by deleting the sidecar (or the .qre), making the file
+// permanently unrecoverable.
+//
+// The modal offers three outcomes:
+//   onDeleteBoth  — deletes both the .qre AND the .tl sidecar (shred-level, via Rust)
+//   onDeleteQreOnly — deletes only the .qre, keeping the orphaned sidecar
+//                     (edge-case; user may want to recover later if they have a backup)
+//   onCancel      — abort, do nothing
+
+interface TimeLockDeleteWarningProps {
+  filename: string; // Display name of the .qre file
+  onDeleteBoth: () => void;
+  onDeleteQreOnly: () => void;
+  onCancel: () => void;
+}
+
+export function TimeLockDeleteWarningModal({
+  filename,
+  onDeleteBoth,
+  onDeleteQreOnly,
+  onCancel,
+}: TimeLockDeleteWarningProps) {
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onCancel}
+      style={{ zIndex: 100010 }}
+    >
+      <div
+        className="auth-card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 440, border: "1px solid var(--warning)" }}
+      >
+        <div
+          className="modal-header"
+          style={{ borderBottomColor: "var(--warning)" }}
+        >
+          {/* AlertTriangle is already imported at the top of AppModals.tsx */}
+          <AlertTriangle size={20} color="var(--warning)" />
+          <h2 style={{ color: "var(--warning)" }}>Time-Locked File</h2>
+        </div>
+        <div className="modal-body">
+          <p style={{ color: "var(--text-main)", lineHeight: 1.5 }}>
+            <strong
+              style={{
+                display: "block",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                marginBottom: 6,
+              }}
+              title={filename}
+            >
+              {filename}
+            </strong>
+            is time-locked and has an accompanying{" "}
+            <code style={{ fontSize: "0.85rem" }}>.tl</code> sidecar file.
+          </p>
+          <p
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "0.875rem",
+              lineHeight: 1.5,
+              marginBottom: 16,
+            }}
+          >
+            Deleting the sidecar will make this file{" "}
+            <strong style={{ color: "var(--btn-danger)" }}>
+              permanently unrecoverable
+            </strong>{" "}
+            — even if you know your master password.
+          </p>
+
+          {/* Option 1 — Recommended: delete both atomically */}
+          <button
+            className="auth-btn danger-btn"
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              marginBottom: 8,
+            }}
+            onClick={onDeleteBoth}
+          >
+            {/* Trash2 is already imported at the top of AppModals.tsx */}
+            <Trash2 size={16} />
+            Delete file &amp; sidecar (recommended)
+          </button>
+
+          {/* Option 2 — Edge-case: delete .qre but keep orphan sidecar */}
+          <button
+            className="secondary-btn"
+            style={{
+              width: "100%",
+              marginBottom: 8,
+              fontSize: "0.85rem",
+              opacity: 0.7,
+            }}
+            onClick={onDeleteQreOnly}
+          >
+            Delete .qre only (keep sidecar)
+          </button>
+
+          {/* Option 3 — Abort */}
+          <button
+            className="secondary-btn"
+            style={{ width: "100%" }}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
