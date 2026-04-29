@@ -316,7 +316,7 @@ pub async fn unlock_file(
                     }
                     Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
-            } else if version == 5 || version == 6 {
+            } else if version == 5 || version == 6 || version == 7 {
                 let header: Result<crypto_stream::StreamHeader, _> = bincode::deserialize_from(&mut file);
                 let vault_id = match header {
                     Ok(h) => h.vault_id.unwrap_or_else(|| "local".to_string()),

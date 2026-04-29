@@ -8,7 +8,7 @@
 ![Downloads](https://img.shields.io/github/downloads/powergr/qre-privacy-toolkit/total)
 ![Stars](https://img.shields.io/github/stars/powergr/qre-privacy-toolkit?style=social)
 
-![Rust](https://img.shields.io/badge/Rust-1.94-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.95-000000?logo=rust&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white)
 ![React](https://img.shields.io/badge/React-19.1-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
@@ -28,7 +28,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.7.5)
+## 🛠️ The 12-Tool Suite (v2.7.6)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -39,6 +39,7 @@ Secure any file—photos, tax documents, 50GB video backups—using military-gra
 - **Unlimited Size:** Powered by a custom **Rust Streaming Engine**, you can encrypt files of any size without exhausting your RAM.
 - **Smart Compression:** Automatically compresses documents while skipping already-compressed media files to save CPU cycles.
 - **Cross-Platform:** Lock a file on your PC, unlock it on your Android phone.
+- **Time-lock Feature:** Time-Lock Encryption function implemented. Checking the correct time with NTP and ratchet time check.
 
 ### **2. 🔑 Password Vault & Offline 2FA**
 

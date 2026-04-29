@@ -25,6 +25,7 @@ mod system_cleaner;
 #[cfg(test)]
 mod tests; // Only compiled when running `cargo test`
 mod timelock;
+mod timelock_clock;
 mod utils;
 mod wordlist;
 
