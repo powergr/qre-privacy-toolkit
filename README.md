@@ -118,6 +118,12 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ---
 
+## New in v2.7.6
+
+Time-Lock Encryption. Read more [Time-lock blog post](https://projectqre.com/blog-timelock-encryption.html)
+
+---
+
 ## 🚀 Getting Started & Building
 
 ```bash
