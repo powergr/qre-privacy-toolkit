@@ -8,7 +8,7 @@
 ![Downloads](https://img.shields.io/github/downloads/powergr/qre-privacy-toolkit/total)
 ![Stars](https://img.shields.io/github/stars/powergr/qre-privacy-toolkit?style=social)
 
-![Rust](https://img.shields.io/badge/Rust-1.95-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.97-000000?logo=rust&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white)
 ![React](https://img.shields.io/badge/React-19.1-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
@@ -120,7 +120,7 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ## New in v2.7.6
 
-Time-Lock Encryption. Read more [Time-lock blog post](https://projectqre.com/blog-timelock-encryption.html)
+Time-Lock Encryption. Read more [Time-lock blog post](https://powergr.github.io/privacy_toolkit/blog-timelock-encryption.html)
 
 ---
 
@@ -139,7 +139,7 @@ npm run tauri build
 
 ## ⚠️ Important Security Notice
 
-QRE Toolkit follows a strict **Zero-Knowledge** architecture. If you lose your **Master Password** AND your **Recovery Code**, your data is mathematically inaccessible. There is no "Password Reset" button because there is no server. **Backup your `keychain.json` file safely.**
+QRE Privacy Toolkit follows a strict **Zero-Knowledge** architecture. If you lose your **Master Password** AND your **Recovery Code**, your data is mathematically inaccessible. There is no "Password Reset" button because there is no server. **Backup your `keychain.json` file safely.**
 
 ---
 
@@ -157,6 +157,6 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 ---
 
-**License:** MIT | **Copyright:** © 2026 Project QRE
+**License:** MIT | **Copyright:** © 2026 Project QRE Privacy Toolkit
 
 ---

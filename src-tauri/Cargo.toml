@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.7.6"
+version = "2.7.7"
 license = "MIT"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
@@ -73,6 +73,9 @@ opt-level = 3
 
 [features]
 clipboard = []
+# Exposes internal `crypto`/`keychain` modules so the fuzz crate (src-tauri/fuzz)
+# can link against them. Never enabled in the shipped app.
+fuzzing = []
 
 [profile.release]
 codegen-units = 1

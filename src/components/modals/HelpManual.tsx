@@ -103,7 +103,7 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
         style={{ textAlign: "center", marginBottom: "40px", marginTop: "10px" }}
       >
         <h1 style={{ margin: "0 0 10px 0", fontSize: "1.8rem" }}>
-          QRE User Manual
+          User Manual
         </h1>
         <div
           style={{
@@ -314,7 +314,7 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             another app.
           </li>
           <li>
-            Immediately click <strong>"Secure Paste"</strong> in QRE Toolkit.
+            Immediately click <strong>"Secure Paste"</strong> in QRE Privacy Toolkit.
           </li>
           <li>
             The app encrypts the text into your vault and{" "}
@@ -676,11 +676,11 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           <p style={{ marginTop: 5 }}>
             This means the file has been corrupted or modified by another
             program. To prevent executing malicious code or decrypting garbage,
-            QRE Toolkit refuses to open it. Try restoring from a backup.
+            QRE Privacy Toolkit refuses to open it. Try restoring from a backup.
           </p>
         </div>
 
-        <div>
+        <div style={{ marginBottom: 20 }}>
           <strong style={{ color: "var(--text-main)" }}>
             Cannot Save Notes / Permission Denied
           </strong>
@@ -688,6 +688,35 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             Ensure you dragged the app to the <strong>Applications</strong>{" "}
             folder. Running directly from the DMG / Zip often puts the app in
             "Read-Only" mode.
+          </p>
+        </div>
+
+        <div>
+          <strong style={{ color: "var(--text-main)" }}>
+            My old <code>QRE_Backup.json</code> won't work after I changed my
+            password or reset my Recovery Code
+          </strong>
+          <p style={{ marginTop: 5 }}>
+            This is expected. A keychain backup is a snapshot taken at export
+            time — it is <em>not</em> kept in sync automatically. Changing
+            your <strong>Master Password</strong> or resetting your{" "}
+            <strong>Recovery Code</strong> re-encrypts those credentials
+            inside the live keychain, so any backup saved before that change
+            was made only opens with the old password or old Recovery Code.
+          </p>
+          <p style={{ marginTop: 5 }}>
+            Your actual files are not at risk — the underlying encryption key
+            never changes, only the password/recovery layer protecting it
+            does. But you should treat an old backup as stale from that point
+            on.
+          </p>
+          <p style={{ marginTop: 5 }}>
+            QRE now clears its "backup done" flag automatically whenever you
+            change your password or reset your Recovery Code, so the{" "}
+            <strong>Security Reminder</strong> will prompt you to save a fresh{" "}
+            <code>QRE_Backup.json</code> the next time you lock a file. When it
+            does, save the new backup and discard (or clearly relabel) the old
+            one so you don't accidentally rely on outdated credentials.
           </p>
         </div>
       </Section>

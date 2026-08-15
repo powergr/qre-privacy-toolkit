@@ -126,6 +126,21 @@ pub fn set_backup_done(app: AppHandle) -> CommandResult<()> {
     Ok(())
 }
 
+// Any previously saved keychain backup is encrypted under the old password/recovery
+// code. Once either slot is rotated, that backup is stale, so we clear the "done"
+// marker (best-effort — a failure here shouldn't fail the password/recovery change
+// that triggered it) and let the reminder prompt the user to make a fresh one.
+fn clear_backup_done(app: &AppHandle) {
+    if let Ok(keychain_path) = resolve_keychain_path(app, "local") {
+        if let Some(dir) = keychain_path.parent() {
+            let marker = dir.join("backup_done");
+            if marker.exists() {
+                let _ = fs::remove_file(marker);
+            }
+        }
+    }
+}
+
 // ==========================================
 // --- AUTH & SYSTEM ---
 // ==========================================
@@ -241,6 +256,7 @@ pub fn change_user_password(
         .ok_or_else(|| "Vault is locked.".to_string())?;
 
     keychain::change_password(&path, master_key, &new_password).map_err(|e| e.to_string())?;
+    clear_backup_done(&app);
     Ok("Password changed successfully.".to_string())
 }
 
@@ -298,6 +314,7 @@ pub fn regenerate_recovery_code(
 
     let path = resolve_keychain_path(&app, &vault_id)?;
     let new_code = keychain::reset_recovery_code(&path, master_key).map_err(|e| e.to_string())?;
+    clear_backup_done(&app);
     Ok(new_code)
 }
 

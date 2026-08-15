@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   X,
@@ -25,23 +25,42 @@ import pkg from "../../../package.json";
 import { FileCheck } from "lucide-react";
 import type { KdfTier } from "../../hooks/usePortableVault";
 
-// --- INFO MODAL (Success) ---
+// --- INFO MODAL (Success / Error) ---
 export function InfoModal({
   message,
+  type = "success",
   onClose,
 }: {
   message: string;
+  type?: "success" | "error";
   onClose: () => void;
 }) {
+  // Enter (like clicking OK) or Escape dismisses the modal — previously only
+  // a mouse click worked, which was jarring right after typing a password.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const isError = type === "error";
+  const accent = isError ? "var(--btn-danger)" : "var(--btn-success)";
+
   return (
     <div className="modal-overlay" onClick={onClose} style={{ zIndex: 100002 }}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-        <div
-          className="modal-header"
-          style={{ borderBottomColor: "var(--btn-success)" }}
-        >
-          <CheckCircle size={20} color="var(--btn-success)" />
-          <h2 style={{ color: "var(--btn-success)" }}>Success</h2>
+        <div className="modal-header" style={{ borderBottomColor: accent }}>
+          {isError ? (
+            <AlertTriangle size={20} color={accent} />
+          ) : (
+            <CheckCircle size={20} color={accent} />
+          )}
+          <h2 style={{ color: accent }}>{isError ? "Error" : "Success"}</h2>
           <div style={{ flex: 1 }}></div>
           <X size={20} style={{ cursor: "pointer" }} onClick={onClose} />
         </div>
@@ -60,7 +79,7 @@ export function InfoModal({
           <div style={{ marginTop: 15 }}>
             <button
               className="auth-btn"
-              style={{ width: "100%", background: "var(--btn-success)" }}
+              style={{ width: "100%", background: accent }}
               onClick={onClose}
             >
               OK
@@ -702,7 +721,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
           Copyright © 2026{" "}
           <span
             style={{ cursor: "pointer", textDecoration: "underline" }}
-            onClick={() => openUrl("https://projectqre.com")}
+            onClick={() => openUrl("https://powergr.github.io/privacy_toolkit/")}
           >
             Project QRE
           </span>

@@ -197,7 +197,7 @@ export function FilesView(props: FilesViewProps) {
         executeLock(targets);
       }
     },
-    [props.portable.drives],
+    [props.portable.drives, fs.currentPath],
   );
 
   const executeLock = async (targets: string[], explicitEntropy?: number[]) => {

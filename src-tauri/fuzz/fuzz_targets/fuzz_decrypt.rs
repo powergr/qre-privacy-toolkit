@@ -1,8 +1,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use qre_gui::crypto::{decrypt_file_with_master_key, EncryptedFileContainer};
-use qre_gui::keychain::MasterKey;
+use qre_core::crypto::{decrypt_file_with_master_key, EncryptedFileContainer};
+use qre_core::keychain::MasterKey;
 
 fuzz_target!(|data: &[u8]| {
     // GOAL: Feed arbitrary bytes into the deserialization and decryption

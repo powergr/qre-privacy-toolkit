@@ -99,7 +99,10 @@ function App() {
     setPortableInitResult(null);
   }
 
-  const [infoMsg, setInfoMsg] = useState<string | null>(null);
+  const [infoMsg, setInfoMsg] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
   const [changePassError, setChangePassError] = useState<string | null>(null);
   const [backupDone, setBackupDone] = useState(false);
 
@@ -126,10 +129,13 @@ function App() {
         await writeFile(path, Uint8Array.from(bytes));
         await invoke("set_backup_done");
         setBackupDone(true);
-        setInfoMsg("Backup saved successfully.\nKeep it safe!");
+        setInfoMsg({
+          message: "Backup saved successfully.\nKeep it safe!",
+          type: "success",
+        });
       }
     } catch (e) {
-      setInfoMsg("Backup failed: " + String(e));
+      setInfoMsg({ message: "Backup failed: " + String(e), type: "error" });
     }
   }
 
@@ -161,23 +167,37 @@ function App() {
           setRecoveryCode={auth.setRecoveryCode}
           onLogin={async () => {
             const res = await auth.handleLogin();
-            if (!res.success) setInfoMsg(res.msg || "Login failed");
+            if (!res.success)
+              setInfoMsg({ message: res.msg || "Login failed", type: "error" });
           }}
           onInit={async () => {
             const res = await auth.handleInit();
-            if (!res.success) setInfoMsg(res.msg || "Setup failed");
+            if (!res.success)
+              setInfoMsg({ message: res.msg || "Setup failed", type: "error" });
           }}
           onRecovery={async () => {
             const res = await auth.handleRecovery();
-            if (!res.success) setInfoMsg(res.msg || "Recovery failed");
-            else setInfoMsg("Vault recovered successfully.");
+            if (!res.success)
+              setInfoMsg({
+                message: res.msg || "Recovery failed",
+                type: "error",
+              });
+            else
+              setInfoMsg({
+                message: "Vault recovered successfully.",
+                type: "success",
+              });
           }}
           onAckRecoveryCode={() => auth.setView("dashboard")}
           onSwitchToRecovery={() => auth.setView("recovery_entry")}
           onCancelRecovery={() => auth.setView("login")}
         />
         {infoMsg && (
-          <InfoModal message={infoMsg} onClose={() => setInfoMsg(null)} />
+          <InfoModal
+            message={infoMsg.message}
+            type={infoMsg.type}
+            onClose={() => setInfoMsg(null)}
+          />
         )}
       </>
     );
@@ -283,7 +303,9 @@ function App() {
         <ResetConfirmModal
           onConfirm={async () => {
             const res = await auth.handleReset2FA();
-            if (!res.success) setInfoMsg(res.msg || "Reset failed");
+            if (!res.success)
+              setInfoMsg({ message: res.msg || "Reset failed", type: "error" });
+            else setBackupDone(false);
             setShowResetConfirm(false);
           }}
           onCancel={() => setShowResetConfirm(false)}
@@ -316,7 +338,11 @@ function App() {
             if (!res.success) setChangePassError(res.msg || "Update failed");
             else {
               setChangePassError(null);
-              setInfoMsg("Password updated successfully.");
+              setBackupDone(false);
+              setInfoMsg({
+                message: "Password updated successfully.",
+                type: "success",
+              });
               setShowChangePass(false);
             }
           }}
@@ -428,7 +454,11 @@ function App() {
         })()}
 
       {infoMsg && (
-        <InfoModal message={infoMsg} onClose={() => setInfoMsg(null)} />
+        <InfoModal
+          message={infoMsg.message}
+          type={infoMsg.type}
+          onClose={() => setInfoMsg(null)}
+        />
       )}
     </div>
   );

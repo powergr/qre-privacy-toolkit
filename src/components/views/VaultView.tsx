@@ -318,7 +318,10 @@ export function VaultView() {
   const [editing, setEditing] = useState<Partial<VaultEntry> | null>(null);
   const [showPass, setShowPass] = useState<string | null>(null);
   const [showEditPass, setShowEditPass] = useState(false);
-  const [copyModalMsg, setCopyModalMsg] = useState<string | null>(null);
+  const [copyModalMsg, setCopyModalMsg] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
   const [itemToDelete, setItemToDelete] = useState<VaultEntry | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -369,9 +372,10 @@ export function VaultView() {
     }, CLIPBOARD_CLEAR_DELAY_MS);
 
     // FIX: Set the exact message string so InfoModal appears
-    setCopyModalMsg(
-      `${isTotp ? "2FA Code" : "Password"} copied — clipboard will be cleared in 30 seconds.`,
-    );
+    setCopyModalMsg({
+      message: `${isTotp ? "2FA Code" : "Password"} copied — clipboard will be cleared in 30 seconds.`,
+      type: "success",
+    });
   };
 
   const handleImport = async () => {
@@ -389,7 +393,10 @@ export function VaultView() {
       const rows = parseCSV(contents);
 
       if (rows.length === 0) {
-        setCopyModalMsg("No data found in the selected file.");
+        setCopyModalMsg({
+          message: "No data found in the selected file.",
+          type: "error",
+        });
         return;
       }
 
@@ -436,13 +443,16 @@ export function VaultView() {
         await importEntries(newEntries);
         const skippedMsg =
           skipped.length > 0 ? ` (${skipped.length} rows skipped)` : "";
-        setCopyModalMsg(
-          `Successfully imported ${newEntries.length} passwords.${skippedMsg}`,
-        );
+        setCopyModalMsg({
+          message: `Successfully imported ${newEntries.length} passwords.${skippedMsg}`,
+          type: "success",
+        });
       } else {
-        setCopyModalMsg(
-          "No valid entries found. CSV must have at least Service and Password.",
-        );
+        setCopyModalMsg({
+          message:
+            "No valid entries found. CSV must have at least Service and Password.",
+          type: "error",
+        });
       }
     } catch (e) {
       setSaveError("Import failed: " + e);
@@ -1169,7 +1179,8 @@ export function VaultView() {
         >
           <div style={{ pointerEvents: "auto" }}>
             <InfoModal
-              message={copyModalMsg}
+              message={copyModalMsg.message}
+              type={copyModalMsg.type}
               onClose={() => setCopyModalMsg(null)}
             />
           </div>
@@ -1182,7 +1193,11 @@ export function VaultView() {
         />
       )}
       {saveError && !editing && (
-        <InfoModal message={saveError} onClose={() => setSaveError(null)} />
+        <InfoModal
+          message={saveError}
+          type="error"
+          onClose={() => setSaveError(null)}
+        />
       )}
     </div>
   );

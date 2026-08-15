@@ -11,10 +11,19 @@ mod breach;
 mod cleaner;
 mod clipboard_store;
 mod commands; // Refers to src/commands/mod.rs (which encapsulates files.rs, tools.rs, vault.rs)
+// `crypto` and `keychain` are private in normal builds — the fuzz target needs
+// direct access to `decrypt_file_with_master_key` and `MasterKey`, so they're
+// exposed only when the `fuzzing` feature is enabled (see src-tauri/fuzz/Cargo.toml).
+#[cfg(not(feature = "fuzzing"))]
 mod crypto;
+#[cfg(feature = "fuzzing")]
+pub mod crypto;
 mod crypto_stream;
 mod hasher;
+#[cfg(not(feature = "fuzzing"))]
 mod keychain;
+#[cfg(feature = "fuzzing")]
+pub mod keychain;
 mod notes;
 mod passwords;
 mod qr;

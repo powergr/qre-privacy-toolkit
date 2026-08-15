@@ -13,6 +13,7 @@ bincode = "1"
 
 [dependencies.qre-gui]
 path = ".."
+features = ["fuzzing"]
 
 [[bin]]
 name = "fuzz_decrypt"
