@@ -300,7 +300,8 @@ pub(crate) fn unlock_vault_from_drive(
     .map_err(|e| e.to_string())?;
 
     let cipher = Aes256Gcm::new_from_slice(&*kek).unwrap();
-    let nonce = Nonce::from_slice(&store.password_nonce);
+    let nonce = crate::utils::checked_nonce(&store.password_nonce)
+        .map_err(|_| "Incorrect Password".to_string())?;
 
     let mk_bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
         cipher

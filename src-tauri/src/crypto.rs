@@ -229,7 +229,8 @@ pub fn decrypt_file_with_master_key(
     let cipher_wrap =
         Aes256Gcm::new_from_slice(&*wrapping_key).map_err(|e| anyhow!("Cipher error: {}", e))?;
 
-    let val_nonce = Nonce::from_slice(&h.validation_nonce);
+    let val_nonce = crate::utils::checked_nonce(&h.validation_nonce)
+        .map_err(|_| anyhow!("Decryption Denied. Password or Keyfile is incorrect."))?;
     match cipher_wrap.decrypt(val_nonce, h.encrypted_validation_tag.as_ref()) {
         Ok(bytes) => {
             if !constant_time_eq(&bytes, VALIDATION_MAGIC) {
@@ -243,22 +244,20 @@ pub fn decrypt_file_with_master_key(
         }
     }
 
+    let key_wrap_nonce = crate::utils::checked_nonce(&h.key_wrapping_nonce)
+        .map_err(|_| anyhow!("Failed to unwrap file key"))?;
     let file_key_vec = cipher_wrap
-        .decrypt(
-            Nonce::from_slice(&h.key_wrapping_nonce),
-            h.encrypted_file_key.as_ref(),
-        )
+        .decrypt(key_wrap_nonce, h.encrypted_file_key.as_ref())
         .map_err(|_| anyhow!("Failed to unwrap file key"))?;
 
     let file_key = Zeroizing::new(file_key_vec);
 
     let cipher_file =
         Aes256Gcm::new_from_slice(&file_key).map_err(|_| anyhow!("Invalid file key length"))?;
+    let body_nonce = crate::utils::checked_nonce(&h.body_nonce)
+        .map_err(|_| anyhow!("Body decryption failed."))?;
     let decrypted_blob = cipher_file
-        .decrypt(
-            Nonce::from_slice(&h.body_nonce),
-            container.ciphertext.as_ref(),
-        )
+        .decrypt(body_nonce, container.ciphertext.as_ref())
         .map_err(|_| anyhow!("Body decryption failed."))?;
 
     let mut payload: InnerPayload = bincode::deserialize(&decrypted_blob)?;

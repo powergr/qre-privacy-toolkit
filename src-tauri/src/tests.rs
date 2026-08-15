@@ -406,6 +406,50 @@ mod tests {
         );
     }
 
+    /// Regression test for a fuzzer-found crash: a container whose nonce fields
+    /// don't have the expected 12-byte AES-GCM nonce length must be rejected with
+    /// a clean `Err`, not panic. `Nonce::from_slice` (used internally) asserts on
+    /// length and panics on mismatch — the exact crash the fuzzer discovered was
+    /// an empty `validation_nonce` in a malformed/adversarial container.
+    #[test]
+    fn test_malformed_nonce_length_returns_err_not_panic() {
+        let mk = mk(16);
+        let mut container = crypto::encrypt_file_with_master_key(
+            &mk,
+            None,
+            "vault.json",
+            &vault_json_payload(),
+            None,
+            3,
+        )
+        .unwrap();
+
+        // Exactly what the fuzzer produced: an empty validation_nonce.
+        container.header.validation_nonce = vec![];
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(
+            result.is_err(),
+            "Empty validation_nonce must be rejected, not panic"
+        );
+
+        // Same class of bug, different field and a too-long (not just too-short) case.
+        container.header.validation_nonce = vec![0u8; 12]; // restore
+        container.header.key_wrapping_nonce = vec![0u8; 20];
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(
+            result.is_err(),
+            "Oversized key_wrapping_nonce must be rejected, not panic"
+        );
+
+        container.header.key_wrapping_nonce = vec![0u8; 12]; // restore
+        container.header.body_nonce = vec![1u8, 2, 3];
+        let result = crypto::decrypt_file_with_master_key(&mk, None, &container);
+        assert!(
+            result.is_err(),
+            "Undersized body_nonce must be rejected, not panic"
+        );
+    }
+
     /// Corrupting the stored SHA-256 hash in the container header must fail at
     /// the integrity check step — independently of the AES-GCM auth tag.
     #[test]

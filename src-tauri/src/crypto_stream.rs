@@ -549,11 +549,10 @@ pub fn decrypt_file_stream(
         let base_wrapping_key = derive_wrapping_key(master_key, None);
         let cipher_base = Aes256Gcm::new_from_slice(&*base_wrapping_key).map_err(|e| anyhow!(e))?;
 
+        let binding_key_nonce = crate::utils::checked_nonce(&tl.binding_key_nonce)
+            .map_err(|_| anyhow!("Failed to decrypt binding key. Wrong master password?"))?;
         let binding_key_vec = cipher_base
-            .decrypt(
-                Nonce::from_slice(&tl.binding_key_nonce),
-                tl.encrypted_binding_key.as_ref(),
-            )
+            .decrypt(binding_key_nonce, tl.encrypted_binding_key.as_ref())
             .map_err(|_| anyhow!("Failed to decrypt binding key. Wrong master password?"))?;
 
         let binding_key_hash = Sha256::digest(&binding_key_vec).to_vec();
@@ -567,10 +566,11 @@ pub fn decrypt_file_stream(
     let wrapping_key = derive_wrapping_key(master_key, effective_keyfile_ref);
     let cipher_wrap = Aes256Gcm::new_from_slice(&*wrapping_key).map_err(|e| anyhow!(e))?;
 
-    match cipher_wrap.decrypt(
-        Nonce::from_slice(&header.validation_nonce),
-        header.encrypted_validation_tag.as_ref(),
-    ) {
+    match crate::utils::checked_nonce(&header.validation_nonce).and_then(|n| {
+        cipher_wrap
+            .decrypt(n, header.encrypted_validation_tag.as_ref())
+            .map_err(|e| anyhow!(e))
+    }) {
         Ok(bytes) if constant_time_eq(&bytes, VALIDATION_MAGIC) => {}
         _ => {
             return Err(anyhow!(
@@ -579,11 +579,10 @@ pub fn decrypt_file_stream(
         }
     }
 
+    let key_wrap_nonce = crate::utils::checked_nonce(&header.key_wrapping_nonce)
+        .map_err(|_| anyhow!("Failed to unwrap file key"))?;
     let file_key_vec = cipher_wrap
-        .decrypt(
-            Nonce::from_slice(&header.key_wrapping_nonce),
-            header.encrypted_file_key.as_ref(),
-        )
+        .decrypt(key_wrap_nonce, header.encrypted_file_key.as_ref())
         .map_err(|_| anyhow!("Failed to unwrap file key"))?;
 
     let file_key = Zeroizing::new(file_key_vec);
@@ -603,6 +602,12 @@ pub fn decrypt_file_stream(
     let mut output_hasher = Sha256::new();
 
     // ── DECRYPTION LOOP ───────────────────────────────────────────────────────
+    // base_nonce feeds a fixed-size copy_from_slice below (once per chunk); check
+    // its length once up front rather than letting a corrupt/short header panic.
+    if header.base_nonce.len() != AES_NONCE_LEN {
+        return Err(anyhow!("Corrupt header: invalid base_nonce length"));
+    }
+
     let mut chunk_index: u64 = 0;
     let mut size_buf = [0u8; 4];
     let mut processed: u64 = 0;

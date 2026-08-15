@@ -276,7 +276,8 @@ pub fn unlock_keychain(path: &Path, password: &str) -> Result<MasterKey> {
     )?;
 
     let cipher = Aes256Gcm::new_from_slice(&*kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
-    let nonce = Nonce::from_slice(&store.password_nonce);
+    let nonce = crate::utils::checked_nonce(&store.password_nonce)
+        .map_err(|_| anyhow!("Incorrect Password"))?;
 
     // 2. Attempt Decryption.
     // If the password was wrong, `derive_kek` succeeds, but `decrypt` fails because the AES-GCM Auth Tag won't match.
@@ -320,7 +321,8 @@ pub fn recover_with_code(
     )?;
     let cipher_rec =
         Aes256Gcm::new_from_slice(&*rec_kek).map_err(|e| anyhow!("Cipher init: {}", e))?;
-    let nonce_rec = Nonce::from_slice(&store.recovery_nonce);
+    let nonce_rec = crate::utils::checked_nonce(&store.recovery_nonce)
+        .map_err(|_| anyhow!("Invalid Recovery Code"))?;
 
     // Securely hold the decrypted master key
     let mk_bytes: Zeroizing<Vec<u8>> = Zeroizing::new(

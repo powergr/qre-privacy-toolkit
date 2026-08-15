@@ -11,6 +11,29 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 
 // ==========================================
+// --- CRYPTO HELPERS ---
+// ==========================================
+
+/// Wraps a variable-length byte slice into a fixed 12-byte AES-GCM nonce,
+/// returning a clean error instead of panicking on a length mismatch.
+///
+/// `aes_gcm::Nonce::from_slice` asserts the slice is exactly 12 bytes and
+/// panics otherwise. That's fine for nonces we generate ourselves (always a
+/// fixed-size array), but every nonce read back out of a deserialized file
+/// (a `.qre` header, `keychain.json`, a portable vault) is attacker-/
+/// corruption-controlled — fuzzing found this exact panic via an empty
+/// `validation_nonce` in a crafted container.
+pub fn checked_nonce(bytes: &[u8]) -> anyhow::Result<&aes_gcm::Nonce<aes_gcm::aead::consts::U12>> {
+    if bytes.len() != 12 {
+        return Err(anyhow::anyhow!(
+            "Invalid nonce length: expected 12 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    Ok(aes_gcm::Nonce::from_slice(bytes))
+}
+
+// ==========================================
 // --- EVENT HELPERS ---
 // ==========================================
 
