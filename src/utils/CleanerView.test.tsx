@@ -760,7 +760,7 @@ describe("CleanerView", () => {
           return Promise.resolve(MOCK_REPORT_CLEAN);
         if (cmd === "batch_clean_metadata")
           return Promise.resolve(MOCK_CLEAN_RESULT);
-        if (cmd === "compare_file_metadata")
+        if (cmd === "compare_metadata_files")
           return Promise.resolve(MOCK_COMPARISON);
         return Promise.resolve(null);
       });
@@ -776,7 +776,7 @@ describe("CleanerView", () => {
 
       await waitFor(() => {
         expect(mockInvoke).toHaveBeenCalledWith(
-          "compare_file_metadata",
+          "compare_metadata_files",
           expect.objectContaining({
             original: "/home/user/photo.jpg",
             cleaned: "/output/photo_clean.jpg",
@@ -800,7 +800,7 @@ describe("CleanerView", () => {
           return Promise.resolve(MOCK_REPORT_CLEAN);
         if (cmd === "batch_clean_metadata")
           return Promise.resolve(MOCK_CLEAN_RESULT);
-        if (cmd === "compare_file_metadata") return Promise.resolve(emptyCmp);
+        if (cmd === "compare_metadata_files") return Promise.resolve(emptyCmp);
         return Promise.resolve(null);
       });
 
@@ -873,8 +873,7 @@ describe("CleanerView", () => {
       await waitFor(() => screen.getByText(/Analysis failed: oops/));
 
       // The dismiss X button is inside the error banner
-      const errorBanner =
-        screen.getByText(/Analysis failed/).parentElement!.parentElement!;
+      const errorBanner = screen.getByText(/Analysis failed/).parentElement!;
       const xButton = within(errorBanner).getAllByRole("button")[0];
       await userEvent.click(xButton);
 

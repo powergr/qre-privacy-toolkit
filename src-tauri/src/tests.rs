@@ -917,11 +917,15 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// V5 output must begin with the version byte 5, not 4.
-    /// The unlock router in files.rs uses this byte to choose the right decryptor.
+    /// A non-time-locked file must begin with version byte 6, not 5.
+    /// V5 predates the `timelock` field on StreamHeader and is kept only as a
+    /// read path for legacy files (see StreamHeaderV5); every write now goes
+    /// through the current header layout, so the version tag must say so —
+    /// otherwise the unlock router in files.rs would deserialize the header
+    /// with the wrong (legacy) struct shape.
     #[test]
-    fn test_v5_version_byte_is_5() {
-        let dir = make_test_dir("qre_v5_version");
+    fn test_v6_version_byte_is_6() {
+        let dir = make_test_dir("qre_v6_version");
         let input = write_file(&dir, "v.txt", b"version test");
         let encrypted = dir.join("v.txt.qre").to_str().unwrap().to_owned();
         let mk = mk(45);
@@ -942,7 +946,10 @@ mod tests {
         let bytes = fs::read(&encrypted).unwrap();
         assert!(bytes.len() >= 4);
         let version = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        assert_eq!(version, 5, "V5 streaming engine must write version byte 5");
+        assert_eq!(
+            version, 6,
+            "Non-time-locked files must write version byte 6, not legacy V5"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }
