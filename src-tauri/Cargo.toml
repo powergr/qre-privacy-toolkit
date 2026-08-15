@@ -57,7 +57,7 @@ chrono = "0.4"
 # Metadata Cleaning Dependencies
 exif = { package = "kamadak-exif", version = "0.6" }
 img-parts = "0.3"
-lopdf = "0.31"
+lopdf = "0.44"
 
 # Windows specific dependency
 [target.'cfg(windows)'.dependencies]
