@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
-use totp_rs::{Algorithm, TOTP};
+use totp_rs::{Algorithm, Builder};
 
 pub type CommandResult<T> = Result<T, String>;
 
@@ -683,7 +683,14 @@ pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
     };
 
     // 3. Standard TOTP configuration: SHA-1, 6 digits, 30-second steps
-    let totp = TOTP::new_unchecked(Algorithm::SHA1, 6, 1, 30, secret_bytes);
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret_bytes)
+        .build()
+        .map_err(|e| format!("Invalid TOTP configuration: {}", e))?;
 
     // 4. Generate the code based on the current Unix timestamp
     let now = SystemTime::now()
@@ -691,9 +698,9 @@ pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
         .unwrap()
         .as_secs();
 
-    let code = totp
-        .generate_current()
-        .map_err(|e| format!("Failed to generate code: {}", e))?;
+    // generate_current() is infallible as of totp-rs 6.0 (panics only on a
+    // pre-Unix-Epoch system clock), so there's no Result to map_err here anymore.
+    let code = totp.generate_current().to_string();
 
     // Calculate remaining seconds in the current 30-second window
     let remaining_seconds = 30 - (now % 30);

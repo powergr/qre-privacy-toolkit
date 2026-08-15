@@ -20,3 +20,14 @@ name = "fuzz_decrypt"
 path = "fuzz_targets/fuzz_decrypt.rs"
 test = false
 doc = false
+
+# cargo-fuzz builds in release mode with RUSTFLAGS="-Cdebug-assertions ...".
+# When --target is passed explicitly (as cargo-fuzz always does), RUSTFLAGS only
+# applies to the target build, not to host tools like proc-macros. That leaves
+# tauri-utils (target-compiled, debug_assertions forced on) and tauri-macros
+# (host-compiled, debug_assertions off by default in release) disagreeing about
+# whether ResolvedCommand::referenced_by exists, since tauri-utils gates that
+# field behind #[cfg(debug_assertions)]. build-override forces debug-assertions
+# on for build scripts and proc-macros too, so both sides agree.
+[profile.release.build-override]
+debug-assertions = true

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 import {
-  Trash2, HardDrive, Chrome, AppWindow, RefreshCw, CheckCircle,
+  Trash2, HardDrive, Compass, AppWindow, RefreshCw, CheckCircle,
   Smartphone, Brush, FileText, AlertTriangle, Code2, Globe, Eye,
   X, Loader2, Wifi, ShieldAlert, Lock, Database,
   BookKey, Search, History,
@@ -342,7 +342,7 @@ export function SystemCleanerView() {
 
   const ALL_TABS = [
     { id: "System",    label: "System",    icon: <HardDrive size={14} /> },
-    { id: "Browser",   label: "Browsers",  icon: <Chrome size={14} /> },
+    { id: "Browser",   label: "Browsers",  icon: <Compass size={14} /> },
     { id: "Network",   label: "Network",   icon: <Wifi size={14} /> },
     { id: "Developer", label: "Developer", icon: <Code2 size={14} /> },
     { id: "Privacy",   label: "Privacy",   icon: <ShieldAlert size={14} /> },
@@ -356,7 +356,7 @@ export function SystemCleanerView() {
 
   const getIcon = (cat: string) => {
     const props = { size: 20 };
-    if (cat === "Browser")   return <Chrome    {...props} color="#f97316" />;
+    if (cat === "Browser")   return <Compass   {...props} color="#f97316" />;
     if (cat === "System")    return <HardDrive {...props} color="#3b82f6" />;
     if (cat === "Logs")      return <FileText  {...props} color="#10b981" />;
     if (cat === "Developer") return <Code2     {...props} color="#ef4444" />;

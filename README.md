@@ -13,7 +13,6 @@
 ![React](https://img.shields.io/badge/React-19.1-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
 
-[![dependency status](https://deps.rs/repo/github/powergr/qre-privacy-toolkit/status.svg?path=src-tauri)](https://deps.rs/repo/github/powergr/qre-privacy-toolkit?path=src-tauri)
 ![Last Commit](https://img.shields.io/github/last-commit/powergr/qre-privacy-toolkit)
 
 QRE Privacy Toolkit is a secure, cross-platform application designed to handle your sensitive data without relying on the cloud. It runs natively on **Windows, macOS, Linux, and Android**.
@@ -28,7 +27,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.7.6)
+## 🛠️ The 12-Tool Suite (v2.7.7)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -118,9 +117,26 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ---
 
-## New in v2.7.6
+## New in v2.7.7
 
-Time-Lock Encryption. Read more [Time-lock blog post](https://powergr.github.io/privacy_toolkit/blog-timelock-encryption.html)
+- **Fixed:** Encrypting a file no longer bounces the file explorer back to the Drives view — it now correctly stays in the folder you were working in.
+- **Fixed:** The keychain backup reminder now re-arms itself after you change your Master Password or reset your Recovery Code, so you're prompted to save a fresh backup instead of being silently skipped forever.
+- **Fixed:** Error dialogs (wrong password, failed operations) no longer display a misleading green "Success" state, and can now be dismissed with Enter/Escape as well as the mouse.
+- **Security:** Patched a HIGH severity (CVSS 7.5) denial-of-service vulnerability in the PDF library used by the Metadata Cleaner ([RUSTSEC-2026-0187](https://rustsec.org/advisories/RUSTSEC-2026-0187.html)) — a maliciously crafted PDF could previously crash the app.
+- **Maintenance:** Updated numerous Rust and npm dependencies to their latest stable versions; re-enabled and fixed the automated fuzz-testing CI workflow.
+
+Also see: Time-Lock Encryption, added in v2.7.6. Read more in the [Time-lock blog post](https://powergr.github.io/privacy_toolkit/blog-timelock-encryption.html).
+
+---
+
+## 🔮 What's Next
+
+A few larger Rust dependency upgrades are intentionally being held back for a dedicated, more careful pass rather than bundled in with routine updates, since they touch core cryptography and the `.qre` file format directly:
+
+- **`bincode`** (1.x → 3.x) — serializes the `.qre` container format itself; needs verified round-trip compatibility with files already encrypted by earlier versions before upgrading.
+- **`rand` / `rand_chacha`** (0.9 → 0.10) — used for entropy and nonce generation during encryption.
+- **`sha2` / `sha1` / `md-5`** (0.10 → 0.11) — used in key-wrapping and the Integrity Checker.
+- **`zip`** (2.x → 8.x) — large multi-major jump, used for zip-bomb-guarded Office document metadata cleaning.
 
 ---
 
@@ -149,11 +165,11 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 83 tests passed from 83 total (Covers memory wiping, file routing, steganography math, Zip-Bomb prevention, and AES-GCM streaming integrity).
+- 283 tests passed from 283 total (Covers memory wiping, file routing, steganography math, Zip-Bomb prevention, and AES-GCM streaming integrity).
 
 **Frontend (`npm test`):**
 
-- Vitest/Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries.
+- 185 tests passed from 185 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
 
 ---
 
