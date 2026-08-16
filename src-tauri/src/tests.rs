@@ -2033,3 +2033,20 @@ fn test_portable_ejection_watcher_zeroizes_key() {
 
     let _ = fs::remove_dir_all(&drive);
 }
+
+/// Regression test mirroring `fuzz_zip_metadata`: feeding non-ZIP or empty
+/// bytes into the Metadata Cleaner's ZIP analyzer must return a clean `Err`,
+/// never panic. This is the same code path where fuzzing already found (and
+/// we fixed) a panic on an entry with a malformed last-modified timestamp.
+#[test]
+fn test_analyze_zip_reader_never_panics_on_garbage() {
+    use crate::cleaner;
+    use std::io::Cursor;
+
+    let garbage = vec![0u8; 64];
+    let result = cleaner::analyze_zip_reader(Cursor::new(garbage.clone()), garbage.len() as u64);
+    assert!(result.is_err(), "non-ZIP bytes must be rejected, not panic");
+
+    let result = cleaner::analyze_zip_reader(Cursor::new(Vec::<u8>::new()), 0);
+    assert!(result.is_err(), "empty input must be rejected, not panic");
+}

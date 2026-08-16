@@ -207,52 +207,49 @@ fn validate_path(path_str: &str, whitelist: &[PathBuf]) -> Result<PathBuf, Strin
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub fn get_system_targets() -> Vec<JunkItem> {
-    let mut targets = Vec::new();
-
     // ── NETWORK & PRIVACY (Virtual commands) ──────────────────────────────
-    targets.push(JunkItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "DNS Cache".to_string(),
-        path: "::DNS_CACHE::".to_string(),
-        category: "Network".to_string(),
-        size: 0,
-        description: "Flush OS DNS resolver cache to remove network traces.".to_string(),
-        warning: Some("May temporarily slow first website loads.".to_string()),
-        elevation_required: false,
-    });
-
-    targets.push(JunkItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "System Clipboard".to_string(),
-        path: "::CLIPBOARD::".to_string(),
-        category: "Privacy".to_string(),
-        size: 0,
-        description: "Clear current copied text/data from memory.".to_string(),
-        warning: None,
-        elevation_required: false,
-    });
-
-    targets.push(JunkItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "Bash History".to_string(),
-        path: "::CLEAR_BASH_HISTORY::".to_string(),
-        category: "Privacy".to_string(),
-        size: 0,
-        description: "Erase all recorded bash terminal command history.".to_string(),
-        warning: Some("Permanently erases your entire bash command history.".to_string()),
-        elevation_required: false,
-    });
-
-    targets.push(JunkItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: "Zsh History".to_string(),
-        path: "::CLEAR_ZSH_HISTORY::".to_string(),
-        category: "Privacy".to_string(),
-        size: 0,
-        description: "Erase all recorded zsh terminal command history.".to_string(),
-        warning: Some("Permanently erases your entire zsh command history.".to_string()),
-        elevation_required: false,
-    });
+    let mut targets = vec![
+        JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "DNS Cache".to_string(),
+            path: "::DNS_CACHE::".to_string(),
+            category: "Network".to_string(),
+            size: 0,
+            description: "Flush OS DNS resolver cache to remove network traces.".to_string(),
+            warning: Some("May temporarily slow first website loads.".to_string()),
+            elevation_required: false,
+        },
+        JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "System Clipboard".to_string(),
+            path: "::CLIPBOARD::".to_string(),
+            category: "Privacy".to_string(),
+            size: 0,
+            description: "Clear current copied text/data from memory.".to_string(),
+            warning: None,
+            elevation_required: false,
+        },
+        JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Bash History".to_string(),
+            path: "::CLEAR_BASH_HISTORY::".to_string(),
+            category: "Privacy".to_string(),
+            size: 0,
+            description: "Erase all recorded bash terminal command history.".to_string(),
+            warning: Some("Permanently erases your entire bash command history.".to_string()),
+            elevation_required: false,
+        },
+        JunkItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "Zsh History".to_string(),
+            path: "::CLEAR_ZSH_HISTORY::".to_string(),
+            category: "Privacy".to_string(),
+            size: 0,
+            description: "Erase all recorded zsh terminal command history.".to_string(),
+            warning: Some("Permanently erases your entire zsh command history.".to_string()),
+            elevation_required: false,
+        },
+    ];
 
     // ── SYSTEM (OS-specific virtual commands) ─────────────────────────────
     #[cfg(target_os = "windows")]

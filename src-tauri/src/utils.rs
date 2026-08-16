@@ -34,6 +34,33 @@ pub fn checked_nonce(bytes: &[u8]) -> anyhow::Result<&aes_gcm::Nonce<aes_gcm::ae
 }
 
 // ==========================================
+// --- MUTEX HELPERS ---
+// ==========================================
+
+/// Locks a `Mutex` guarding secret material (master keys, mount tables),
+/// clearing it to its default (empty) state and returning an error if it was
+/// poisoned by a panic on another thread, instead of propagating that panic
+/// via `.lock().unwrap()`.
+///
+/// `commands/vault.rs` already does this for `SessionState.vaults` via its own
+/// `lock_session!` macro; this is the same recovery strategy for every other
+/// call site that locks the *same* shared `vaults`/`portable_mounts` state
+/// (`commands/portable.rs`, `commands/files.rs`) so a poison in one place
+/// can't leave those call sites permanently panicking afterward.
+pub fn lock_or_clear<T: Default>(
+    mutex: &std::sync::Mutex<T>,
+) -> Result<std::sync::MutexGuard<'_, T>, String> {
+    match mutex.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = T::default();
+            Err("Session state is corrupted. All vaults locked.".to_string())
+        }
+    }
+}
+
+// ==========================================
 // --- EVENT HELPERS ---
 // ==========================================
 

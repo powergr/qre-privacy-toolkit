@@ -1141,8 +1141,20 @@ fn validate_zip_archive<R: Read + std::io::Seek>(archive: &mut zip::ZipArchive<R
 fn analyze_zip(path: &Path) -> Result<MetadataReport> {
     let file_size = fs::metadata(path)?.len();
     let file = File::open(path)?;
+    analyze_zip_reader(file, file_size)
+}
+
+/// Core ZIP-metadata analysis, generic over the reader so a real file
+/// (production, via `analyze_zip`) and an in-memory byte buffer (the
+/// `fuzz_zip_metadata` fuzz target, via `Cursor`) exercise the identical
+/// parsing path. `pub` so the separate `qre-gui-fuzz` crate can call it
+/// directly with arbitrary bytes instead of writing a temp file per input.
+pub fn analyze_zip_reader<R: Read + std::io::Seek>(
+    reader: R,
+    file_size: u64,
+) -> Result<MetadataReport> {
     let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| anyhow!("Invalid ZIP archive: {}", e))?;
+        zip::ZipArchive::new(reader).map_err(|e| anyhow!("Invalid ZIP archive: {}", e))?;
 
     validate_zip_archive(&mut archive)?;
 
@@ -1163,9 +1175,11 @@ fn analyze_zip(path: &Path) -> Result<MetadataReport> {
     for i in 0..sample_count {
         if let Ok(entry) = archive.by_index(i) {
             let name = entry.name().to_string();
-            let dt = entry
-                .last_modified()
-                .expect("zip entry has no last-modified timestamp");
+            // Malformed/unusual DOS timestamps can make this None — skip the
+            // entry rather than crash on a file that isn't ours to control.
+            let Some(dt) = entry.last_modified() else {
+                continue;
+            };
             let year = dt.year();
             let month = dt.month();
             let day = dt.day();
@@ -1260,7 +1274,6 @@ pub struct StegoReport {
 /// and measuring their mathematical randomness (Shannon Entropy).
 /// Standard images have predictable LSB patterns. Encrypted hidden messages
 /// look like pure random noise, pushing the entropy score near the theoretical maximum of 8.0.
-
 pub async fn detect_steganography(
     paths: Vec<String>,
     app_handle: tauri::AppHandle,

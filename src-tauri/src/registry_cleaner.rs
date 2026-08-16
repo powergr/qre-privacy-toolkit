@@ -302,7 +302,7 @@ fn format_reg_value(name: &str, value: &winreg::RegValue) -> String {
 #[cfg(target_os = "windows")]
 fn reg_value_to_string(value: &winreg::RegValue) -> String {
     let bytes = &value.bytes;
-    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+    if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
         return String::new();
     }
     let words: Vec<u16> = bytes
@@ -697,8 +697,7 @@ fn parse_hive(key_path: &str) -> Result<(winreg::HKEY, &str), String> {
     ];
 
     for (prefix, hive) in prefixes {
-        if key_path.starts_with(prefix) {
-            let remaining = &key_path[prefix.len()..];
+        if let Some(remaining) = key_path.strip_prefix(prefix) {
             return Ok((*hive, remaining));
         }
     }
@@ -805,9 +804,9 @@ fn extract_exe_from_command(cmd: &str) -> String {
     let trimmed = cmd.trim();
 
     // Quoted path
-    if trimmed.starts_with('"') {
-        if let Some(end) = trimmed[1..].find('"') {
-            return trimmed[1..end + 1].to_string();
+    if let Some(stripped) = trimmed.strip_prefix('"') {
+        if let Some(end) = stripped.find('"') {
+            return stripped[..end].to_string();
         }
     }
 

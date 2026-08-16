@@ -54,7 +54,7 @@ pub async fn lock_file_with_timelock(
     }
 
     // ── TIMESTAMP VALIDATION (authoritative — Rust side) ─────────────────────
-    timelock::validate_unlock_at(unlock_at).map_err(|e| e)?;
+    timelock::validate_unlock_at(unlock_at)?;
 
     let vaults_arc = state.vaults.clone();
     let portable_mounts_arc = state.portable_mounts.clone();

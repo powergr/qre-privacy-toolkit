@@ -8,12 +8,16 @@
 mod analyzer;
 mod bookmarks;
 mod breach;
+// `cleaner`, `crypto`, and `keychain` are private in normal builds — the fuzz
+// targets need direct access to `analyze_zip_reader`, `decrypt_file_with_master_key`,
+// and `MasterKey`, so they're exposed only when the `fuzzing` feature is enabled
+// (see src-tauri/fuzz/Cargo.toml).
+#[cfg(not(feature = "fuzzing"))]
 mod cleaner;
+#[cfg(feature = "fuzzing")]
+pub mod cleaner;
 mod clipboard_store;
 mod commands; // Refers to src/commands/mod.rs (which encapsulates files.rs, tools.rs, vault.rs)
-// `crypto` and `keychain` are private in normal builds — the fuzz target needs
-// direct access to `decrypt_file_with_master_key` and `MasterKey`, so they're
-// exposed only when the `fuzzing` feature is enabled (see src-tauri/fuzz/Cargo.toml).
 #[cfg(not(feature = "fuzzing"))]
 mod crypto;
 #[cfg(feature = "fuzzing")]

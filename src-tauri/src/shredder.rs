@@ -327,6 +327,9 @@ pub fn dry_run(paths: Vec<String>) -> Result<DryRunResult> {
 ///
 /// FIX #10: `bytes_before` (sum of all bytes from completed files × their passes)
 /// is used to calculate cumulative progress across the entire batch.
+// Same call as encrypt_file_stream: these track batch progress across the
+// caller, not worth a params-struct refactor for a stylistic lint.
+#[allow(clippy::too_many_arguments)]
 fn shred_file<R: tauri::Runtime>(
     path: &Path,
     method: ShredMethod,
@@ -545,7 +548,12 @@ pub fn batch_shred<R: tauri::Runtime>(
     // it in the global Mutex. This isolates cancellation to the active operation.
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
-        let mut guard = OPERATION_FLAG.lock().unwrap();
+        // No secret material here (just a cancel flag), so on poison we simply
+        // recover the existing state rather than clear it — unlike the vault
+        // locks, there's nothing to protect by wiping it.
+        let mut guard = OPERATION_FLAG
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Some(Arc::clone(&cancel_flag));
     }
 
@@ -653,7 +661,12 @@ pub fn wipe_free_space<R: tauri::Runtime>(
     // FIX #7: Share the per-operation cancel flag.
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
-        let mut guard = OPERATION_FLAG.lock().unwrap();
+        // No secret material here (just a cancel flag), so on poison we simply
+        // recover the existing state rather than clear it — unlike the vault
+        // locks, there's nothing to protect by wiping it.
+        let mut guard = OPERATION_FLAG
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = Some(Arc::clone(&cancel_flag));
     }
 
@@ -837,7 +850,7 @@ pub fn wipe_free_space<R: tauri::Runtime>(
                 bytes_written += BUFFER_SIZE as u64;
 
                 // Emit progress every ~16 MB to avoid overwhelming the IPC channel.
-                if bytes_written % (16 * 1024 * 1024) == 0 {
+                if bytes_written.is_multiple_of(16 * 1024 * 1024) {
                     let _ = app_handle.emit(
                         "wipe-progress",
                         WipeProgress {
@@ -1008,11 +1021,11 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
             format!("TRIM did not complete: {}", first_line)
         };
 
-        return Ok(TrimResult {
+        Ok(TrimResult {
             success: false,
             drive: drive_path,
             message: friendly,
-        });
+        })
     }
 
     #[cfg(target_os = "macos")]
@@ -1043,7 +1056,9 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
 /// Signals the active operation (shred or wipe) to stop at the next check point.
 pub fn cancel_shred() {
     // FIX #7: Signal the per-operation flag stored in the Mutex, not a bare global.
-    let guard = OPERATION_FLAG.lock().unwrap();
+    let guard = OPERATION_FLAG
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(flag) = &*guard {
         flag.store(true, Ordering::Relaxed);
     }

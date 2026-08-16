@@ -257,6 +257,10 @@ pub fn read_timelock_header(path: &str) -> Result<Option<TimeLockMeta>> {
 /// # API note
 ///   `timelock_until` is the 6th argument (after `keyfile_bytes`).
 ///   All non-time-lock callers in files.rs must pass `None` here.
+// Bundling these into a params struct would ripple across every call site (tests,
+// commands/files.rs, portable.rs) for a purely stylistic lint — not worth the
+// churn/risk in the core encryption engine.
+#[allow(clippy::too_many_arguments)]
 pub fn encrypt_file_stream(
     input_path: &str,
     output_path: &str,
@@ -333,7 +337,7 @@ pub fn encrypt_file_stream(
             let mut binding_key = Zeroizing::new([0u8; 32]);
             rng.fill_bytes(&mut *binding_key);
 
-            let binding_key_hash: Vec<u8> = Sha256::digest(&*binding_key).to_vec();
+            let binding_key_hash: Vec<u8> = Sha256::digest(*binding_key).to_vec();
 
             let base_wrapping_key = derive_wrapping_key(master_key, None);
             let cipher_base =

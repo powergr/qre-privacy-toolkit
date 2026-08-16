@@ -320,13 +320,13 @@ pub(crate) fn unlock_vault_from_drive(
 
     // Register key in the shared map.
     {
-        let mut guard = vaults.lock().unwrap();
+        let mut guard = crate::utils::lock_or_clear(vaults)?;
         guard.insert(vault_id.clone(), master_key);
     }
 
     // Register drive path
     {
-        let mut guard = mounts.lock().unwrap();
+        let mut guard = crate::utils::lock_or_clear(mounts)?;
         guard.insert(drive_path.to_string(), vault_id.clone());
     }
 

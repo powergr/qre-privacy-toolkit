@@ -286,7 +286,13 @@ pub async fn unlock_file(
 
             if version == 4 {
                 let master_key = {
-                    let guard = vaults_arc.lock().unwrap();
+                    let guard = match utils::lock_or_clear(&vaults_arc) {
+                        Ok(g) => g,
+                        Err(e) => {
+                            results.push(BatchItemResult { name: filename.clone(), success: false, message: e });
+                            continue;
+                        }
+                    };
                     match guard.get("local") {
                         Some(mk) => mk.clone(),
                         None => {
@@ -324,7 +330,13 @@ pub async fn unlock_file(
                 };
 
                 let master_key = {
-                    let guard = vaults_arc.lock().unwrap();
+                    let guard = match utils::lock_or_clear(&vaults_arc) {
+                        Ok(g) => g,
+                        Err(e) => {
+                            results.push(BatchItemResult { name: filename.clone(), success: false, message: e });
+                            continue;
+                        }
+                    };
                     match guard.get(&vault_id) {
                         Some(mk) => mk.clone(),
                         None => {
@@ -494,11 +506,9 @@ pub async fn paste_items(
 
             utils::emit_progress(&app, &format!("Pasting: {}", filename.to_string_lossy()), 50);
 
-            if is_cut {
-                if fs::rename(src, &dest).is_ok() {
-                    results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Moved".into() });
-                    continue;
-                }
+            if is_cut && fs::rename(src, &dest).is_ok() {
+                results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Moved".into() });
+                continue;
             }
 
             let res = if src.is_dir() {

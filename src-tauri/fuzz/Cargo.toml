@@ -21,6 +21,12 @@ path = "fuzz_targets/fuzz_decrypt.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_zip_metadata"
+path = "fuzz_targets/fuzz_zip_metadata.rs"
+test = false
+doc = false
+
 # cargo-fuzz builds in release mode with RUSTFLAGS="-Cdebug-assertions ...".
 # When --target is passed explicitly (as cargo-fuzz always does), RUSTFLAGS only
 # applies to the target build, not to host tools like proc-macros. That leaves
