@@ -42,17 +42,29 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
 
-      - name: Run fuzz target
+      - name: Run fuzz_decrypt
         working-directory: src-tauri
         # -max_total_time=300 -> stop after 5 minutes (keeps CI bill reasonable)
         # -jobs=2             -> use both vCPUs on the runner
         # -runs=-1            -> don't limit by iteration count, only by time
         run: cargo +nightly fuzz run fuzz_decrypt -- -max_total_time=300 -jobs=2 -runs=-1
 
-      - name: Upload crash artifacts
+      - name: Upload fuzz_decrypt crash artifacts
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: fuzz-crashes-${{ github.run_id }}
+          name: fuzz-crashes-fuzz_decrypt-${{ github.run_id }}
           path: src-tauri/fuzz/artifacts/fuzz_decrypt/
+          if-no-files-found: ignore
+
+      - name: Run fuzz_zip_metadata
+        working-directory: src-tauri
+        run: cargo +nightly fuzz run fuzz_zip_metadata -- -max_total_time=300 -jobs=2 -runs=-1
+
+      - name: Upload fuzz_zip_metadata crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fuzz-crashes-fuzz_zip_metadata-${{ github.run_id }}
+          path: src-tauri/fuzz/artifacts/fuzz_zip_metadata/
           if-no-files-found: ignore
