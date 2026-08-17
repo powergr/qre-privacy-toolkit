@@ -457,12 +457,20 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
 
       <Section id="cleaner" title="Metadata Cleaner" icon={<Eraser />}>
         <p>
-          Photos and documents contain hidden data (EXIF) that reveals your
-          location and device info.
+          Photos, documents, audio, and video all contain hidden data —
+          GPS coordinates, device/camera info, author names, timestamps —
+          that reveals more than you'd expect about where and how a file was
+          made.
         </p>
         <p>
-          <strong>Supported Formats:</strong> JPG, PNG, PDF, DOCX, XLSX, PPTX,
-          ZIP.
+          <strong>Supported Formats:</strong> JPG, PNG, WebP, TIFF, PDF, DOCX,
+          XLSX, PPTX, ZIP, MP3, FLAC, OGG, MP4, MOV, CR2, NEF, ARW, DNG.
+        </p>
+        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+          <strong>RAW formats (CR2/NEF/ARW/DNG):</strong> analysis only. Cleaning
+          is intentionally disabled to avoid any risk of corrupting an
+          irreplaceable camera original — export a copy in another format
+          first if you need it cleaned.
         </p>
 
         <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>Workflow</h4>
@@ -477,6 +485,33 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             <code>photo_clean.jpg</code>) will be created.
           </li>
         </ol>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Embedded images are cleaned too
+        </h4>
+        <p>
+          Cover art in an MP3/FLAC/OGG file, or a photo pasted into a Word
+          document, can carry its own GPS/EXIF data even after the outer
+          file's own metadata is cleaned. The cleaner reaches inside these
+          and scrubs the embedded image too, not just the container.
+        </p>
+        <p>
+          If you'd rather the cover art/thumbnail wasn't there at all, check{" "}
+          <strong>Cover Art / Thumbnails</strong> in the cleaning options —
+          this deletes the embedded picture entirely instead of just cleaning
+          the metadata inside it. It's off by default since it's destructive
+          (the picture is gone, not just its metadata).
+        </p>
+        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+          <strong>Custom audio tags:</strong> Author removal on
+          MP3/FLAC/OGG files sweeps every custom field a batch-tagging tool
+          may have added (e.g. ENCODERSETTINGS, SOURCEMEDIA, WWWAUDIOFILE),
+          not just the standard Artist/Comment fields — anything that isn't
+          on a small safe list (track/disc numbers, genre, title) is removed.
+          Some MP3s carry a second, separate APEv2 tag block appended after
+          ID3v2 (common with certain scene-release tagging tools); that gets
+          swept the same way.
+        </p>
       </Section>
 
       <Section id="qr" title="QR Generator" icon={<QrCode />}>

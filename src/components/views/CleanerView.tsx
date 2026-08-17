@@ -19,6 +19,7 @@ import {
   Folder,
   Info,
   TrendingDown,
+  TrendingUp,
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
@@ -83,10 +84,17 @@ interface StegoReport {
 
 export const formatSize = (bytes: number): string => {
   if (bytes === 0) return "0 Bytes";
+  // A "cleaned" file can legitimately come out larger than the original
+  // (e.g. a PDF rewrite that doesn't fully recover the source's stream
+  // compression) — size_before - size_after goes negative in that case,
+  // and Math.log() of a negative number is NaN, so this must handle sign
+  // separately rather than assume bytes is always positive.
+  const sign = bytes < 0 ? "-" : "";
+  const abs = Math.abs(bytes);
   const k = 1024;
   const sizes = ["Bytes", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  const i = Math.floor(Math.log(abs) / Math.log(k));
+  return sign + Math.round((abs / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 };
 
 const getRiskLevel = (report: MetaReport): 0 | 1 | 2 | 3 => {
@@ -131,7 +139,12 @@ export function CleanerView() {
   const analyzeCache = useRef<Map<string, MetaReport>>(new Map());
   const [showRaw, setShowRaw] = useState(false);
   const [rawFilter, setRawFilter] = useState("");
-  const [opts, setOpts] = useState({ gps: true, author: true, date: true });
+  const [opts, setOpts] = useState({
+    gps: true,
+    author: true,
+    date: true,
+    removeCoverArt: false,
+  });
   const [outputDir, setOutputDir] = useState<string | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [progress, setProgress] = useState<CleanProgress | null>(null);
@@ -207,6 +220,15 @@ export function CleanerView() {
               "xlsx",
               "pptx",
               "zip",
+              "mp3",
+              "flac",
+              "ogg",
+              "mp4",
+              "mov",
+              "cr2",
+              "nef",
+              "arw",
+              "dng",
             ],
           },
         ],
@@ -567,7 +589,8 @@ export function CleanerView() {
                       marginTop: 20,
                     }}
                   >
-                    Supports: JPG, PNG, WebP, TIFF, PDF, DOCX, XLSX, PPTX, ZIP
+                    Supports: JPG, PNG, WebP, TIFF, PDF, DOCX, XLSX, PPTX, ZIP,
+                    MP3, FLAC, OGG, MP4, MOV, CR2, NEF, ARW, DNG
                   </p>
                   <p
                     style={{
@@ -576,7 +599,8 @@ export function CleanerView() {
                       marginTop: 5,
                     }}
                   >
-                    Maximum file size: 100 MB
+                    Maximum file size: 100 MB (2 GB for MP3, FLAC, OGG, MP4,
+                    MOV, CR2, NEF, ARW, DNG)
                   </p>
                 </div>
               </div>
@@ -704,19 +728,28 @@ export function CleanerView() {
                           marginBottom: 5,
                         }}
                       >
-                        Size Reduction:
+                        {result.size_after <= result.size_before
+                          ? "Size Reduction:"
+                          : "Size Change:"}
                       </div>
                       <div
                         style={{
                           fontSize: "1.5rem",
                           fontWeight: "bold",
-                          color: "#4ade80",
+                          color:
+                            result.size_after <= result.size_before
+                              ? "#4ade80"
+                              : "var(--text-dim)",
                           display: "flex",
                           alignItems: "center",
                           gap: 5,
                         }}
                       >
-                        <TrendingDown size={20} />{" "}
+                        {result.size_after <= result.size_before ? (
+                          <TrendingDown size={20} />
+                        ) : (
+                          <TrendingUp size={20} />
+                        )}{" "}
                         {formatSize(result.size_before - result.size_after)}
                       </div>
                     </div>
@@ -1818,6 +1851,25 @@ export function CleanerView() {
                     }
                   />
                   <Calendar size={14} /> Creation Date
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                  }}
+                  title="Deletes embedded cover art / thumbnails entirely, instead of just cleaning the metadata inside them"
+                >
+                  <input
+                    type="checkbox"
+                    checked={opts.removeCoverArt}
+                    onChange={(e) =>
+                      setOpts({ ...opts, removeCoverArt: e.target.checked })
+                    }
+                  />
+                  <ImageIcon size={14} /> Cover Art / Thumbnails
                 </label>
               </div>
 

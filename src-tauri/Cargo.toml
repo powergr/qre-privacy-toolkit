@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.7.8"
+version = "2.7.9"
 license = "MIT"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
@@ -58,6 +58,9 @@ chrono = "0.4"
 exif = { package = "kamadak-exif", version = "0.6" }
 img-parts = "0.4"
 lopdf = "0.44"
+id3 = "1.17"
+lofty = "0.25"
+ape = "0.6"
 
 # Windows specific dependency
 [target.'cfg(windows)'.dependencies]

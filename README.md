@@ -27,7 +27,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.7.7)
+## 🛠️ The 12-Tool Suite (v2.7.9)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -63,7 +63,7 @@ Grabs text from your clipboard, encrypts it into a secure history, and **wipes**
 
 A dual-purpose media privacy suite:
 
-- **Meta Cleaner:** Scrub hidden GPS coordinates, camera models, and author data from Images (JPG/PNG/WebP), PDFs, and Office Docs.
+- **Meta Cleaner:** Scrub hidden GPS coordinates, camera/device models, and author data from Images (JPG/PNG/WebP/TIFF), PDFs, Office Docs, ZIP archives, Audio (MP3/FLAC/OGG), Video (MP4/MOV), and RAW camera formats (CR2/NEF/ARW/DNG, analysis-only — cleaning is disabled to protect irreplaceable originals). Embedded images (cover art, pasted photos) are scrubbed recursively too, not just the outer file.
 - **Steganography Detector:** Mathematically analyzes the Least Significant Bits (LSB) of an image to calculate its Shannon Entropy, detecting hidden, encrypted payloads embedded inside normal-looking photos.
 
 ### **7. 🕵️‍♂️ Local Secret Scanner & Breach Check**
@@ -117,7 +117,28 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ---
 
-## New in v2.7.7
+## New in v2.7.9
+
+The Metadata Cleaner now covers far more than photos:
+
+- **New formats:** Audio (MP3, FLAC, OGG), Video (MP4/MOV — including the GPS location atom phones embed in recorded video), and RAW camera formats (CR2/NEF/ARW, analysis-only to protect irreplaceable originals).
+- **Recursive cleaning:** Cover art embedded in an MP3/FLAC/OGG file, or a photo pasted into a Word/Excel/PowerPoint document, is scrubbed too — not just the outer file's own metadata.
+- **Delete cover art entirely (opt-in):** A new "Cover Art / Thumbnails" option removes an embedded picture outright, for when scrubbing its metadata isn't enough.
+- **Fixed:** FLAC/OGG author removal now catches arbitrary custom Vorbis comment fields (e.g. `ENCODERSETTINGS`, `SOURCEMEDIA`, `WWWAUDIOFILE`) that batch-tagging tools add — previously only the standard Artist/Comment fields were reliably removed.
+- **Fixed:** MP3 cleaning now also detects and cleans APEv2 tags — a second, separate metadata block some tools append after the audio stream alongside ID3v2 — which previously survived a clean untouched.
+- **Fixed:** Selecting only "Cover Art / Thumbnails" (with GPS/Author/Date unchecked) no longer silently no-ops as a plain file copy.
+- **Fixed:** MP3 files with both an ID3v1 and an APEv2 trailer could end up with one of the two stranded mid-file if they weren't in the conventional order — now removed in a way that's correct regardless of order.
+- **Fixed:** the APEv2 tags this tool writes now include a header (not just the mandatory footer), matching what full-featured taggers write by default — a footer-only tag is valid per spec but wasn't reliably recognized by some analysis tools when computing the audio stream's expected size.
+- **Increased size limit for audio/video:** MP3, FLAC, OGG, MP4, MOV, CR2, NEF, ARW, and DNG files can now be up to 2GB (up from the 100MB limit shared with images/documents/archives), since large files are normal for those formats.
+- **Fixed:** FLAC cover art could survive "Cover Art" cleaning on real-world files. FLAC stores pictures in a native metadata block separate from its tag data, and the underlying tagging library doesn't reliably persist removing that block to disk — now handled with a dedicated, direct fix for that block type.
+- **Fixed:** MP4/MOV author/date/description fields (Performer, Album Artist, Description, Recorded Date, etc.) written by mainstream tools (HandBrake, ffmpeg, iTunes) weren't being detected or cleaned at all — those tools use a different, more modern metadata structure than the one this tool originally supported. Title, Genre, and the encoding-tool name are still kept, matching this tool's policy for non-identifying fields.
+- **Registry Backup retention:** old registry backups (System Clean tool) are now automatically pruned, keeping only the 10 most recent, so repeated use doesn't leave an ever-growing pile of files behind.
+- **Fixed:** cleaning a PDF's XMP metadata could leave the document catalog pointing at the now-deleted metadata stream (a dangling reference some readers flag, e.g. exiftool's "Bad Metadata reference") and, for large real-world documents, produce a noticeably *larger* file than the original since the rewrite wasn't recompressing streams or using compact object/cross-reference streams. Both fixed.
+- **Fixed:** Word's "Total Edit Time" field (`docProps/app.xml`'s `TotalTime`) survived Office document cleaning — it wasn't on the removal list alongside Application/Company/Manager/Template.
+- **New RAW format:** Adobe DNG is now supported (analysis-only, same policy as CR2/NEF/ARW — cleaning is disabled to protect irreplaceable originals).
+- MP4/MOV support is a small, purpose-built parser (no general-purpose crate exposes the GPS atom), designed to only ever redact bytes in place and never resize or rewrite the container, to minimize risk to video files.
+
+## New in v2.7.8
 
 - **Fixed:** Encrypting a file no longer bounces the file explorer back to the Drives view — it now correctly stays in the folder you were working in.
 - **Fixed:** The keychain backup reminder now re-arms itself after you change your Master Password or reset your Recovery Code, so you're prompted to save a fresh backup instead of being silently skipped forever.
@@ -165,7 +186,7 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 284 tests passed from 284 total (Covers memory wiping, file routing, steganography math, Zip-Bomb prevention, and AES-GCM streaming integrity).
+- 321 tests passed from 321 total (Covers memory wiping, file routing, steganography math, Zip-Bomb prevention, AES-GCM streaming integrity, and metadata-cleaner round-trips across every supported file format).
 
 **Frontend (`npm test`):**
 

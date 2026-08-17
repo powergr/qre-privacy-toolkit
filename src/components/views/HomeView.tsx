@@ -133,7 +133,7 @@ export function HomeView({ setTab }: HomeViewProps) {
 
         <ToolCard
           title="Metadata Cleaner"
-          desc="Remove Exif/GPS data."
+          desc="Strip hidden metadata from any file."
           icon={<Eraser size={24} color="#22c55e" />}
           bg="rgba(34, 197, 94, 0.1)"
           onClick={() => setTab("cleaner")}

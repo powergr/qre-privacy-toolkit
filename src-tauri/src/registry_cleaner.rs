@@ -19,6 +19,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use std::path::Path;
 
+/// Past registry backups to keep. Older ones are pruned each time a new one
+/// is created, so repeated use doesn't leave an ever-growing pile of
+/// ~300KB .reg files behind.
+#[cfg(target_os = "windows")]
+const MAX_REGISTRY_BACKUPS: usize = 10;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -97,18 +103,6 @@ pub fn backup_registry() -> RegistryBackupResult {
 
     #[cfg(target_os = "windows")]
     {
-        use winreg::{enums::*, RegKey};
-
-        // Write backup to the OS temp directory with a timestamp.
-        // Using winreg directly avoids reg.exe subprocess issues:
-        //   - WOW64 file system redirection (32-bit process can't run System32 eg.exe)
-        //   - PATH not being set correctly in Tauri's process environment
-        //   - Silent failures that are impossible to diagnose
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
         // Save to Documents\QRE\Registry Backups — NOT the temp folder.
         // The temp folder is a cleaning target in this very app; storing backups
         // there would silently destroy them the next time the user runs a clean.
@@ -124,99 +118,148 @@ pub fn backup_registry() -> RegistryBackupResult {
                     .map(|b| b.data_dir().join("QRE").join("Registry Backups"))
             })
             .unwrap_or_else(|| std::env::temp_dir().join("qre_registry_backups"));
-        if let Err(e) = std::fs::create_dir_all(&backup_dir) {
-            return RegistryBackupResult {
-                backup_path: String::new(),
-                success: false,
-                error: Some(format!("Cannot create backup directory: {}", e)),
-            };
-        }
+        backup_registry_to_dir(&backup_dir)
+    }
+}
 
-        let backup_file = backup_dir.join(format!("registry_backup_{}.reg", timestamp));
-        let backup_path_str = backup_file.display().to_string();
+/// Does the actual export work, parameterized on the output directory so
+/// tests can redirect it to an isolated temp directory instead of writing
+/// into the real Documents folder every time the test suite runs.
+#[cfg(target_os = "windows")]
+fn backup_registry_to_dir(backup_dir: &Path) -> RegistryBackupResult {
+    use winreg::{enums::*, RegKey};
 
-        // Keys to back up — same set we scan, so the backup covers everything we might delete.
-        let keys_to_backup: &[(winreg::HKEY, &str, &str)] = &[
-            (
-                HKEY_CURRENT_USER,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-                "HKEY_CURRENT_USER",
-            ),
-            (
-                HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-                "HKEY_LOCAL_MACHINE",
-            ),
-            (
-                HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-                "HKEY_LOCAL_MACHINE",
-            ),
-            (
-                HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
-                "HKEY_LOCAL_MACHINE",
-            ),
-            (
-                HKEY_CURRENT_USER,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                "HKEY_CURRENT_USER",
-            ),
-            (
-                HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                "HKEY_LOCAL_MACHINE",
-            ),
-        ];
+    // Using winreg directly avoids reg.exe subprocess issues:
+    //   - WOW64 file system redirection (32-bit process can't run System32 eg.exe)
+    //   - PATH not being set correctly in Tauri's process environment
+    //   - Silent failures that are impossible to diagnose
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
-        let mut reg_content = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
-        let mut any_success = false;
-        let mut export_errors: Vec<String> = Vec::new();
+    if let Err(e) = std::fs::create_dir_all(backup_dir) {
+        return RegistryBackupResult {
+            backup_path: String::new(),
+            success: false,
+            error: Some(format!("Cannot create backup directory: {}", e)),
+        };
+    }
 
-        for (hive, subkey_path, hive_name) in keys_to_backup {
-            let root = RegKey::predef(*hive);
-            match root.open_subkey(subkey_path) {
-                Err(e) => {
-                    // Key may simply not exist on this machine — not an error worth surfacing
-                    export_errors.push(format!("Skipped {}\\{}: {}", hive_name, subkey_path, e));
-                    continue;
-                }
-                Ok(key) => {
-                    // Write the section header
-                    reg_content.push_str(&format!("[{}\\{}]\r\n", hive_name, subkey_path));
-                    export_key_recursive(
-                        &key,
-                        &format!("{}\\{}", hive_name, subkey_path),
-                        &mut reg_content,
-                    );
-                    reg_content.push_str("\r\n");
-                    any_success = true;
-                }
+    let backup_file = backup_dir.join(format!("registry_backup_{}.reg", timestamp));
+    let backup_path_str = backup_file.display().to_string();
+
+    // Keys to back up — same set we scan, so the backup covers everything we might delete.
+    let keys_to_backup: &[(winreg::HKEY, &str, &str)] = &[
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKEY_CURRENT_USER",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKEY_LOCAL_MACHINE",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKEY_LOCAL_MACHINE",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+            "HKEY_LOCAL_MACHINE",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "HKEY_CURRENT_USER",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+            "HKEY_LOCAL_MACHINE",
+        ),
+    ];
+
+    let mut reg_content = String::from("Windows Registry Editor Version 5.00\r\n\r\n");
+    let mut any_success = false;
+    let mut export_errors: Vec<String> = Vec::new();
+
+    for (hive, subkey_path, hive_name) in keys_to_backup {
+        let root = RegKey::predef(*hive);
+        match root.open_subkey(subkey_path) {
+            Err(e) => {
+                // Key may simply not exist on this machine — not an error worth surfacing
+                export_errors.push(format!("Skipped {}\\{}: {}", hive_name, subkey_path, e));
+                continue;
+            }
+            Ok(key) => {
+                // Write the section header
+                reg_content.push_str(&format!("[{}\\{}]\r\n", hive_name, subkey_path));
+                export_key_recursive(
+                    &key,
+                    &format!("{}\\{}", hive_name, subkey_path),
+                    &mut reg_content,
+                );
+                reg_content.push_str("\r\n");
+                any_success = true;
             }
         }
+    }
 
-        if !any_success {
-            return RegistryBackupResult {
-                backup_path: backup_path_str,
-                success: false,
-                error: Some(format!(
-                    "No registry keys could be read. Errors: {}",
-                    export_errors.join("; ")
-                )),
-            };
-        }
+    if !any_success {
+        return RegistryBackupResult {
+            backup_path: backup_path_str,
+            success: false,
+            error: Some(format!(
+                "No registry keys could be read. Errors: {}",
+                export_errors.join("; ")
+            )),
+        };
+    }
 
-        match std::fs::write(&backup_file, reg_content.as_bytes()) {
-            Ok(_) => RegistryBackupResult {
+    match std::fs::write(&backup_file, reg_content.as_bytes()) {
+        Ok(_) => {
+            prune_old_backups(backup_dir, MAX_REGISTRY_BACKUPS);
+            RegistryBackupResult {
                 backup_path: backup_path_str,
                 success: true,
                 error: None,
-            },
-            Err(e) => RegistryBackupResult {
-                backup_path: backup_path_str,
-                success: false,
-                error: Some(format!("Failed to write backup file: {}", e)),
-            },
+            }
+        }
+        Err(e) => RegistryBackupResult {
+            backup_path: backup_path_str,
+            success: false,
+            error: Some(format!("Failed to write backup file: {}", e)),
+        },
+    }
+}
+
+/// Deletes old backups in `dir`, keeping only the most recent `keep` files.
+/// Filenames embed a Unix timestamp (`registry_backup_<secs>.reg`), so
+/// lexicographic order is chronological order too. Best-effort: failing to
+/// delete an individual old file doesn't fail the backup that was just made.
+#[cfg(target_os = "windows")]
+fn prune_old_backups(dir: &Path, keep: usize) {
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .map(|n| n.starts_with("registry_backup_") && n.ends_with(".reg"))
+                    .unwrap_or(false)
+            })
+            .collect(),
+        Err(_) => return,
+    };
+
+    entries.sort_by_key(|e| e.file_name());
+    if entries.len() > keep {
+        for entry in &entries[..entries.len() - keep] {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -863,11 +906,17 @@ mod tests {
 
     #[test]
     fn test_backup_returns_structured_result_on_all_platforms() {
-        let result = backup_registry();
-        // On Windows this may succeed or fail depending on permissions;
-        // on other platforms it must fail with a descriptive error.
+        // Non-Windows: `backup_registry()` itself is safe to call directly —
+        // it returns the "unsupported" error immediately without touching
+        // the filesystem. Windows: go through `backup_registry_to_dir` with
+        // an isolated temp directory instead of the real `backup_registry()`,
+        // which would otherwise write a real .reg file into the user's
+        // actual Documents\QRE\Registry Backups folder on every test run —
+        // exactly the bug that prompted adding retention pruning in the
+        // first place, just triggered by `cargo test` instead of the UI.
         #[cfg(not(target_os = "windows"))]
         {
+            let result = backup_registry();
             assert!(!result.success);
             assert!(result.error.is_some());
             assert!(
@@ -877,14 +926,73 @@ mod tests {
         }
         #[cfg(target_os = "windows")]
         {
+            let dir = temp_dir("registry_backup_isolated");
+            let result = backup_registry_to_dir(&dir);
             // success depends on environment — just verify the fields are populated
             if result.success {
                 assert!(!result.backup_path.is_empty());
                 assert!(result.error.is_none());
+                assert!(
+                    result.backup_path.starts_with(dir.to_str().unwrap()),
+                    "backup must land in the isolated test directory, not the real one"
+                );
             } else {
                 assert!(result.error.is_some());
             }
+            let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_prune_old_backups_keeps_only_the_most_recent() {
+        let dir = temp_dir("registry_backup_prune");
+        for i in 0..15 {
+            std::fs::write(
+                dir.join(format!("registry_backup_{:03}.reg", i)),
+                b"fake backup content",
+            )
+            .unwrap();
+        }
+        // A non-matching file must never be touched by pruning.
+        std::fs::write(dir.join("unrelated.txt"), b"leave me alone").unwrap();
+
+        prune_old_backups(&dir, 10);
+
+        let remaining: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            remaining.iter().filter(|n| n.starts_with("registry_backup_")).count(),
+            10,
+            "must keep exactly the configured number of backups, remaining: {:?}",
+            remaining
+        );
+        for i in 5..15 {
+            assert!(
+                remaining.contains(&format!("registry_backup_{:03}.reg", i)),
+                "the 10 most recent backups (highest-numbered) must survive"
+            );
+        }
+        assert!(
+            remaining.contains(&"unrelated.txt".to_string()),
+            "pruning must never touch files outside its own naming pattern"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn temp_dir(sub: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join("qre_registry_cleaner_tests")
+            .join(sub);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]

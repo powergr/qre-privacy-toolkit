@@ -150,7 +150,7 @@ export function Sidebar({
           id: "cleaner",
           label: "Metadata Cleaner",
           icon: <Eraser size={20} strokeWidth={2.5} />,
-          desc: "Remove EXIF/GPS data",
+          desc: "Strip hidden metadata from any file",
         },
         {
           id: "shred",

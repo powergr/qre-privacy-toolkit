@@ -518,9 +518,12 @@ describe("CleanerView", () => {
       await waitFor(() => screen.getAllByText("photo.jpg"));
     });
 
-    test("all checkboxes are checked by default", () => {
+    test("GPS/Author/Date are checked by default, Cover Art is not", () => {
       const checkboxes = screen.getAllByRole("checkbox");
-      checkboxes.forEach((cb) => expect(cb).toBeChecked());
+      checkboxes.slice(0, 3).forEach((cb) => expect(cb).toBeChecked());
+      // Cover art deletion is destructive (removes the image entirely, not
+      // just its metadata), so it defaults to opt-in.
+      expect(checkboxes[3]).not.toBeChecked();
     });
 
     test("can uncheck GPS option", async () => {
@@ -551,7 +554,12 @@ describe("CleanerView", () => {
         expect(mockInvoke).toHaveBeenCalledWith(
           "batch_clean_metadata",
           expect.objectContaining({
-            options: { gps: false, author: true, date: true },
+            options: {
+              gps: false,
+              author: true,
+              date: true,
+              removeCoverArt: false,
+            },
           }),
         );
       });
