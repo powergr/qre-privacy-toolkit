@@ -78,6 +78,8 @@ interface StegoReport {
   entropy_score: number;
   probability: number;
   is_suspicious: boolean;
+  extracted_text: string | null;
+  error: string | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1687,19 +1689,23 @@ export function CleanerView() {
                           i < stegoResults.length - 1
                             ? "1px solid var(--border)"
                             : "none",
-                        background: f.is_suspicious
-                          ? "rgba(239, 68, 68, 0.05)"
-                          : "transparent",
+                        background: f.error
+                          ? "transparent"
+                          : f.is_suspicious
+                            ? "rgba(239, 68, 68, 0.05)"
+                            : "transparent",
                       }}
                     >
                       <ImageIcon
                         size={24}
                         color={
-                          f.is_suspicious
-                            ? "var(--btn-danger)"
-                            : "var(--text-dim)"
+                          f.error
+                            ? "var(--text-dim)"
+                            : f.is_suspicious
+                              ? "var(--btn-danger)"
+                              : "var(--text-dim)"
                         }
-                        style={{ marginRight: 15, flexShrink: 0 }}
+                        style={{ marginRight: 15, flexShrink: 0, opacity: f.error ? 0.5 : 1 }}
                       />
                       <div
                         style={{
@@ -1709,40 +1715,69 @@ export function CleanerView() {
                         }}
                       >
                         <div style={{ fontWeight: "bold" }}>{f.filename}</div>
-                        <div
-                          style={{
-                            fontSize: "0.8rem",
-                            color: "var(--text-dim)",
-                          }}
-                        >
-                          Entropy Score: {f.entropy_score.toFixed(3)} / 8.000
-                        </div>
+                        {f.error ? (
+                          <div
+                            style={{
+                              fontSize: "0.8rem",
+                              color: "var(--text-dim)",
+                            }}
+                          >
+                            {f.error}
+                          </div>
+                        ) : (
+                          <>
+                            <div
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "var(--text-dim)",
+                              }}
+                            >
+                              Entropy Score: {f.entropy_score.toFixed(3)} /
+                              8.000
+                            </div>
+                            {f.extracted_text && (
+                              <div
+                                style={{
+                                  fontSize: "0.8rem",
+                                  color: "var(--btn-danger)",
+                                  fontFamily: "monospace",
+                                  marginTop: 4,
+                                  overflowWrap: "break-word",
+                                }}
+                              >
+                                Hidden text recovered — {f.extracted_text}
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
 
-                      <div
-                        style={{
-                          background: f.is_suspicious
-                            ? "rgba(239, 68, 68, 0.1)"
-                            : "rgba(74, 222, 128, 0.1)",
-                          color: f.is_suspicious
-                            ? "var(--btn-danger)"
-                            : "var(--btn-success)",
-                          padding: "6px 12px",
-                          borderRadius: 6,
-                          fontSize: "0.85rem",
-                          fontWeight: "bold",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        {f.is_suspicious ? (
-                          <AlertTriangle size={16} />
-                        ) : (
-                          <CheckCircle size={16} />
-                        )}
-                        {f.probability}% Confidence
-                      </div>
+                      {!f.error && (
+                        <div
+                          style={{
+                            background: f.is_suspicious
+                              ? "rgba(239, 68, 68, 0.1)"
+                              : "rgba(74, 222, 128, 0.1)",
+                            color: f.is_suspicious
+                              ? "var(--btn-danger)"
+                              : "var(--btn-success)",
+                            padding: "6px 12px",
+                            borderRadius: 6,
+                            fontSize: "0.85rem",
+                            fontWeight: "bold",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          {f.is_suspicious ? (
+                            <AlertTriangle size={16} />
+                          ) : (
+                            <CheckCircle size={16} />
+                          )}
+                          {f.probability}% Confidence
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1755,9 +1790,12 @@ export function CleanerView() {
                     marginTop: 20,
                   }}
                 >
-                  * Images with an entropy score approaching 8.000 indicate
-                  mathematically random pixel data, highly suggestive of
-                  encrypted steganography.
+                  * An entropy score approaching 8.000 indicates
+                  mathematically random pixel data, highly suggestive of an
+                  encrypted or compressed hidden payload. Separately, this
+                  scan also tries to directly recover a plaintext message
+                  from each color channel — a "Hidden text recovered" result
+                  means one was actually found, not just inferred.
                 </p>
               </div>
             )}

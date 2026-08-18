@@ -1,6 +1,6 @@
 [package]
 name = "qre-gui"
-version = "2.7.9"
+version = "2.8.0"
 license = "MIT"
 description = "QRE Privacy Toolkit"
 authors = ["Project QRE"]
@@ -61,6 +61,10 @@ lopdf = "0.44"
 id3 = "1.17"
 lofty = "0.25"
 ape = "0.6"
+# Pixel decoding for the steganography detector (see cleaner/mod.rs::detect_steganography) —
+# version pinned to match what tauri-plugin-clipboard-manager's `arboard` already resolves to,
+# so this doesn't add a second copy of `image` to the dependency tree.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "webp"] }
 
 # Windows specific dependency
 [target.'cfg(windows)'.dependencies]

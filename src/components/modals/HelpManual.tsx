@@ -512,6 +512,41 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           ID3v2 (common with certain scene-release tagging tools); that gets
           swept the same way.
         </p>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Steganography Scan
+        </h4>
+        <p>
+          A second tab in this same tool, for the opposite question: instead
+          of cleaning what an image openly reveals, it checks whether the
+          image is hiding something inside it. It runs two independent
+          checks against the image's actual decoded pixel data:
+        </p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            <strong>Direct recovery:</strong> tries to read a hidden message
+            straight out of each color channel's least significant bits. If
+            one is found, the recovered text is shown to you directly —
+            that's the strongest possible signal, not an inference.
+          </li>
+          <li>
+            <strong>Statistical analysis:</strong> flags a color channel
+            whose pixel-level randomness is a clear outlier compared to the
+            rest of that same image — how an encrypted or compressed hidden
+            payload shows up even when it doesn't read as text.
+          </li>
+        </ul>
+        <p>
+          <strong>Supported formats:</strong> PNG, JPG/JPEG, BMP, WebP.
+        </p>
+        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+          This is a heuristic, not a forensic guarantee. Both checks are
+          tuned toward realistically-sized secrets (roughly 20+ characters —
+          most passwords, seed phrases, and notes) rather than a handful of
+          hidden bytes, and the statistical check has only been calibrated
+          against a small number of real images. Treat a "Suspicious" result
+          as a reason to look closer, not a final verdict.
+        </p>
       </Section>
 
       <Section id="qr" title="QR Generator" icon={<QrCode />}>
