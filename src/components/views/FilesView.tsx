@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { platform } from "@tauri-apps/plugin-os";
 import {
   join,
   downloadDir,
@@ -71,8 +72,32 @@ export function FilesView(props: FilesViewProps) {
   // our code ever runs), so the only real recovery is restarting the app process, which
   // clears the corrupted in-memory scope.
   const scopeCorrupted = fs.statusMsg.includes("invalid glob pattern");
+  // Tracked separately from statusMsg (rather than clearing it on dismiss): the underlying
+  // corruption doesn't go away just because the modal was closed - every retry will fail
+  // identically until a real restart happens - so we still want to show a lightweight
+  // reminder instead of a blank "0 items" list that looks like nothing's wrong.
+  const [scopeCorruptionDismissed, setScopeCorruptionDismissed] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    try {
+      if (platform() === "android") setIsAndroid(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // `@tauri-apps/plugin-process`'s relaunch() ultimately calls Tauri's `process::restart()`,
+  // which re-spawns the app by running `Command::new(current_binary_path).spawn()` - a
+  // desktop-only re-exec pattern with no Android equivalent (there is no standalone
+  // executable to re-launch inside Android's app sandbox; apps are started via Activity
+  // intents, not `exec()`). On Android this ends up just killing the current process with
+  // nothing bringing it back, which is why the app appeared to "minimize" instead of
+  // restarting. So on Android we don't call relaunch() at all - we tell the user how to
+  // actually force a fresh process (which genuinely does clear the corrupted scope, since
+  // this app doesn't persist scope state to disk).
   async function restartApp() {
+    if (isAndroid) return;
     setRestarting(true);
     try {
       await relaunch();
@@ -483,21 +508,53 @@ export function FilesView(props: FilesViewProps) {
         onGoHome={fs.goHome}
       />
 
-      <FileGrid
-        entries={fs.entries}
-        selectedPaths={fs.selectedPaths}
-        onSelect={(path, idx, multi, range) =>
-          fs.handleSelection(path, idx, multi, range)
-        }
-        onNavigate={fs.loadDir}
-        onGoUp={fs.goUp}
-        onContextMenu={handleContextMenu}
-        sortField={fs.sortField}
-        sortDirection={fs.sortDirection}
-        onSort={fs.handleSort}
-        timeLockPaths={timeLockPaths}
-        timeLockInfo={timeLockInfo}
-      />
+      {scopeCorrupted && scopeCorruptionDismissed ? (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            padding: 40,
+            color: "var(--text-dim)",
+          }}
+        >
+          <AlertTriangle size={40} color="var(--btn-danger)" style={{ marginBottom: 12 }} />
+          <p style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 6 }}>
+            File browsing is still stuck
+          </p>
+          <p style={{ fontSize: "0.85rem", maxWidth: 360 }}>
+            {isAndroid
+              ? "Force-close the app from Recent Apps and reopen it to fix this."
+              : "Restart the app to fix this."}
+          </p>
+          <button
+            className="secondary-btn"
+            style={{ marginTop: 15 }}
+            onClick={() => setScopeCorruptionDismissed(false)}
+          >
+            Show details again
+          </button>
+        </div>
+      ) : (
+        <FileGrid
+          entries={fs.entries}
+          selectedPaths={fs.selectedPaths}
+          onSelect={(path, idx, multi, range) =>
+            fs.handleSelection(path, idx, multi, range)
+          }
+          onNavigate={fs.loadDir}
+          onGoUp={fs.goUp}
+          onContextMenu={handleContextMenu}
+          sortField={fs.sortField}
+          sortDirection={fs.sortDirection}
+          onSort={fs.handleSort}
+          timeLockPaths={timeLockPaths}
+          timeLockInfo={timeLockInfo}
+        />
+      )}
 
       {isDragging && (
         <div className="drag-overlay">
@@ -812,7 +869,7 @@ export function FilesView(props: FilesViewProps) {
         </div>
       )}
 
-      {scopeCorrupted && (
+      {scopeCorrupted && !scopeCorruptionDismissed && (
         <div className="modal-overlay" style={{ zIndex: 99999 }}>
           <div
             className="auth-card"
@@ -839,23 +896,52 @@ export function FilesView(props: FilesViewProps) {
                 Picking or dropping a file whose name contains an unmatched
                 bracket (like <code>[</code>) can trip a known bug outside
                 this app's control, which then breaks every folder listing
-                until the app is restarted. Your files themselves are
-                completely unaffected — only this browsing session is stuck.
+                until the app restarts. Your files themselves are completely
+                unaffected — only this browsing session is stuck.
               </p>
-              <button
-                className="auth-btn danger-btn"
-                style={{ width: "100%", marginTop: 15, display: "flex",
-                  alignItems: "center", justifyContent: "center", gap: 8 }}
-                onClick={restartApp}
-                disabled={restarting}
-              >
-                <RefreshCw size={16} className={restarting ? "spinner" : ""} />
-                {restarting ? "Restarting…" : "Restart App"}
-              </button>
+
+              {isAndroid ? (
+                <div
+                  style={{
+                    background: "rgba(139,92,246,0.08)",
+                    border: "1px solid rgba(139,92,246,0.25)",
+                    borderRadius: 8,
+                    padding: 12,
+                    marginTop: 15,
+                    textAlign: "left",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  <strong>On Android, this needs a manual restart</strong> —
+                  a one-tap restart isn't reliable on this platform, so
+                  tapping a button here would just close the app without it
+                  reopening. Instead:
+                  <ol style={{ margin: "8px 0 0 0", paddingLeft: 18 }}>
+                    <li>
+                      Open your Recent Apps switcher and swipe this app away
+                      completely (a Home-button tap alone isn't enough — it
+                      needs to fully close).
+                    </li>
+                    <li>Reopen QRE Privacy Toolkit from your app drawer.</li>
+                  </ol>
+                </div>
+              ) : (
+                <button
+                  className="auth-btn danger-btn"
+                  style={{ width: "100%", marginTop: 15, display: "flex",
+                    alignItems: "center", justifyContent: "center", gap: 8 }}
+                  onClick={restartApp}
+                  disabled={restarting}
+                >
+                  <RefreshCw size={16} className={restarting ? "spinner" : ""} />
+                  {restarting ? "Restarting…" : "Restart App"}
+                </button>
+              )}
+
               <button
                 className="secondary-btn"
                 style={{ width: "100%", marginTop: 8 }}
-                onClick={() => fs.setStatusMsg("Ready")}
+                onClick={() => setScopeCorruptionDismissed(true)}
               >
                 Dismiss for now
               </button>
