@@ -69,6 +69,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Windows specific dependency
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+# ShellExecuteW (the "runas" verb, for the Administrator relaunch flow) — pinned to 0.61 to
+# match what tauri/directories already resolve, so this doesn't add a second copy to the tree.
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Foundation"] }
 
 # Add trash only for non-Android targets
 [target.'cfg(not(target_os = "android"))'.dependencies]

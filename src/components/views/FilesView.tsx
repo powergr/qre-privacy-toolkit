@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   join,
   downloadDir,
@@ -13,6 +14,7 @@ import {
   ShieldAlert,
   FolderOpen,
   AlertTriangle,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { formatSize } from "../../utils/formatting";
@@ -59,6 +61,25 @@ interface FilesViewProps {
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(fs.loadDir);
+
+  // A known upstream Tauri bug (tauri-apps/tauri#11705, #11708): a path containing an
+  // unmatched bracket - picked via any file/folder dialog anywhere in the app, or dropped
+  // onto the window - permanently corrupts the fs plugin's in-memory scope for the rest of
+  // the session. Every subsequent read_dir/stat call then fails with this exact error,
+  // regardless of which folder is being browsed. There's no way to guard against it from
+  // here (the corruption happens inside Tauri's own dialog-plugin/drag-drop handling before
+  // our code ever runs), so the only real recovery is restarting the app process, which
+  // clears the corrupted in-memory scope.
+  const scopeCorrupted = fs.statusMsg.includes("invalid glob pattern");
+  const [restarting, setRestarting] = useState(false);
+  async function restartApp() {
+    setRestarting(true);
+    try {
+      await relaunch();
+    } catch {
+      setRestarting(false);
+    }
+  }
 
   // ── Existing state ──────────────────────────────────────────────────────────
   const [showCompression, setShowCompression] = useState(false);
@@ -502,7 +523,7 @@ export function FilesView(props: FilesViewProps) {
             ? `${fs.selectedPaths.length} selected (${formatSize(fs.selectionSize)})`
             : "No selection"}
         </span>
-        {fs.statusMsg.startsWith("Error:") && (
+        {fs.statusMsg.startsWith("Error:") && !scopeCorrupted && (
           <>
             <div
               style={{
@@ -785,6 +806,58 @@ export function FilesView(props: FilesViewProps) {
                 onClick={() => fs.setAccessDenied(null)}
               >
                 Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scopeCorrupted && (
+        <div className="modal-overlay" style={{ zIndex: 99999 }}>
+          <div
+            className="auth-card"
+            style={{ borderColor: "var(--btn-danger)" }}
+          >
+            <div
+              className="modal-header"
+              style={{ borderBottomColor: "var(--btn-danger)" }}
+            >
+              <ShieldAlert size={24} color="var(--btn-danger)" />
+              <h2 style={{ color: "var(--btn-danger)" }}>File Browser Needs a Restart</h2>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center" }}>
+              <p
+                style={{
+                  fontSize: "1.1rem",
+                  marginBottom: 10,
+                  fontWeight: "bold",
+                }}
+              >
+                A file with an unusual name broke the file browser
+              </p>
+              <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
+                Picking or dropping a file whose name contains an unmatched
+                bracket (like <code>[</code>) can trip a known bug outside
+                this app's control, which then breaks every folder listing
+                until the app is restarted. Your files themselves are
+                completely unaffected — only this browsing session is stuck.
+              </p>
+              <button
+                className="auth-btn danger-btn"
+                style={{ width: "100%", marginTop: 15, display: "flex",
+                  alignItems: "center", justifyContent: "center", gap: 8 }}
+                onClick={restartApp}
+                disabled={restarting}
+              >
+                <RefreshCw size={16} className={restarting ? "spinner" : ""} />
+                {restarting ? "Restarting…" : "Restart App"}
+              </button>
+              <button
+                className="secondary-btn"
+                style={{ width: "100%", marginTop: 8 }}
+                onClick={() => fs.setStatusMsg("Ready")}
+              >
+                Dismiss for now
               </button>
             </div>
           </div>

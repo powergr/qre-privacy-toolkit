@@ -439,17 +439,15 @@ pub fn clean_registry_entries(
 /// instead of failing with a permissions error the user has no way to act on from inside
 /// the app.
 ///
-/// Uses `powershell Start-Process -Verb RunAs` rather than a direct WinAPI `ShellExecute`
-/// call — that's what actually triggers the UAC consent prompt, and doing it this way needs
-/// no extra Windows-API crate dependency beyond `std::process::Command`, which is already
-/// available.
-///
-/// This exits the current process immediately after handing off to PowerShell, matching the
-/// standard "Restart as administrator" pattern used by e.g. Windows' own Task Manager: if the
-/// user cancels the UAC prompt, the elevated relaunch simply doesn't happen and the app has
-/// already closed — the user needs to reopen it manually. That's a deliberate, well-understood
-/// tradeoff, not an oversight; there's no reliable way to know the UAC outcome synchronously
-/// from here to decide whether to stay open instead.
+/// Uses the Win32 `ShellExecuteW` API directly with the `"runas"` verb — the same
+/// mechanism Windows Explorer's own "Run as administrator" context-menu entry uses — rather
+/// than shelling out to `powershell Start-Process -Verb RunAs`. The earlier PowerShell-based
+/// version was a fire-and-forget subprocess spawn: if the inner PowerShell command failed for
+/// any reason (quoting, execution policy, the user cancelling the UAC prompt), that failure
+/// happened inside a detached child process we never inspected, while we'd already called
+/// `exit(0)` — the app would just silently close with no relaunch and no UAC prompt ever
+/// shown. `ShellExecuteW` returns a real, synchronous status code we can check *before*
+/// exiting, including distinguishing a cancelled UAC prompt from every other failure mode.
 pub fn relaunch_as_admin(app_handle: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "windows"))]
     {
@@ -459,25 +457,59 @@ pub fn relaunch_as_admin(app_handle: &tauri::AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
         let exe = std::env::current_exe()
             .map_err(|e| format!("Could not determine the app's own executable path: {e}"))?;
-        let exe_str = exe.to_string_lossy();
 
-        // Escape for a PowerShell single-quoted string literal (double any embedded ').
-        let ps_quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let to_wide = |s: &OsStr| -> Vec<u16> { s.encode_wide().chain(std::iter::once(0)).collect() };
+        let verb = to_wide(OsStr::new("runas"));
+        let file = to_wide(exe.as_os_str());
 
-        std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("Start-Process -FilePath {} -Verb RunAs", ps_quote(&exe_str)),
-            ])
-            .spawn()
-            .map_err(|e| format!("Failed to launch the elevated relaunch: {e}"))?;
+        // SW_SHOWNORMAL = 1. Passed as a literal rather than pulling in the
+        // Win32_UI_WindowsAndMessaging feature just for one named constant.
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1,
+            )
+        };
 
+        interpret_shell_execute_result(result as isize)?;
         app_handle.exit(0);
         Ok(())
     }
+}
+
+/// Interprets a `ShellExecuteW` return value. Per the Win32 docs, values > 32 mean success;
+/// anything <= 32 is a specific error/`SE_ERR_*` code (all of them small integers, e.g.
+/// `SE_ERR_ACCESSDENIED` = 5, which — for a `"runas"` verb specifically — commonly means the
+/// user declined the UAC consent prompt, though ShellExecute doesn't give a way to distinguish
+/// that cleanly from a genuine permissions problem). Split out from `relaunch_as_admin` so
+/// this interpretation can be unit tested without needing a real Win32 call.
+///
+/// Deliberately does NOT special-case a "cancelled" code: an earlier version of this function
+/// checked for `code == 1223` (`ERROR_CANCELLED`), which is a real Win32 constant but not one
+/// `ShellExecuteW` ever returns — it belongs to a different API. Since 1223 > 32, that branch
+/// was silently unreachable and every real failure fell through to the success path. A test
+/// written directly against this function (rather than only exercising it end-to-end through
+/// a live UAC prompt) caught that immediately, which is exactly why this is a separate,
+/// directly-testable function instead of being inlined into the Win32 call site.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn interpret_shell_execute_result(code: isize) -> Result<(), String> {
+    if code <= 32 {
+        return Err(format!(
+            "Failed to relaunch elevated (ShellExecute error code {code}). \
+             This usually means the Administrator prompt was declined or cancelled."
+        ));
+    }
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1550,5 +1582,59 @@ mod tests {
         };
         assert!(!r.success);
         assert!(r.error.is_some());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // interpret_shell_execute_result
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_shell_execute_result_success_codes_are_ok() {
+        // Per the Win32 docs, any value > 32 indicates success.
+        for code in [33, 42, 1000, isize::MAX] {
+            assert!(
+                interpret_shell_execute_result(code).is_ok(),
+                "code {code} should be treated as success"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shell_execute_result_boundary_32_is_error() {
+        // 32 itself is documented as the boundary - still a failure, not success.
+        assert!(interpret_shell_execute_result(32).is_err());
+    }
+
+    #[test]
+    fn test_shell_execute_result_treats_out_of_range_codes_like_1223_as_success() {
+        // Regression test: an earlier version special-cased code 1223 (a real Win32 constant,
+        // ERROR_CANCELLED, but not one ShellExecuteW actually returns) as a "cancelled" error.
+        // Since 1223 > 32, that branch was unreachable dead code, and every genuine failure
+        // silently fell through to Ok(()) instead. This pins the general >32-is-success rule
+        // for that value too, so a future edit can't quietly resurrect the old bug.
+        assert!(interpret_shell_execute_result(1223).is_ok());
+    }
+
+    #[test]
+    fn test_shell_execute_result_access_denied_is_a_generic_error() {
+        // SE_ERR_ACCESSDENIED (5) is the real code ShellExecuteW returns when a "runas"
+        // elevation is declined or otherwise denied - the actual failure mode this whole
+        // feature exists to surface.
+        let err = interpret_shell_execute_result(5).unwrap_err();
+        assert!(
+            err.contains('5'),
+            "error message should include the actual code, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_shell_execute_result_other_failure_codes_are_generic_errors() {
+        for code in [0, 2, 5, 8, 31] {
+            let err = interpret_shell_execute_result(code).unwrap_err();
+            assert!(
+                err.contains(&code.to_string()),
+                "error message for code {code} should include the code, got: {err}"
+            );
+        }
     }
 }

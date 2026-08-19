@@ -3947,6 +3947,7 @@ dependencies = [
  "trash",
  "uuid",
  "walkdir",
+ "windows-sys 0.61.2",
  "winreg 0.56.0",
  "zeroize",
  "zip 2.4.2",
