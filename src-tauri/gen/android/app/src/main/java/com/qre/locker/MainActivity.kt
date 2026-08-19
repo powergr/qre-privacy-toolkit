@@ -12,8 +12,17 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge() // Keep this line since it's working for you
     super.onCreate(savedInstanceState)
-    
+
     // ADD THIS: Check for permissions on startup
+    checkPermissions()
+  }
+
+  // Re-check on every resume, not just cold start. onCreate() only fires once, so a user who
+  // dismissed the "All Files Access" prompt without granting it (or revoked it later in
+  // Settings) would never be asked again for the rest of the app's install lifetime, and every
+  // subsequent directory read would keep silently failing with a permission error.
+  override fun onResume() {
+    super.onResume()
     checkPermissions()
   }
 

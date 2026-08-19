@@ -7,7 +7,6 @@ import {
   downloadDir,
   desktopDir,
   documentDir,
-  homeDir,
 } from "@tauri-apps/api/path";
 import {
   UploadCloud,
@@ -460,13 +459,7 @@ export function FilesView(props: FilesViewProps) {
         currentPath={fs.currentPath}
         onGoUp={fs.goUp}
         onNavigate={fs.loadDir}
-        onGoHome={async () => {
-          try {
-            fs.loadDir(await homeDir());
-          } catch (e) {
-            console.error("Failed to resolve Home dir", e);
-          }
-        }}
+        onGoHome={fs.goHome}
       />
 
       <FileGrid
@@ -509,6 +502,24 @@ export function FilesView(props: FilesViewProps) {
             ? `${fs.selectedPaths.length} selected (${formatSize(fs.selectionSize)})`
             : "No selection"}
         </span>
+        {fs.statusMsg.startsWith("Error:") && (
+          <>
+            <div
+              style={{
+                width: 1,
+                height: 14,
+                background: "var(--border)",
+                margin: "0 10px",
+              }}
+            />
+            <span
+              style={{ color: "var(--btn-danger)", fontSize: "0.85rem" }}
+              title={fs.statusMsg}
+            >
+              {fs.statusMsg}
+            </span>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         {fileClipboard && (
           <span
