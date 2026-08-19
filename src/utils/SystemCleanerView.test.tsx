@@ -579,7 +579,12 @@ describe("Registry tab (Windows only)", () => {
         backup_path: "b.reg",
         error: null,
       })
-      .mockResolvedValueOnce({ items_cleaned: 1, errors: [] });
+      .mockResolvedValueOnce({
+        items_cleaned: 1,
+        errors: [],
+        backup_path: null,
+        results: [{ id: regItem.id, success: true, error: null }],
+      });
 
     fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
     await waitFor(() => screen.getByText("OldApp"));
@@ -594,9 +599,44 @@ describe("Registry tab (Windows only)", () => {
 
     await waitFor(() =>
       expect(mockInvoke).toHaveBeenCalledWith("clean_registry", {
-        entries: [{ key_path: "HKCU\\SOFTWARE\\OldApp", value_name: null }],
+        entries: [{ id: regItem.id, key_path: "HKCU\\SOFTWARE\\OldApp", value_name: null }],
       }),
     );
+  });
+
+  it("re-scans the registry and replaces the displayed list", async () => {
+    const firstItem = makeRegistryItem({ name: "FirstScanApp" });
+    await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([firstItem]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
+    await waitFor(() => screen.getByText("FirstScanApp"));
+
+    // A second, different result set - proves the button actually re-invokes
+    // scan_registry and re-renders from its response, not just a no-op click.
+    const secondItem = makeRegistryItem({ name: "SecondScanApp" });
+    mockInvoke.mockResolvedValueOnce([secondItem]);
+
+    fireEvent.click(screen.getByTitle("Re-scan"));
+
+    await waitFor(() => screen.getByText("SecondScanApp"));
+    expect(screen.queryByText("FirstScanApp")).not.toBeInTheDocument();
+    expect(mockInvoke).toHaveBeenCalledWith("scan_registry");
+  });
+
+  it("re-scans from the empty 'Registry is Clean' state", async () => {
+    await openRegistryTab();
+    mockInvoke.mockResolvedValueOnce([]); // clean on first scan
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan Registry" }));
+    await waitFor(() => screen.getByText("Registry is Clean"));
+
+    const foundItem = makeRegistryItem({ name: "NewlyOrphaned" });
+    mockInvoke.mockResolvedValueOnce([foundItem]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan Again" }));
+
+    await waitFor(() => screen.getByText("NewlyOrphaned"));
   });
 });
 

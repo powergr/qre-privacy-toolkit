@@ -176,6 +176,7 @@ pub fn run() {
             commands::tools::scan_registry,
             commands::tools::backup_registry,
             commands::tools::clean_registry,
+            commands::tools::relaunch_as_admin,
             // File Analyzer
             commands::tools::scan_directory_targets,
             // Metadata Cleaner

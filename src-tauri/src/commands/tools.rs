@@ -616,6 +616,13 @@ pub fn clean_registry(
     registry_cleaner::clean_registry_entries(entries)
 }
 
+/// Closes this instance and relaunches the app elevated (Windows only), so operations that
+/// need Administrator rights (e.g. deleting HKLM registry entries) can actually succeed.
+#[tauri::command]
+pub fn relaunch_as_admin(app_handle: AppHandle) -> CommandResult<()> {
+    registry_cleaner::relaunch_as_admin(&app_handle)
+}
+
 #[tauri::command]
 pub async fn detect_steganography(
     paths: Vec<String>,

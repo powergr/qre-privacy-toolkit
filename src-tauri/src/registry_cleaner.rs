@@ -43,6 +43,9 @@ pub struct RegistryItem {
     pub category: String,
     pub description: String,
     pub warning: Option<String>,
+    /// True for entries under HKLM (any view) — deleting these needs Administrator
+    /// rights. HKCU entries are always writable by the current user.
+    pub elevation_required: bool,
 }
 
 /// Result of a registry backup operation.
@@ -61,11 +64,26 @@ pub struct RegistryCleanResult {
     pub errors: Vec<String>,
     /// Path to the backup that was taken before cleaning, if any.
     pub backup_path: Option<String>,
+    /// Per-entry outcome, keyed by the same `id` the frontend sent in — lets the
+    /// caller know exactly which items actually got deleted, instead of assuming
+    /// every requested entry succeeded just because the call itself didn't error.
+    pub results: Vec<RegistryCleanItemResult>,
 }
 
-/// Input for a single registry deletion — passed from the frontend.
+/// Outcome of deleting a single requested entry.
+#[derive(Serialize, Debug)]
+pub struct RegistryCleanItemResult {
+    pub id: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+/// Input for a single registry deletion — passed from the frontend. `id` is echoed
+/// back unchanged in the matching `RegistryCleanItemResult` so the caller can tell
+/// which specific item a result belongs to.
 #[derive(Deserialize, Debug, Clone)]
 pub struct RegistryCleanEntry {
+    pub id: String,
     pub key_path: String,
     pub value_name: Option<String>,
 }
@@ -376,18 +394,34 @@ pub fn clean_registry_entries(
         items_cleaned: 0,
         errors: vec!["Registry cleaning is only available on Windows".to_string()],
         backup_path: None,
+        results: vec![],
     };
 
     #[cfg(target_os = "windows")]
     {
         let mut cleaned = 0u64;
         let mut errors = Vec::new();
+        let mut results = Vec::new();
 
         for entry in entries {
             let result = delete_registry_entry(&entry.key_path, &entry.value_name);
             match result {
-                Ok(_) => cleaned += 1,
-                Err(e) => errors.push(format!("Failed to delete {}: {}", entry.key_path, e)),
+                Ok(_) => {
+                    cleaned += 1;
+                    results.push(RegistryCleanItemResult {
+                        id: entry.id,
+                        success: true,
+                        error: None,
+                    });
+                }
+                Err(e) => {
+                    errors.push(format!("Failed to delete {}: {}", entry.key_path, e));
+                    results.push(RegistryCleanItemResult {
+                        id: entry.id,
+                        success: false,
+                        error: Some(e),
+                    });
+                }
             }
         }
 
@@ -395,7 +429,54 @@ pub fn clean_registry_entries(
             items_cleaned: cleaned,
             errors,
             backup_path: None, // Caller manages the backup path
+            results,
         }
+    }
+}
+
+/// Closes this (unelevated) instance and relaunches the app with Administrator rights,
+/// so operations on HKLM entries (or anything else requiring elevation) actually succeed
+/// instead of failing with a permissions error the user has no way to act on from inside
+/// the app.
+///
+/// Uses `powershell Start-Process -Verb RunAs` rather than a direct WinAPI `ShellExecute`
+/// call — that's what actually triggers the UAC consent prompt, and doing it this way needs
+/// no extra Windows-API crate dependency beyond `std::process::Command`, which is already
+/// available.
+///
+/// This exits the current process immediately after handing off to PowerShell, matching the
+/// standard "Restart as administrator" pattern used by e.g. Windows' own Task Manager: if the
+/// user cancels the UAC prompt, the elevated relaunch simply doesn't happen and the app has
+/// already closed — the user needs to reopen it manually. That's a deliberate, well-understood
+/// tradeoff, not an oversight; there's no reliable way to know the UAC outcome synchronously
+/// from here to decide whether to stay open instead.
+pub fn relaunch_as_admin(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app_handle;
+        return Err("Relaunching as Administrator is only supported on Windows.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let exe = std::env::current_exe()
+            .map_err(|e| format!("Could not determine the app's own executable path: {e}"))?;
+        let exe_str = exe.to_string_lossy();
+
+        // Escape for a PowerShell single-quoted string literal (double any embedded ').
+        let ps_quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+
+        std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("Start-Process -FilePath {} -Verb RunAs", ps_quote(&exe_str)),
+            ])
+            .spawn()
+            .map_err(|e| format!("Failed to launch the elevated relaunch: {e}"))?;
+
+        app_handle.exit(0);
+        Ok(())
     }
 }
 
@@ -483,6 +564,7 @@ fn scan_orphaned_uninstall(items: &mut Vec<RegistryItem>) {
                 warning: Some(
                     "Verify this application is truly uninstalled before removing.".to_string(),
                 ),
+                elevation_required: *hive_name != "HKCU",
             });
         }
     }
@@ -568,6 +650,7 @@ fn scan_invalid_app_paths(items: &mut Vec<RegistryItem>) {
                         subkey_name, exe
                     ),
                     warning: None,
+                    elevation_required: *hive_name != "HKCU",
                 });
             }
         }
@@ -615,6 +698,7 @@ fn scan_mui_cache(items: &mut Vec<RegistryItem>) {
                     category: "MUICache".to_string(),
                     description: format!("MUI cache entry for a missing executable: {}", expanded),
                     warning: None,
+                    elevation_required: false, // MUI cache only lives under HKCU
                 });
             }
         }
@@ -677,6 +761,7 @@ fn scan_startup_entries(items: &mut Vec<RegistryItem>) {
                         "Removing this stops it from running at login — verify before deleting."
                             .to_string(),
                     ),
+                    elevation_required: *hive_name != "HKCU",
                 });
             }
         }
@@ -1097,6 +1182,24 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_scan_elevation_required_matches_hive() {
+        // Regression test: deleting an HKLM entry silently failed with no indication why,
+        // because nothing flagged it as needing Administrator rights first. Every scanned
+        // item's `elevation_required` must agree with its own key_path's hive.
+        let items = scan_registry();
+        for item in &items {
+            let is_hklm =
+                item.key_path.starts_with("HKLM\\") || item.key_path.starts_with("HKLM (WOW64)\\");
+            assert_eq!(
+                item.elevation_required, is_hklm,
+                "Item '{}' (key_path '{}') has elevation_required={} but is_hklm={}",
+                item.name, item.key_path, item.elevation_required, is_hklm
+            );
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // extract_exe_from_command
     // ─────────────────────────────────────────────────────────────────────
@@ -1403,6 +1506,7 @@ mod tests {
     #[test]
     fn test_registry_clean_entry_with_value_name() {
         let entry = RegistryCleanEntry {
+            id: "test-id-1".to_string(),
             key_path: r"HKCU\SOFTWARE\Test".to_string(),
             value_name: Some("MyValue".to_string()),
         };
@@ -1413,6 +1517,7 @@ mod tests {
     #[test]
     fn test_registry_clean_entry_without_value_name() {
         let entry = RegistryCleanEntry {
+            id: "test-id-2".to_string(),
             key_path: r"HKCU\SOFTWARE\Test".to_string(),
             value_name: None,
         };

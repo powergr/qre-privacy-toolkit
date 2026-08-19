@@ -55,6 +55,7 @@ interface RegistryItem {
   category: string;
   description: string;
   warning: string | null;
+  elevation_required: boolean;
 }
 
 interface RegistryBackupResult {
@@ -63,13 +64,21 @@ interface RegistryBackupResult {
   error: string | null;
 }
 
+interface RegistryCleanItemResult {
+  id: string;
+  success: boolean;
+  error: string | null;
+}
+
 interface RegistryCleanResult {
   items_cleaned: number;
   errors: string[];
   backup_path: string | null;
+  results: RegistryCleanItemResult[];
 }
 
 interface RegistryCleanEntry {
+  id: string;
   key_path: string;
   value_name: string | null;
 }
@@ -112,6 +121,7 @@ export function SystemCleanerView() {
   // ── Confirmation dialog ─────────────────────────────────────────────────
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmChecked, setConfirmChecked]     = useState(false);
+  const [showElevationConfirm, setShowElevationConfirm] = useState(false);
 
   // ── Cleaning progress ───────────────────────────────────────────────────
   const [cleaning, setCleaning]         = useState(false);
@@ -278,13 +288,30 @@ export function SystemCleanerView() {
     setRegistryError(null);
     const entries: RegistryCleanEntry[] = registryItems
       .filter((i) => selectedRegistryIds.has(i.id))
-      .map((i) => ({ key_path: i.key_path, value_name: i.value_name }));
+      .map((i) => ({ id: i.id, key_path: i.key_path, value_name: i.value_name }));
     try {
       const result = await invoke<RegistryCleanResult>("clean_registry", { entries });
-      setRegistryItems((prev) => prev.filter((i) => !selectedRegistryIds.has(i.id)));
-      setSelectedRegistryIds(new Set());
+      // Only drop items that actually got deleted — e.g. an HKLM entry that failed for
+      // lack of admin rights must stay visible, not disappear as if it had succeeded.
+      const succeededIds = new Set(
+        result.results.filter((r) => r.success).map((r) => r.id),
+      );
+      setRegistryItems((prev) => prev.filter((i) => !succeededIds.has(i.id)));
+      setSelectedRegistryIds((prev) => {
+        const next = new Set(prev);
+        succeededIds.forEach((id) => next.delete(id));
+        return next;
+      });
       if (result.errors.length > 0) {
-        setRegistryError(`Cleaned ${result.items_cleaned} entries with ${result.errors.length} error(s).`);
+        const needsElevation = registryItems.some(
+          (i) => selectedRegistryIds.has(i.id) && !succeededIds.has(i.id) && i.elevation_required,
+        );
+        setRegistryError(
+          `Cleaned ${result.items_cleaned} entries with ${result.errors.length} error(s).` +
+            (needsElevation
+              ? " The remaining item(s) need Administrator privileges — use \"Relaunch as Administrator\" below."
+              : ""),
+        );
       } else {
         setMsg(`Registry cleaned: ${result.items_cleaned} entries removed.`);
       }
@@ -335,6 +362,18 @@ export function SystemCleanerView() {
 
   const hasWarnings = visibleItems.filter((i) => selectedIds.has(i.id)).some((i) => i.warning);
   const hasElevationRequired = visibleItems.filter((i) => selectedIds.has(i.id)).some((i) => i.elevation_required);
+  const hasRegistryElevationRequired = registryItems
+    .filter((i) => selectedRegistryIds.has(i.id))
+    .some((i) => i.elevation_required);
+
+  async function relaunchAsAdmin() {
+    try {
+      await invoke("relaunch_as_admin");
+    } catch (e) {
+      setRegistryError("Could not relaunch as Administrator: " + e);
+      setError("Could not relaunch as Administrator: " + e);
+    }
+  }
 
   // ═════════════════════════════════════════════════════════════════════════
   // TABS CONFIG
@@ -588,10 +627,16 @@ export function SystemCleanerView() {
                 borderRadius: 8, color: "#8b5cf6", fontSize: "0.85rem",
                 display: "flex", alignItems: "center", gap: 10 }}>
                 <Lock size={16} style={{ flexShrink: 0 }} />
-                <span>
+                <span style={{ flex: 1 }}>
                   Some selected items require administrator privileges.
                   Run as admin or those items will fail with a permissions error.
                 </span>
+                {isWindows && (
+                  <button className="secondary-btn" onClick={() => setShowElevationConfirm(true)}
+                    style={{ flexShrink: 0, fontSize: "0.8rem", padding: "5px 12px" }}>
+                    Relaunch as Administrator
+                  </button>
+                )}
               </div>
             )}
 
@@ -850,6 +895,26 @@ export function SystemCleanerView() {
                   )}
                 </div>
 
+                {/* Elevation requirement banner */}
+                {hasRegistryElevationRequired && (
+                  <div style={{ marginBottom: 15, padding: 12,
+                    background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.3)",
+                    borderRadius: 8, color: "#8b5cf6", fontSize: "0.85rem",
+                    display: "flex", alignItems: "center", gap: 10 }}>
+                    <Lock size={16} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>
+                      Some selected entries are under HKLM and need administrator
+                      privileges to remove — they'll fail with a permissions error otherwise.
+                    </span>
+                    {isWindows && (
+                      <button className="secondary-btn" onClick={() => setShowElevationConfirm(true)}
+                        style={{ flexShrink: 0, fontSize: "0.8rem", padding: "5px 12px" }}>
+                        Relaunch as Administrator
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Toolbar */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
                   marginBottom: 15, background: "var(--panel-bg)", padding: "10px 15px",
@@ -902,6 +967,16 @@ export function SystemCleanerView() {
                                   {item.name}
                                 </span>
                                 {item.warning && <AlertTriangle size={13} color="#f59e0b" />}
+                                {item.elevation_required && (
+                                  <span title="Requires administrator privileges"
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 3,
+                                      fontSize: "0.68rem", fontWeight: 600, color: "#8b5cf6",
+                                      background: "rgba(139,92,246,0.12)",
+                                      border: "1px solid rgba(139,92,246,0.3)",
+                                      borderRadius: 4, padding: "1px 5px" }}>
+                                    <Lock size={9} /> Admin
+                                  </span>
+                                )}
                               </div>
                               <div style={{ fontSize: "0.78rem", color: "var(--text-dim)", marginTop: 2 }}>
                                 {item.description}
@@ -1021,6 +1096,38 @@ export function SystemCleanerView() {
               <button className="auth-btn danger-btn" style={{ flex: 1 }}
                 onClick={performClean} disabled={!confirmChecked}>
                 Confirm & Clean
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── RELAUNCH AS ADMINISTRATOR CONFIRMATION ─────────────────────── */}
+      {showElevationConfirm && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center",
+          justifyContent: "center", zIndex: 1000 }}
+          onClick={() => setShowElevationConfirm(false)}>
+          <div className="modern-card" style={{ maxWidth: 460, width: "90%", padding: 30 }}
+            onClick={(e) => e.stopPropagation()}>
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <Lock size={48} color="#8b5cf6" />
+            </div>
+            <h3 style={{ textAlign: "center", marginBottom: 15 }}>Relaunch as Administrator</h3>
+            <p style={{ color: "var(--text-dim)", marginBottom: 20, textAlign: "center" }}>
+              The app will close and reopen with administrator privileges.
+              Approve the Windows prompt that appears to continue — if you
+              cancel it, the app won't reopen automatically and you'll need
+              to start it again yourself.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button className="secondary-btn" style={{ flex: 1 }}
+                onClick={() => setShowElevationConfirm(false)}>
+                Cancel
+              </button>
+              <button className="auth-btn" style={{ flex: 1 }}
+                onClick={() => { setShowElevationConfirm(false); relaunchAsAdmin(); }}>
+                Relaunch
               </button>
             </div>
           </div>
