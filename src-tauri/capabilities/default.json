@@ -15,6 +15,26 @@
     "core:tray:default",
 
     "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$APP_DATA/**" },
+        { "path": "$APP_CONFIG/**" },
+        { "path": "$HOME/**" },
+        { "path": "C:\\Users\\**" },
+        { "path": "/storage/emulated/0" },
+        { "path": "/storage/emulated/0/**" },
+        { "path": "/sdcard" },
+        { "path": "/sdcard/**" }
+      ],
+      "deny": [
+        { "path": "$HOME/.ssh/**" },
+        { "path": "$HOME/.gnupg/**" },
+        { "path": "$HOME/.aws/**" },
+        { "path": "$HOME/AppData/Roaming/Microsoft/**" },
+        { "path": "$HOME/AppData/Local/Microsoft/**" }
+      ]
+    },
     "os:default",
     "dialog:default",
     "clipboard-manager:allow-write-text",

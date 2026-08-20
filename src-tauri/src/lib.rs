@@ -150,6 +150,7 @@ pub fn run() {
             commands::vault::regenerate_recovery_code,
             commands::vault::get_keychain_data,
             commands::vault::export_keychain,
+            commands::vault::restore_keychain,
             commands::vault::get_backup_done,
             commands::vault::set_backup_done,
             // Password Vault

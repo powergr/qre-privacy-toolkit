@@ -2170,3 +2170,85 @@ fn test_list_directory_nonexistent_directory_returns_clean_error() {
     let result = list_directory(path);
     assert!(result.is_err(), "a nonexistent directory must return Err, not panic");
 }
+
+// ── restore_keychain_to ──────────────────────────────────────────────────
+
+#[test]
+fn test_restore_keychain_to_succeeds_with_valid_backup() {
+    use crate::commands::vault::restore_keychain_to;
+    use crate::keychain::init_keychain;
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("qre_restore_keychain_test_success");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    // A genuine keychain.json, standing in for a real exported backup file.
+    let backup_path = dir.join("backup.json");
+    init_keychain(&backup_path, "correct horse battery staple 42!").unwrap();
+
+    let dest = dir.join("keychain.json");
+    assert!(!dest.exists(), "destination must start empty for this test");
+
+    restore_keychain_to(&dest, &backup_path).expect("restoring a valid backup must succeed");
+    assert!(dest.exists(), "keychain.json must now exist at the destination");
+
+    let restored = fs::read(&dest).unwrap();
+    let original = fs::read(&backup_path).unwrap();
+    assert_eq!(restored, original, "restored file must be byte-identical to the backup");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_restore_keychain_to_refuses_to_overwrite_existing_vault() {
+    use crate::commands::vault::restore_keychain_to;
+    use crate::keychain::init_keychain;
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("qre_restore_keychain_test_no_overwrite");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let backup_path = dir.join("backup.json");
+    init_keychain(&backup_path, "correct horse battery staple 42!").unwrap();
+
+    // An existing vault already sits at the destination.
+    let dest = dir.join("keychain.json");
+    init_keychain(&dest, "a completely different existing password!").unwrap();
+    let existing_before = fs::read(&dest).unwrap();
+
+    let result = restore_keychain_to(&dest, &backup_path);
+    assert!(result.is_err(), "must refuse to restore over an existing vault");
+
+    let existing_after = fs::read(&dest).unwrap();
+    assert_eq!(
+        existing_before, existing_after,
+        "the existing vault must be completely untouched after a refused restore"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_restore_keychain_to_rejects_invalid_backup_file() {
+    use crate::commands::vault::restore_keychain_to;
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("qre_restore_keychain_test_invalid");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let bad_backup = dir.join("not_a_keychain.json");
+    fs::write(&bad_backup, b"{\"totally\": \"unrelated json\"}").unwrap();
+
+    let dest = dir.join("keychain.json");
+    let result = restore_keychain_to(&dest, &bad_backup);
+    assert!(result.is_err(), "an unrelated/malformed file must be rejected");
+    assert!(
+        !dest.exists(),
+        "a rejected backup must never be written to the destination"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

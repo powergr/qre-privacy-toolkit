@@ -9,7 +9,7 @@ use crate::passwords::PasswordVault;
 use crate::state::SessionState;
 use data_encoding::BASE32_NOPAD;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -105,6 +105,49 @@ pub fn export_keychain(app: AppHandle, save_path: String) -> CommandResult<()> {
     }
     fs::copy(src, &save_path).map_err(|e| format!("Failed to export: {}", e))?;
     Ok(())
+}
+
+/// Restores a previously exported `keychain.json` backup into place, for a fresh install
+/// (or one where the vault was otherwise removed) with no vault set up yet. The Master
+/// Password/Recovery Code themselves are unaffected either way — they only ever have to
+/// unlock whichever slot data is currently on disk, and this just puts the backed-up slot
+/// data back.
+///
+/// Deliberately refuses to run if a keychain already exists here: overwriting an active
+/// vault with a restored one would silently discard whatever is currently in it. If someone
+/// genuinely wants to replace an existing vault, that has to be an explicit, separate step,
+/// not a side effect of "restore my backup."
+///
+/// The file's structure is validated (as a real `KeychainStore`) before it's ever written
+/// to the real path, so a corrupt or unrelated file is rejected with a clear message up
+/// front instead of silently landing in place and only failing cryptically at the next
+/// login attempt.
+/// Core restore logic, independent of `AppHandle` so it's directly unit-testable (this
+/// codebase doesn't have Tauri's mock-app test harness wired up, so commands taking an
+/// `AppHandle` directly generally aren't unit-tested here — extracting the real logic into a
+/// plain-path function is how the rest of this file's commands stay testable too).
+pub(crate) fn restore_keychain_to(dest: &Path, backup_path: &Path) -> Result<(), String> {
+    if keychain::keychain_exists(dest) {
+        return Err(
+            "A vault already exists on this device. Restoring a backup would overwrite it — \
+             remove the existing vault first if you really want to replace it."
+                .to_string(),
+        );
+    }
+
+    let bytes = fs::read(backup_path).map_err(|e| format!("Failed to read backup file: {e}"))?;
+
+    serde_json::from_slice::<keychain::KeychainStore>(&bytes)
+        .map_err(|_| "This file doesn't look like a valid QRE keychain backup.".to_string())?;
+
+    fs::write(dest, &bytes).map_err(|e| format!("Failed to write keychain: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restore_keychain(app: AppHandle, backup_path: String) -> CommandResult<()> {
+    let dest = resolve_keychain_path(&app, "local")?;
+    restore_keychain_to(&dest, Path::new(&backup_path))
 }
 
 #[tauri::command]

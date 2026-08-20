@@ -14,6 +14,7 @@ interface AuthOverlayProps {
   setRecoveryCode: (s: string) => void;
   onLogin: () => void;
   onInit: () => void;
+  onRestoreBackup: () => void;
   onRecovery: () => void;
   onAckRecoveryCode: () => void;
   onSwitchToRecovery: () => void;
@@ -168,6 +169,21 @@ export function AuthOverlay(props: AuthOverlayProps) {
                     onClick={props.onSwitchToRecovery}
                   >
                     Forgot Password?
+                  </span>
+                </div>
+              )}
+              {view === "setup" && (
+                <div style={{ textAlign: "center", marginTop: -5 }}>
+                  <span
+                    style={{
+                      fontSize: "0.8rem",
+                      color: "#888",
+                      cursor: "pointer",
+                      textDecoration: "underline",
+                    }}
+                    onClick={props.onRestoreBackup}
+                  >
+                    Restore from Backup instead
                   </span>
                 </div>
               )}

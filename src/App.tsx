@@ -175,6 +175,18 @@ function App() {
             if (!res.success)
               setInfoMsg({ message: res.msg || "Setup failed", type: "error" });
           }}
+          onRestoreBackup={async () => {
+            const res = await auth.handleRestoreBackup();
+            if (!res.success) {
+              setInfoMsg({
+                message: res.msg || "Restore failed",
+                type: "error",
+              });
+            } else if (res.msg) {
+              // No msg means the user just cancelled the file picker - nothing to show.
+              setInfoMsg({ message: res.msg, type: "success" });
+            }
+          }}
           onRecovery={async () => {
             const res = await auth.handleRecovery();
             if (!res.success)

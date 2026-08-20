@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { ViewState } from "../types";
 import { getPasswordScore } from "../utils/security";
 
@@ -153,6 +154,33 @@ export function useAuth() {
     }
   }
 
+  // Restores a previously exported keychain.json into place, for a fresh install (or one
+  // where the vault was otherwise removed) that hasn't been set up yet. The Master
+  // Password itself isn't restored or reset by this - it's still whatever it was when the
+  // backup was taken, since this just puts the encrypted slot data back; the user logs in
+  // normally afterward with that same password.
+  async function handleRestoreBackup(): Promise<ActionResult> {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "QRE Keychain Backup", extensions: ["json"] }],
+      });
+      // User cancelled the picker - not an error, just nothing to do.
+      if (typeof selected !== "string") return { success: true };
+
+      if (isTauri()) {
+        await invoke("restore_keychain", { backupPath: selected });
+      }
+      setView("login");
+      return {
+        success: true,
+        msg: "Vault restored. Log in with your existing password.",
+      };
+    } catch (e) {
+      return { success: false, msg: String(e) };
+    }
+  }
+
   async function handleLogin(): Promise<ActionResult> {
     try {
       if (isTauri()) await invoke("login", { password, vaultId: "local" });
@@ -248,6 +276,7 @@ export function useAuth() {
     countdown,
     stayLoggedIn: resetIdleTimer,
     handleInit,
+    handleRestoreBackup,
     handleLogin,
     handleRecovery,
     handleChangePassword,

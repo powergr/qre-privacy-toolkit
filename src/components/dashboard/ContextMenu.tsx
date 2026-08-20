@@ -13,11 +13,14 @@ import {
   Trash2,
   RefreshCw,
   Share2,
+  ExternalLink,
   Scissors,
   Copy,
   ClipboardPaste,
   CalendarClock,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { platform } from "@tauri-apps/plugin-os";
 
 interface ContextMenuProps {
   x: number;
@@ -42,6 +45,19 @@ export function ContextMenu({
   onTimeLock,
 }: ContextMenuProps) {
   const isQre = targetPath.endsWith(".qre");
+
+  // "Reveal in Explorer" has no Android equivalent - there's no OS-level "default file
+  // explorer, with this item pre-selected" concept there, and Tauri's own plugin-opener
+  // crate documents reveal_item_in_dir as explicitly unsupported on Android/iOS. Hide the
+  // action instead of showing one that will always fail.
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    try {
+      if (platform() === "android") setIsAndroid(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // --- SMART POSITIONING ---
   const style: React.CSSProperties = {
@@ -145,9 +161,15 @@ export function ContextMenu({
             <div className="dropdown-item" onClick={() => onAction("rename")}>
               <Edit size={16} /> Rename
             </div>
-            <div className="dropdown-item" onClick={() => onAction("share")}>
-              <Share2 size={16} /> Reveal in Explorer
-            </div>
+            {isAndroid ? (
+              <div className="dropdown-item" onClick={() => onAction("open")}>
+                <ExternalLink size={16} /> Open File
+              </div>
+            ) : (
+              <div className="dropdown-item" onClick={() => onAction("share")}>
+                <Share2 size={16} /> Reveal in Explorer
+              </div>
+            )}
             <div className="dropdown-divider"></div>
             <div
               className="dropdown-item danger"

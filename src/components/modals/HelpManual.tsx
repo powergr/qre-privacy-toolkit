@@ -625,26 +625,21 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           How to Restore
         </h4>
         <p>
-          To restore on a new computer:
-          <br />
-          Copy your backup file into the app's data folder:
+          On a fresh install (a new device, or after reinstalling the app),
+          you'll land on the setup screen — the same one shown when creating a
+          vault for the first time. Tap{" "}
+          <strong>"Restore from Backup instead"</strong> below the Initialize
+          button, pick your saved <code>QRE_Backup.json</code> file, and log
+          in with the same Master Password you were using before. The backup
+          is checked before it's put in place, so an unrelated or corrupted
+          file is rejected with a clear message rather than silently breaking
+          the vault.
         </p>
-        <div
-          style={{
-            background: "#000",
-            padding: 10,
-            borderRadius: 6,
-            fontFamily: "monospace",
-            fontSize: "0.8rem",
-            overflowX: "auto",
-          }}
-        >
-          <strong>Windows:</strong> %APPDATA%\com.qre.locker
-          <br />
-          <strong>macOS:</strong> ~/Library/Application Support/com.qre.locker
-          <br />
-          <strong>Linux:</strong> ~/.local/share/com.qre.locker
-        </div>
+        <p style={{ fontSize: "0.85rem", opacity: 0.85 }}>
+          This won't overwrite an existing vault — if one is already set up on
+          the device, restoring is blocked. It's specifically for the "nothing
+          here yet" case: a new install, or one where the vault was removed.
+        </p>
 
         <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
           Forgot Password?
