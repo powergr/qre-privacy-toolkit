@@ -9,6 +9,34 @@
     "main"
   ],
   "permissions": [
-    "global-shortcut:default"
+    "global-shortcut:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "C:\\Users\\**" }
+      ],
+      "deny": [
+        { "path": "$HOME/.ssh/**" },
+        { "path": "$HOME/.gnupg/**" },
+        { "path": "$HOME/.aws/**" },
+        { "path": "$HOME/AppData/Roaming/Microsoft/**" },
+        { "path": "$HOME/AppData/Local/Microsoft/**" }
+      ]
+    },
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/**",
+        "C:\\Users\\**"
+      ],
+      "deny": [
+        "$HOME/.ssh/**",
+        "$HOME/.gnupg/**",
+        "$HOME/.aws/**",
+        "$HOME/AppData/Roaming/Microsoft/**",
+        "$HOME/AppData/Local/Microsoft/**"
+      ]
+    }
   ]
 }

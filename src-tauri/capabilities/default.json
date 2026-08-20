@@ -20,20 +20,12 @@
       "allow": [
         { "path": "$APP_DATA/**" },
         { "path": "$APP_CONFIG/**" },
-        { "path": "$HOME/**" },
-        { "path": "C:\\Users\\**" },
         { "path": "/storage/emulated/0" },
         { "path": "/storage/emulated/0/**" },
         { "path": "/sdcard" },
         { "path": "/sdcard/**" }
       ],
-      "deny": [
-        { "path": "$HOME/.ssh/**" },
-        { "path": "$HOME/.gnupg/**" },
-        { "path": "$HOME/.aws/**" },
-        { "path": "$HOME/AppData/Roaming/Microsoft/**" },
-        { "path": "$HOME/AppData/Local/Microsoft/**" }
-      ]
+      "deny": []
     },
     "os:default",
     "dialog:default",
@@ -65,20 +57,12 @@
       "allow": [
         "$APP_DATA/**",
         "$APP_CONFIG/**",
-        "$HOME/**",
-        "C:\\Users\\**",
         "/storage/emulated/0",
         "/storage/emulated/0/**",
         "/sdcard",
         "/sdcard/**"
       ],
-      "deny": [
-        "$HOME/.ssh/**",
-        "$HOME/.gnupg/**",
-        "$HOME/.aws/**",
-        "$HOME/AppData/Roaming/Microsoft/**",
-        "$HOME/AppData/Local/Microsoft/**"
-      ]
+      "deny": []
     },
 
     "updater:default",

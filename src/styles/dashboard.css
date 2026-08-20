@@ -278,7 +278,6 @@
     padding: 6px 8px !important;
     gap: 4px !important;
     flex-wrap: wrap;
-    overflow-x: auto;
   }
 
   .tool-btn {
