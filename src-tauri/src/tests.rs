@@ -2050,3 +2050,123 @@ fn test_analyze_zip_reader_never_panics_on_garbage() {
     let result = cleaner::analyze_zip_reader(Cursor::new(Vec::<u8>::new()), 0);
     assert!(result.is_err(), "empty input must be rejected, not panic");
 }
+
+// ── list_directory ────────────────────────────────────────────────────────
+// Regression coverage for the file browser bypassing `@tauri-apps/plugin-fs`'s
+// glob-scope-checked commands (tauri-apps/tauri#11705, #11708): a path with an unmatched
+// bracket could poison that plugin's scope and break every subsequent listing, surviving
+// even a full app restart on Android. `list_directory` uses plain `std::fs` instead, so it
+// must never choke on exactly the kind of filename that broke the old code path.
+
+#[test]
+fn test_list_directory_returns_entries_with_correct_metadata() {
+    use crate::commands::files::list_directory;
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("qre_list_directory_test_basic");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("hello.txt"), b"hello world").unwrap();
+    fs::create_dir(dir.join("subfolder")).unwrap();
+
+    let entries = list_directory(dir.to_str().unwrap().to_string()).expect("listing must succeed");
+    assert_eq!(entries.len(), 2);
+
+    let file_entry = entries
+        .iter()
+        .find(|e| e.name == "hello.txt")
+        .expect("hello.txt must be listed");
+    assert!(!file_entry.is_directory);
+    assert_eq!(file_entry.size, Some(11)); // "hello world" is 11 bytes
+    assert!(file_entry.modified.is_some());
+
+    let dir_entry = entries
+        .iter()
+        .find(|e| e.name == "subfolder")
+        .expect("subfolder must be listed");
+    assert!(dir_entry.is_directory);
+    assert_eq!(dir_entry.size, None);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_list_directory_handles_bracket_named_files_without_erroring() {
+    // The exact regression: a file whose name contains an unmatched bracket used to break
+    // Tauri's fs-plugin scope glob compiler. Plain std::fs never compiles anything as a
+    // glob pattern, so this must just work.
+    use crate::commands::files::list_directory;
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("qre_list_directory_test_brackets");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("Screenshot_2024 [1.png"), b"fake image data").unwrap();
+    fs::write(dir.join("normal_file.txt"), b"ok").unwrap();
+
+    let entries = list_directory(dir.to_str().unwrap().to_string())
+        .expect("a bracket in a filename must not break the listing");
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries.iter().any(|e| e.name == "Screenshot_2024 [1.png"),
+        "the bracket-named file must still be listed, not silently dropped"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_list_directory_unreadable_entry_does_not_abort_whole_listing() {
+    // A broken symlink's metadata() call fails, but that must degrade to size=None /
+    // modified=None for that one entry rather than failing the entire directory listing.
+    #[cfg(unix)]
+    {
+        use crate::commands::files::list_directory;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_list_directory_test_broken_symlink");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("real_file.txt"), b"ok").unwrap();
+        std::os::unix::fs::symlink(dir.join("does_not_exist"), dir.join("broken_link")).unwrap();
+
+        let entries =
+            list_directory(dir.to_str().unwrap().to_string()).expect("listing must succeed");
+        assert_eq!(entries.len(), 2);
+        let broken = entries
+            .iter()
+            .find(|e| e.name == "broken_link")
+            .expect("broken symlink must still be listed");
+        assert_eq!(broken.size, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn test_list_directory_rejects_critical_path() {
+    use crate::commands::files::list_directory;
+
+    #[cfg(target_os = "windows")]
+    let critical = r"C:\Windows".to_string();
+    #[cfg(not(target_os = "windows"))]
+    let critical = "/etc".to_string();
+
+    assert!(
+        list_directory(critical).is_err(),
+        "protected system paths must be rejected"
+    );
+}
+
+#[test]
+fn test_list_directory_nonexistent_directory_returns_clean_error() {
+    use crate::commands::files::list_directory;
+
+    let path = std::env::temp_dir()
+        .join("qre_list_directory_test_does_not_exist_at_all")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let result = list_directory(path);
+    assert!(result.is_err(), "a nonexistent directory must return Err, not panic");
+}

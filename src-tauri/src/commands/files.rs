@@ -649,6 +649,80 @@ pub async fn trim_drive(drive_path: String) -> CommandResult<shredder::TrimResul
 
 // --- SYSTEM UTILS ---
 
+#[derive(serde::Serialize)]
+pub struct DirListEntry {
+    pub name: String,
+    pub is_directory: bool,
+    pub path: String,
+    pub size: Option<u64>,
+    /// Milliseconds since the Unix epoch, or `None` if the OS couldn't report a
+    /// modification time for this entry.
+    pub modified: Option<u64>,
+}
+
+/// Lists a directory's contents directly via `std::fs`, deliberately bypassing the
+/// `@tauri-apps/plugin-fs` `readDir`/`stat` JS commands entirely.
+///
+/// That plugin enforces its access scope with glob patterns, and has a confirmed upstream
+/// bug (tauri-apps/tauri#11705, #11708): a path containing an unmatched bracket can poison
+/// its scope state so every subsequent listing fails, regardless of what's being browsed.
+/// On Android this was observed to survive even a full app restart — which rules out
+/// in-process state as the sole cause, since restarting gives every in-memory Rust
+/// structure (including this plugin's own scope cache) a completely fresh start. The most
+/// likely explanation is that it's interacting with Android's own OS-level Storage Access
+/// Framework "persistable URI permission" grants, which are recorded outside our process
+/// and handed back to the app automatically on every launch — something no in-app restart
+/// can clear.
+///
+/// Since the exact mechanism lives inside Tauri/Android internals we don't control, the
+/// robust fix is to not depend on that code path at all for this core feature: this command
+/// never compiles a glob pattern from anything, so it can't be affected by that bug no
+/// matter where the poisoned state actually lives. A single unreadable entry is skipped
+/// rather than aborting the whole listing, so one oddly-named or inaccessible file can't
+/// take down the rest of the folder either.
+#[tauri::command]
+pub fn list_directory(path: String) -> CommandResult<Vec<DirListEntry>> {
+    let dir_path = Path::new(&path);
+    reject_critical_path(dir_path)?;
+
+    let read_dir = fs::read_dir(dir_path).map_err(|e| format!("Cannot read directory: {e}"))?;
+
+    let mut entries = Vec::new();
+    for entry in read_dir {
+        let Ok(entry) = entry else {
+            continue; // unreadable entry (permissions, race with deletion, ...) - skip it
+        };
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_directory = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+        let (size, modified) = match entry.metadata() {
+            Ok(meta) => {
+                let size = if meta.is_dir() { None } else { Some(meta.len()) };
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64);
+                (size, modified)
+            }
+            // metadata() failing for one entry (e.g. a broken symlink) shouldn't take the
+            // whole listing down - just report it without size/date.
+            Err(_) => (None, None),
+        };
+
+        entries.push(DirListEntry {
+            name,
+            is_directory,
+            path: entry.path().to_string_lossy().to_string(),
+            size,
+            modified,
+        });
+    }
+
+    Ok(entries)
+}
+
 #[tauri::command]
 pub fn get_drives(_app: AppHandle) -> Vec<String> {
     let mut drives = Vec::new();

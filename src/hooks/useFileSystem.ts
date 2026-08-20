@@ -1,9 +1,18 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { readDir, stat, watch } from "@tauri-apps/plugin-fs";
+import { watch } from "@tauri-apps/plugin-fs";
 import { homeDir } from "@tauri-apps/api/path";
 import { platform } from "@tauri-apps/plugin-os";
 import { FileEntry } from "../types";
+
+// Shape returned by the Rust `list_directory` command.
+interface DirListEntry {
+  name: string;
+  is_directory: boolean;
+  path: string;
+  size: number | null;
+  modified: number | null; // milliseconds since Unix epoch
+}
 
 export type SortField = "name" | "size" | "modified";
 export type SortDirection = "asc" | "desc";
@@ -159,34 +168,25 @@ export function useFileSystem(view: string) {
           return;
         }
 
-        const contents = await readDir(path);
-        const isWin = platformRef.current === "windows" || path.includes("\\");
-        const separator = isWin ? "\\" : "/";
+        // Uses our own Rust `list_directory` command (plain std::fs) rather than
+        // @tauri-apps/plugin-fs's readDir()/stat(). That plugin enforces its access scope
+        // with glob patterns and has a confirmed upstream bug (tauri-apps/tauri#11705,
+        // #11708): a path containing an unmatched bracket can poison its scope so every
+        // subsequent listing fails - and on Android this was observed to survive even a
+        // full app restart, which points to it interacting with Android's own OS-level
+        // Storage Access Framework permission grants rather than purely in-process state.
+        // list_directory sidesteps that machinery entirely (no glob pattern is ever
+        // compiled from a real path), and gets everything in one IPC round trip instead of
+        // one readDir() plus one stat() per file.
+        const contents = await invoke<DirListEntry[]>("list_directory", { path });
 
-        const mapped = await Promise.all(
-          contents.map(async (entry) => {
-            let fullPath = path;
-            if (!fullPath.endsWith(separator)) {
-              fullPath += separator;
-            }
-            fullPath += entry.name;
-
-            let size = null,
-              modified = null;
-            try {
-              const m = await stat(fullPath);
-              size = m.size;
-              if (m.mtime) modified = new Date(m.mtime);
-            } catch {}
-            return {
-              name: entry.name,
-              isDirectory: entry.isDirectory,
-              path: fullPath,
-              size,
-              modified,
-            };
-          }),
-        );
+        const mapped: FileEntry[] = contents.map((entry) => ({
+          name: entry.name,
+          isDirectory: entry.is_directory,
+          path: entry.path,
+          size: entry.size,
+          modified: entry.modified !== null ? new Date(entry.modified) : null,
+        }));
 
         setRawEntries(mapped);
         setCurrentPath(path);

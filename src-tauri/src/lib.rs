@@ -134,6 +134,7 @@ pub fn run() {
             commands::files::trim_drive,
             commands::files::get_drives,
             commands::files::get_startup_file,
+            commands::files::list_directory,
             commands::portable::enumerate_removable_drives,
             commands::portable::init_portable_vault,
             commands::portable::unlock_portable_vault,
