@@ -46,6 +46,10 @@ mod wordlist;
 #[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
+// `Manager` provides `.manage()`, used below to store the Android opener plugin's handle.
+#[cfg(target_os = "android")]
+use tauri::Manager;
+
 // Handle to our own minimal Android plugin (gen/android/app/src/main/java/com/qre/locker/
 // OpenFilePlugin.kt), registered below. It exists because tauri-plugin-opener's own
 // open_path is broken on Android (see commands::files::open_file_android for the full

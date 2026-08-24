@@ -4,8 +4,14 @@ use crate::keychain::MasterKey;
 use crate::state::SessionState;
 use aes_gcm::{
     aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
+    Aes256Gcm,
 };
+// Only called directly (`Nonce::from_slice`) in the desktop-only half of init_portable_vault
+// below — the Android path there returns early before reaching it, and the one non-cfg-gated
+// nonce usage (in unlock_portable_vault) goes through utils::checked_nonce() instead, which
+// doesn't need the type imported by name at the call site.
+#[cfg(not(target_os = "android"))]
+use aes_gcm::Nonce;
 use anyhow::{anyhow, Result};
 use argon2::password_hash::SaltString;
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
