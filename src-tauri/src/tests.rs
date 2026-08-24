@@ -1174,6 +1174,71 @@ mod tests {
         assert!(!is_already_compressed(""));
     }
 
+    // ── create_dir ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_create_dir_creates_new_folder() {
+        use crate::commands::files::create_dir;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_create_dir_success");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("New Folder");
+
+        create_dir(target.to_string_lossy().to_string()).unwrap();
+        assert!(target.is_dir());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_create_dir_refuses_when_target_already_exists() {
+        // Regression test: fs::create_dir_all is a silent no-op on an existing path (it
+        // only errors on a real I/O failure), so creating a "New Folder" that happens to
+        // already exist used to report success without doing anything - the user would
+        // believe they got a fresh empty folder when they got the pre-existing one back,
+        // still containing whatever was in it. Not data loss like the rename bug, but the
+        // same "silently not what was asked for" family of bug.
+        use crate::commands::files::create_dir;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_create_dir_collision");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("already_here");
+        fs::write(&target, b"important data").unwrap();
+
+        let err = create_dir(target.to_string_lossy().to_string())
+            .expect_err("creating a dir where a file already exists must be rejected");
+        assert!(err.contains("already exists"));
+        // The existing file must be completely untouched.
+        assert_eq!(fs::read(&target).unwrap(), b"important data");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_create_dir_refuses_when_folder_already_exists() {
+        use crate::commands::files::create_dir;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_create_dir_folder_collision");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("existing_folder");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("keep_me.txt"), b"do not touch").unwrap();
+
+        let err = create_dir(target.to_string_lossy().to_string())
+            .expect_err("creating a dir that already exists must be rejected, not silently no-op");
+        assert!(err.contains("already exists"));
+        // The existing folder's contents must be untouched.
+        assert_eq!(fs::read(target.join("keep_me.txt")).unwrap(), b"do not touch");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     // ── rename_item Input Validation ──────────────────────────────────────────
 
     #[test]
@@ -1204,6 +1269,74 @@ mod tests {
     fn test_rename_rejects_backslash_in_name() {
         let r = crate::commands::files::rename_item("/tmp/file.txt".into(), "sub\\dir.txt".into());
         assert!(r.is_err(), "Name containing '\\' must be rejected");
+    }
+
+    #[test]
+    fn test_rename_item_renames_successfully() {
+        use crate::commands::files::rename_item;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_rename_success");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("old_name.txt");
+        fs::write(&original, b"content").unwrap();
+
+        rename_item(original.to_string_lossy().to_string(), "new_name.txt".to_string()).unwrap();
+
+        assert!(!original.exists());
+        assert_eq!(fs::read(dir.join("new_name.txt")).unwrap(), b"content");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rename_item_refuses_to_clobber_existing_target() {
+        // Regression test: std::fs::rename silently overwrites an existing destination on
+        // every OS (documented std behavior), so renaming "source.txt" onto an
+        // already-existing "target.txt" used to destroy target.txt with zero warning.
+        // Verified empirically on Windows before this fix: the destination's original
+        // content was gone and replaced with the source's, no error returned at all.
+        use crate::commands::files::rename_item;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_rename_no_clobber");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.txt");
+        fs::write(&source, b"source data").unwrap();
+        let existing_target = dir.join("target.txt");
+        fs::write(&existing_target, b"do not destroy me").unwrap();
+
+        let err = rename_item(source.to_string_lossy().to_string(), "target.txt".to_string())
+            .expect_err("renaming onto an existing file must be rejected, not silently overwrite it");
+        assert!(err.contains("already exists"));
+
+        // Neither file may have been touched.
+        assert!(source.exists());
+        assert_eq!(fs::read(&existing_target).unwrap(), b"do not destroy me");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_rename_item_renames_a_directory_successfully() {
+        use crate::commands::files::rename_item;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_rename_dir_success");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("old_folder");
+        fs::create_dir_all(&original).unwrap();
+        fs::write(original.join("inside.txt"), b"x").unwrap();
+
+        rename_item(original.to_string_lossy().to_string(), "new_folder".to_string()).unwrap();
+
+        assert!(!original.exists());
+        assert!(dir.join("new_folder").join("inside.txt").exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     // =========================================================================

@@ -15,18 +15,6 @@
     "core:tray:default",
 
     "opener:default",
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [
-        { "path": "$APP_DATA/**" },
-        { "path": "$APP_CONFIG/**" },
-        { "path": "/storage/emulated/0" },
-        { "path": "/storage/emulated/0/**" },
-        { "path": "/sdcard" },
-        { "path": "/sdcard/**" }
-      ],
-      "deny": []
-    },
     "os:default",
     "dialog:default",
     "clipboard-manager:allow-write-text",

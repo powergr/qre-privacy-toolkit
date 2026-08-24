@@ -46,6 +46,13 @@ mod wordlist;
 #[cfg(not(mobile))]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
+// Handle to our own minimal Android plugin (gen/android/app/src/main/java/com/qre/locker/
+// OpenFilePlugin.kt), registered below. It exists because tauri-plugin-opener's own
+// open_path is broken on Android (see commands::files::open_file_android for the full
+// explanation) - this is the workaround, not a general-purpose plugin bridge.
+#[cfg(target_os = "android")]
+pub(crate) struct AndroidOpenerHandle(pub tauri::plugin::PluginHandle<tauri::Wry>);
+
 // ==========================================
 // --- MAIN TAURI ENTRY POINT ---
 // ==========================================
@@ -73,6 +80,22 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init()) // Opens URLs/files in the user's default external apps
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build()); // Secure OTA auto-updates
+
+    // ==========================================
+    // --- ANDROID FILE OPENER (see commands::files::open_file_android) ---
+    // ==========================================
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::new("qre-open")
+                .setup(|app, api| {
+                    let handle = api.register_android_plugin("com.qre.locker", "OpenFilePlugin")?;
+                    app.manage(AndroidOpenerHandle(handle));
+                    Ok(())
+                })
+                .build(),
+        );
+    }
 
     // ==========================================
     // --- PANIC BUTTON (DESKTOP ONLY) ---
@@ -135,6 +158,7 @@ pub fn run() {
             commands::files::get_drives,
             commands::files::get_startup_file,
             commands::files::list_directory,
+            commands::files::open_file_android,
             commands::portable::enumerate_removable_drives,
             commands::portable::init_portable_vault,
             commands::portable::unlock_portable_vault,

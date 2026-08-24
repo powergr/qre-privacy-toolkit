@@ -15,6 +15,13 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
         </intent>
+        <!-- Lets the OS resolve "Open File" (see OpenFilePlugin.kt) against whatever app
+             the user has installed for a given file type, on OEM builds that enforce strict
+             package-visibility filtering. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
     </queries>
 
     <application
@@ -23,7 +30,22 @@
         android:theme="@style/Theme.qre_gui"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
-        
+
+        <!-- Grants other apps temporary read access to files under external storage via
+             content:// URIs (see res/xml/file_paths.xml), so "Open File" can hand a PDF
+             viewer/gallery/etc. a URI it's actually allowed to read. Raw file:// URIs are
+             blocked (FileUriExposedException) for apps targeting API 24+, which this app
+             does (minSdk 24). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"

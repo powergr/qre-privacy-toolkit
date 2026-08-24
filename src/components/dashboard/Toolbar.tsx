@@ -12,6 +12,7 @@ import {
   Archive,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import { platform } from "@tauri-apps/plugin-os";
 import { PortableDriveState } from "../../hooks/usePortableVault";
 
 interface ToolbarProps {
@@ -45,6 +46,21 @@ export function Toolbar(props: ToolbarProps) {
   const [showUsb, setShowUsb] = useState(false);
   const advancedRef = useRef<HTMLDivElement>(null);
   const usbRef = useRef<HTMLDivElement>(null);
+
+  // Portable USB vaults rely on removable-drive enumeration and direct filesystem writes to
+  // the drive's root, neither of which Android supports the way desktop OSes do (no drive
+  // letters/mount points the app can see, and scoped storage blocks writing outside our own
+  // sandbox or the folders the user explicitly granted). The backend already reflects this -
+  // enumerate_removable_drives returns an empty list and init_portable_vault always errors on
+  // Android - so hide the entry point instead of showing a button that can never do anything.
+  const [isAndroid, setIsAndroid] = useState(false);
+  useEffect(() => {
+    try {
+      if (platform() === "android") setIsAndroid(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -86,6 +102,7 @@ export function Toolbar(props: ToolbarProps) {
         {/* FIX 2: Redundant standalone Refresh icon has been removed */}
 
         {/* --- USB PORTABLE MENU --- */}
+        {!isAndroid && (
         <div className="dropdown-container" ref={usbRef}>
           <button
             className={`tool-btn ${showUsb ? "active-settings" : ""}`}
@@ -270,6 +287,7 @@ export function Toolbar(props: ToolbarProps) {
             </div>
           )}
         </div>
+        )}
 
         {/* --- ADVANCED MENU --- */}
         <div className="dropdown-container" ref={advancedRef}>

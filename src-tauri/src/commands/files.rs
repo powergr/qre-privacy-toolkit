@@ -533,6 +533,14 @@ pub async fn paste_items(
 
 #[tauri::command]
 pub fn create_dir(path: String) -> CommandResult<()> {
+    // fs::create_dir_all is a silent no-op if `path` already exists (it only errors on a
+    // real I/O failure), so without this check a user who typed the name of an existing
+    // file or folder would see "success" and believe they created a fresh empty folder,
+    // when nothing happened at all - not data loss like the rename bug, but the same
+    // family of "silently not what the user asked for."
+    if Path::new(&path).exists() {
+        return Err("A file or folder with that name already exists.".to_string());
+    }
     fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -546,6 +554,16 @@ pub fn rename_item(path: String, new_name: String) -> CommandResult<()> {
     let old_path = Path::new(&path);
     let parent = old_path.parent().ok_or("Invalid path")?;
     let new_path = parent.join(&new_name);
+
+    // SECURITY/DATA-SAFETY FIX: std::fs::rename silently overwrites an existing destination
+    // on every OS (this is documented std behavior, not a bug in std) - so renaming
+    // "report.txt" onto an already-existing "notes.txt" would previously destroy notes.txt
+    // with zero warning. Refuse instead of clobbering; the user can delete the existing item
+    // themselves first if that's genuinely what they want.
+    if new_path.exists() {
+        return Err(format!("\"{}\" already exists.", new_name));
+    }
+
     fs::rename(old_path, new_path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -573,6 +591,37 @@ pub fn show_in_folder(path: String) -> CommandResult<()> {
         Command::new("open").args(["-R", &path]).spawn().map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+}
+
+// Android's equivalent of "Reveal in Explorer" (see show_in_folder above, which is
+// unsupported there). This deliberately does NOT go through tauri-plugin-opener's own
+// open_path command: as of tauri-plugin-opener 2.5.4, its Android implementation
+// (`Opener::open_path` in the plugin's lib.rs) sends the path as a bare JSON string to the
+// Kotlin side, but the Kotlin "open" command can only deserialize an object with a `url`
+// field - it's the same command open_url uses, with no path-specific handling at all. Every
+// call fails before any file-opening logic runs, with a Jackson deserialization error like
+// "Cannot construct instance of 'app.tauri.opener.OpenArgs' ... no string-argument
+// constructor ... to deserialize from String value". This command routes through our own
+// minimal Android plugin instead (gen/android/app/src/main/java/com/qre/locker/
+// OpenFilePlugin.kt), which builds a proper content:// URI via FileProvider and launches a
+// correctly MIME-typed ACTION_VIEW intent.
+#[tauri::command]
+pub fn open_file_android(app: AppHandle, path: String) -> CommandResult<()> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, path);
+        Err("open_file_android is only supported on Android".to_string())
+    }
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        reject_critical_path(Path::new(&path))?;
+        let handle = app.state::<crate::AndroidOpenerHandle>();
+        handle
+            .0
+            .run_mobile_plugin::<()>("openFile", serde_json::json!({ "path": path }))
+            .map_err(|e| e.to_string())
     }
 }
 

@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   join,
@@ -402,10 +401,13 @@ export function FilesView(props: FilesViewProps) {
       );
     // Android equivalent of "Reveal in Explorer" — there's no OS-level file explorer to
     // reveal an item in, so this opens the file directly with whatever app the OS considers
-    // the default for its type (gallery for images, a PDF viewer, etc.), via Tauri's own
-    // maintained Android implementation of plugin-opener rather than any custom native code.
+    // the default for its type (gallery for images, a PDF viewer, etc.). Routed through our
+    // own open_file_android command rather than plugin-opener's open_path, which is broken
+    // on Android (see commands/files.rs::open_file_android for the full explanation).
     if (action === "open")
-      openPath(path).catch((e) => crypto.setErrorMsg(String(e)));
+      invoke("open_file_android", { path }).catch((e) =>
+        crypto.setErrorMsg(String(e)),
+      );
     if (action === "rename") setInputModal({ mode: "rename", path });
     if (action === "delete") setItemsToDelete(targets);
     if (action === "cut") setFileClipboard({ paths: targets, isCut: true });
