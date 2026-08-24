@@ -91,7 +91,13 @@ pub fn run() {
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(
-            tauri::plugin::Builder::new("qre-open")
+            // Generic params pinned explicitly (R = Wry, C = ()) - without this, rustc can't
+            // infer the config type C from the .setup() closure's parameter alone (it needs C
+            // resolved before it can even infer the closure's own PluginApi<R, C> parameter
+            // type), and C's `= ()` default only applies to unspecified positions, not to
+            // inference through a closure signature. tauri-plugin-opener's own Builder::build()
+            // hits the identical situation and pins both generics the same way.
+            tauri::plugin::Builder::<tauri::Wry, ()>::new("qre-open")
                 .setup(|app, api| {
                     let handle = api.register_android_plugin("com.qre.locker", "OpenFilePlugin")?;
                     app.manage(AndroidOpenerHandle(handle));
