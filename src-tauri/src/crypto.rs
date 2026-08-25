@@ -10,7 +10,7 @@ use rand::{rngs::OsRng, RngCore, SeedableRng, TryRngCore};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const AES_NONCE_LEN: usize = 12;
@@ -48,8 +48,13 @@ pub struct EncryptedFileContainer {
 impl EncryptedFileContainer {
     pub fn save(&self, path: &str) -> Result<()> {
         let file = std::fs::File::create(path).context("Failed to create output file")?;
-        let writer = std::io::BufWriter::new(file);
-        bincode::serialize_into(writer, self).context("Failed to write encrypted file")?;
+        let mut writer = std::io::BufWriter::new(file);
+        bincode::serialize_into(&mut writer, self).context("Failed to write encrypted file")?;
+        // Explicit flush: BufWriter's Drop impl silently discards any I/O
+        // error from its implicit final flush, so without this a late
+        // failure (e.g. disk full) would let save() report success on a
+        // truncated file.
+        writer.flush().context("Failed to flush encrypted file to disk")?;
         Ok(())
     }
 

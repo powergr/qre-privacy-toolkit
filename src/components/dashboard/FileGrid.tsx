@@ -114,8 +114,13 @@ export function FileGrid({
   timeLockInfo,
 }: FileGridProps) {
   const [colWidths, setColWidths] = useState<ColWidths>(() => {
-    const saved = localStorage.getItem("qre-grid-layout");
-    return saved ? JSON.parse(saved) : { name: 400, type: 100, size: 100 };
+    const defaults = { name: 400, type: 100, size: 100 };
+    try {
+      const saved = localStorage.getItem("qre-grid-layout");
+      return saved ? JSON.parse(saved) : defaults;
+    } catch {
+      return defaults;
+    }
   });
 
   const [isResizing, setIsResizing] = useState<keyof ColWidths | null>(null);

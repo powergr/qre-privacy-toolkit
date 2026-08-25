@@ -178,10 +178,21 @@ fn generate_recovery_code() -> Result<String> {
 /// 4. Derives a KEK from the Recovery Code & Encrypts the Master Key again (Slot 2).
 /// 5. Saves the metadata and encrypted slots to `keychain.json` on disk atomically.
 pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)> {
-    // Prevent accidentally overwriting an existing user's vault
-    if path.exists() {
-        return Err(anyhow!("Keychain already exists."));
-    }
+    // SECURITY: Close the TOCTOU gap between an existence check and the
+    // eventual write. A plain `path.exists()` check here, followed later by
+    // a write, would let two near-simultaneous init_keychain calls both pass
+    // the check and race to write, with the loser silently overwriting the
+    // winner's freshly created keychain. `create_new()` atomically claims
+    // the path at the OS level: only one caller can ever win it.
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| anyhow!("Keychain already exists."))?;
+
+    // If any step below fails, remove the empty placeholder we just claimed
+    // so a later retry isn't permanently blocked by it.
+    let cleanup = ClaimGuard::new(path);
 
     // 1. Define KDF Settings
     let mem = default_kdf_memory();
@@ -251,9 +262,39 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     };
 
     atomic_write_keychain(path, &store)?;
+    cleanup.disarm();
 
     // Return both the string recovery code (to show the user) and the MasterKey (to load into active RAM)
     Ok((recovery_code, master_key))
+}
+
+/// Removes the file at `path` when dropped, unless `disarm()` was called first.
+/// Used by `init_keychain` to clean up the empty placeholder from its
+/// exclusive-create claim if any step after the claim fails.
+struct ClaimGuard<'a> {
+    path: &'a Path,
+    disarmed: bool,
+}
+
+impl<'a> ClaimGuard<'a> {
+    fn new(path: &'a Path) -> Self {
+        Self {
+            path,
+            disarmed: false,
+        }
+    }
+
+    fn disarm(mut self) {
+        self.disarmed = true;
+    }
+}
+
+impl Drop for ClaimGuard<'_> {
+    fn drop(&mut self) {
+        if !self.disarmed {
+            let _ = fs::remove_file(self.path);
+        }
+    }
 }
 
 /// Attempts to unlock the keychain using the User's Password (Slot 1).

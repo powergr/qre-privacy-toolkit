@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Shield, Copy, Check } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ViewState } from "../../types";
@@ -24,13 +24,17 @@ interface AuthOverlayProps {
 export function AuthOverlay(props: AuthOverlayProps) {
   const { view, password, recoveryCode } = props;
   const [copied, setCopied] = useState(false);
+  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleCopy() {
     try {
       await writeText(recoveryCode);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-      setTimeout(async () => {
+      // Replace any pending clear from a previous copy so the 30s window
+      // restarts from this copy instead of clearing early.
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = setTimeout(async () => {
         await writeText("");
       }, 30000); // Clear clipboard after 30s
     } catch (e) {

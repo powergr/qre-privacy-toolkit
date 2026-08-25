@@ -704,6 +704,15 @@ pub fn wipe_free_space<R: tauri::Runtime>(
             .to_uppercase();
 
         if !drive_letter.is_empty() {
+            // SECURITY: drive_letter is interpolated into PowerShell script
+            // strings below (Stage 1 / Stage 2). A real Windows drive letter
+            // is always exactly one ASCII letter, so reject anything else
+            // outright rather than passing it through — this closes off
+            // PowerShell command injection via a crafted drive_path.
+            if drive_letter.len() != 1 || !drive_letter.chars().all(|c| c.is_ascii_alphabetic()) {
+                return Err(anyhow!("Invalid drive letter: '{}'", drive_letter));
+            }
+
             // ── Stage 1: Win32_LogicalDisk.DriveType ─────────────────────────
             // Catches RAM drives (6), removable (2), network (4), optical (5).
             // NOTE: DriveType = 3 ("fixed") covers BOTH HDDs and SSDs — they
@@ -958,6 +967,16 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
 
         // drive_path should be a single drive letter, e.g. "C"
         let drive_letter = drive_path.trim_end_matches([':', '\\', '/']);
+
+        // SECURITY: drive_letter is interpolated into a PowerShell script
+        // string below. A real Windows drive letter is always exactly one
+        // ASCII letter, so validate strictly before it ever reaches the
+        // shell — this closes off PowerShell command injection via a
+        // crafted drive_path.
+        if drive_letter.len() != 1 || !drive_letter.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Err(anyhow!("Invalid drive letter: '{}'", drive_letter));
+        }
+
         let script = format!(
             "Optimize-Volume -DriveLetter '{}' -ReTrim -Verbose",
             drive_letter

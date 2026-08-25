@@ -66,6 +66,16 @@ fn resolve_keychain_path(app: &AppHandle, vault_id: &str) -> Result<PathBuf, Str
     }
 }
 
+/// Converts a `Path` to `&str`, returning a recoverable error instead of
+/// panicking. Every vault save/load path is normally an OS-resolved
+/// app-data directory, but a `.to_str().unwrap()` would still panic on the
+/// rare non-UTF-8 path (e.g. a legacy-encoded username or corrupted
+/// filesystem metadata) instead of surfacing a normal command error.
+fn path_to_str(path: &Path) -> CommandResult<&str> {
+    path.to_str()
+        .ok_or_else(|| format!("Path contains invalid (non-UTF-8) characters: {:?}", path))
+}
+
 // ==========================================
 // --- SAFE MUTEX ACCESSOR ---
 // ==========================================
@@ -386,7 +396,7 @@ pub fn load_password_vault(
     }
 
     let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
 
@@ -425,7 +435,7 @@ pub fn save_password_vault(
     )
     .map_err(|e| e.to_string())?;
     container
-        .save(path.to_str().unwrap())
+        .save(path_to_str(&path)?)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -454,7 +464,7 @@ pub fn load_notes_vault(
     }
 
     let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
     let vault: NotesVault = serde_json::from_slice(&payload.content)
@@ -486,7 +496,7 @@ pub fn save_notes_vault(
         crypto::encrypt_file_with_master_key(&master_key, None, "notes.json", &json_data, None, 3)
             .map_err(|e| e.to_string())?;
     container
-        .save(path.to_str().unwrap())
+        .save(path_to_str(&path)?)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -515,7 +525,7 @@ pub fn load_bookmarks_vault(
     }
 
     let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
     let vault: BookmarksVault = serde_json::from_slice(&payload.content)
@@ -553,7 +563,7 @@ pub fn save_bookmarks_vault(
     )
     .map_err(|e| e.to_string())?;
     container
-        .save(path.to_str().unwrap())
+        .save(path_to_str(&path)?)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -602,7 +612,7 @@ pub fn load_clipboard_vault(
     }
 
     let container =
-        crypto::EncryptedFileContainer::load(path.to_str().unwrap()).map_err(|e| e.to_string())?;
+        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
     let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
         .map_err(|e| e.to_string())?;
     let mut vault: ClipboardVault = serde_json::from_slice(&payload.content)
@@ -637,7 +647,7 @@ pub fn load_clipboard_vault(
         )
         .map_err(|e| e.to_string())?;
         container
-            .save(path.to_str().unwrap())
+            .save(path_to_str(&path)?)
             .map_err(|e| e.to_string())?;
     }
 
@@ -674,7 +684,7 @@ pub fn save_clipboard_vault(
     )
     .map_err(|e| e.to_string())?;
     container
-        .save(path.to_str().unwrap())
+        .save(path_to_str(&path)?)
         .map_err(|e| e.to_string())?;
     Ok(())
 }

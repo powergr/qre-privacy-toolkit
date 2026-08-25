@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useMutationQueue } from "./useMutationQueue";
 
 export interface BookmarkEntry {
   id: string;
@@ -50,6 +51,14 @@ export function useBookmarks() {
   const [entries, setEntries] = useState<BookmarkEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Serializes saveBookmark/deleteBookmark so concurrent calls can't race
+  // and silently drop each other's change - see useMutationQueue.
+  const queue = useMutationQueue<BookmarkEntry[]>([]);
+
+  function commit(next: BookmarkEntry[]) {
+    queue.sync(next);
+    setEntries(next);
+  }
 
   useEffect(() => {
     refreshVault();
@@ -69,7 +78,7 @@ export function useBookmarks() {
         return true;
       });
 
-      setEntries(sortBookmarks(validEntries));
+      commit(sortBookmarks(validEntries));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -77,62 +86,66 @@ export function useBookmarks() {
     }
   }
 
-  async function saveBookmark(bookmark: BookmarkEntry): Promise<void> {
-    try {
-      setError(null);
+  function saveBookmark(bookmark: BookmarkEntry): Promise<void> {
+    return queue.run(async (current) => {
+      try {
+        setError(null);
 
-      if (!bookmark.title.trim()) throw new Error("Title cannot be empty.");
-      if (!bookmark.url.trim()) throw new Error("URL cannot be empty.");
+        if (!bookmark.title.trim()) throw new Error("Title cannot be empty.");
+        if (!bookmark.url.trim()) throw new Error("URL cannot be empty.");
 
-      const normalizedUrl = normalizeUrl(bookmark.url);
-      if (!isValidUrl(normalizedUrl)) throw new Error("Invalid URL format.");
+        const normalizedUrl = normalizeUrl(bookmark.url);
+        if (!isValidUrl(normalizedUrl)) throw new Error("Invalid URL format.");
 
-      const urlLower = normalizedUrl.toLowerCase();
-      const DANGEROUS_SCHEMES = ["javascript:", "data:", "file:", "vbscript:"];
-      if (DANGEROUS_SCHEMES.some((s) => urlLower.startsWith(s))) {
-        throw new Error(
-          `Dangerous URL scheme detected. Allowed schemes: http, https, ftp.`,
-        );
+        const urlLower = normalizedUrl.toLowerCase();
+        const DANGEROUS_SCHEMES = ["javascript:", "data:", "file:", "vbscript:"];
+        if (DANGEROUS_SCHEMES.some((s) => urlLower.startsWith(s))) {
+          throw new Error(
+            `Dangerous URL scheme detected. Allowed schemes: http, https, ftp.`,
+          );
+        }
+
+        const sanitizedBookmark = {
+          ...bookmark,
+          url: normalizedUrl,
+          title: bookmark.title.trim(),
+          category: (bookmark.category || "General").trim(),
+        };
+
+        const newEntries = [...current];
+        const index = newEntries.findIndex((e) => e.id === sanitizedBookmark.id);
+
+        if (index >= 0) newEntries[index] = sanitizedBookmark;
+        else newEntries.unshift(sanitizedBookmark);
+
+        const sortedEntries = sortBookmarks(newEntries);
+        await invoke("save_bookmarks_vault", {
+          vault: { entries: sortedEntries },
+          vaultId: "local",
+        });
+        commit(sortedEntries);
+      } catch (e) {
+        const msg = "Failed to save: " + String(e);
+        setError(msg);
+        throw new Error(msg);
       }
-
-      const sanitizedBookmark = {
-        ...bookmark,
-        url: normalizedUrl,
-        title: bookmark.title.trim(),
-        category: (bookmark.category || "General").trim(),
-      };
-
-      const newEntries = [...entries];
-      const index = newEntries.findIndex((e) => e.id === sanitizedBookmark.id);
-
-      if (index >= 0) newEntries[index] = sanitizedBookmark;
-      else newEntries.unshift(sanitizedBookmark);
-
-      const sortedEntries = sortBookmarks(newEntries);
-      await invoke("save_bookmarks_vault", {
-        vault: { entries: sortedEntries },
-        vaultId: "local",
-      });
-      setEntries(sortedEntries);
-    } catch (e) {
-      const msg = "Failed to save: " + String(e);
-      setError(msg);
-      throw new Error(msg);
-    }
+    });
   }
 
-  async function deleteBookmark(id: string): Promise<void> {
-    try {
-      setError(null);
-      const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_bookmarks_vault", {
-        vault: { entries: newEntries },
-        vaultId: "local",
-      });
-      setEntries(newEntries);
-    } catch (e) {
-      setError("Failed to delete: " + String(e));
-    }
+  function deleteBookmark(id: string): Promise<void> {
+    return queue.run(async (current) => {
+      try {
+        setError(null);
+        const newEntries = current.filter((e) => e.id !== id);
+        await invoke("save_bookmarks_vault", {
+          vault: { entries: newEntries },
+          vaultId: "local",
+        });
+        commit(newEntries);
+      } catch (e) {
+        setError("Failed to delete: " + String(e));
+      }
+    });
   }
 
   return {

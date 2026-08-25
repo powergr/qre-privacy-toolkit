@@ -177,6 +177,23 @@ pub fn analyze_content(text: &str) -> Option<String> {
     Some("Text".to_string())
 }
 
+/// Returns the largest byte index `<= index` that lies on a UTF-8 char
+/// boundary of `s` (clamped to `s.len()`).
+///
+/// Clipboard content is arbitrary user text and can contain multi-byte UTF-8
+/// characters (CJK, Cyrillic, emoji, accented Latin, ...). Slicing a `&str`
+/// at a fixed byte offset panics if that offset lands in the middle of a
+/// character; every preview-truncation site below routes through this helper
+/// instead of slicing directly, so a cut point is always rounded down to a
+/// safe boundary rather than panicking.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    let mut idx = index.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
 /// Creates a new clipboard entry, automatically categorized and redacted for UI safety.
 pub fn create_entry(text: &str) -> ClipboardEntry {
     // 1. Guess the category
@@ -189,8 +206,8 @@ pub fn create_entry(text: &str) -> ClipboardEntry {
         "Credit Card" => {
             // Keep first 4 and last 4 digits visible, mask the middle
             if text.len() > 8 {
-                let end = text.len().saturating_sub(4);
-                let start = 4;
+                let start = floor_char_boundary(text, 4);
+                let end = floor_char_boundary(text, text.len().saturating_sub(4)).max(start);
                 format!("{} **** **** **** {}", &text[0..start], &text[end..])
             } else {
                 "****".to_string()
@@ -199,7 +216,8 @@ pub fn create_entry(text: &str) -> ClipboardEntry {
         "API Key" | "Secret" | "Password" => {
             // Show only the first 6 characters, mask the rest
             if text.len() > 6 {
-                format!("{}...", &text[0..6])
+                let cut = floor_char_boundary(text, 6);
+                format!("{}...", &text[0..cut])
             } else {
                 "***".to_string()
             }
@@ -207,7 +225,8 @@ pub fn create_entry(text: &str) -> ClipboardEntry {
         "Bank Info" => {
             // IBAN: Show the first 4 characters (Country Code + Check Digits), mask the account number
             if text.len() > 4 {
-                format!("{} **** ****...", &text[0..4])
+                let cut = floor_char_boundary(text, 4);
+                format!("{} **** ****...", &text[0..cut])
             } else {
                 "****".to_string()
             }
@@ -217,7 +236,8 @@ pub fn create_entry(text: &str) -> ClipboardEntry {
             // and remove newlines so it fits nicely on one line in the UI.
             let max_len = 60;
             if text.len() > max_len {
-                let truncated = &text[0..max_len];
+                let cut = floor_char_boundary(text, max_len);
+                let truncated = &text[0..cut];
                 format!("{}...", truncated.replace("\n", " ").trim())
             } else {
                 text.replace("\n", " ").trim().to_string()
@@ -357,6 +377,36 @@ mod tests {
         assert!(!entry.preview.contains("****"));
         assert!(entry.preview.ends_with("..."));
         assert!(entry.preview.len() <= 65); // 60 chars + "..."
+    }
+
+    // --- Multi-byte UTF-8 Safety Tests ---
+    // These previously panicked ("byte index N is not a char boundary")
+    // because the truncation sites sliced &str at fixed byte offsets without
+    // checking for UTF-8 char boundaries. floor_char_boundary() fixes this.
+
+    #[test]
+    fn test_redaction_multibyte_text_does_not_panic() {
+        // 58 ASCII bytes + one 3-byte CJK character ("中") = 61 bytes total.
+        // The old fixed &text[0..60] slice landed mid-character here.
+        let text = format!("{}中", "A".repeat(58));
+        assert_eq!(text.len(), 61);
+
+        let entry = create_entry(&text);
+        assert_eq!(entry.category, "Text");
+        assert!(entry.preview.ends_with("..."));
+    }
+
+    #[test]
+    fn test_redaction_multibyte_api_key_does_not_panic() {
+        // "sk-" triggers the API Key category; the embedded "中" (3 bytes)
+        // straddles the old fixed &text[0..6] cut point.
+        let text = "sk-A中1234567890";
+        let entry = create_entry(text);
+
+        assert_eq!(entry.category, "API Key");
+        assert!(entry.preview.ends_with("..."));
+        // The cut must land on a boundary at or before byte 6, never inside "中".
+        assert_eq!(entry.preview, "sk-A...");
     }
 }
 

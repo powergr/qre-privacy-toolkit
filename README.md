@@ -27,7 +27,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.8.0)
+## 🛠️ The 12-Tool Suite (v2.8.2)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -207,11 +207,11 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 345 tests passed from 345 total (Covers memory wiping, file routing, steganography detection, Zip-Bomb prevention, AES-GCM streaming integrity, and metadata-cleaner round-trips across every supported file format).
+- 367 tests passed from 345 total (Covers memory wiping, file routing, steganography detection, Zip-Bomb prevention, AES-GCM streaming integrity, and metadata-cleaner round-trips across every supported file format).
 
 **Frontend (`npm test`):**
 
-- 185 tests passed from 185 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
+- 187 tests passed from 185 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
 
 ---
 

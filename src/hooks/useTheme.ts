@@ -19,15 +19,14 @@ export function useTheme() {
     localStorage.setItem("qre_theme", t);
 
     // 3. Try to update native Window frame (Desktop only)
-    // We wrap this in try/catch because it often fails on Android or during early init
+    // We wrap this in try/catch because it often fails on Android or during early init.
+    // (Previously gated behind `"os" in window.navigator`, a property no Tauri package
+    // or standard Navigator ever defines - that condition was always false, so this
+    // never actually ran. The try/catch below is what makes it safe to call directly.)
     try {
-      if (typeof window !== "undefined" && "os" in window.navigator) {
-        // Only attempt on desktop platforms if needed
-        // Note: Tauri v2 handles some of this automatically, but explicit setting can help
-        const appWindow = getCurrentWindow();
-        if (appWindow && typeof appWindow.setTheme === "function") {
-          await appWindow.setTheme(t as any);
-        }
+      const appWindow = getCurrentWindow();
+      if (appWindow && typeof appWindow.setTheme === "function") {
+        await appWindow.setTheme(t as any);
       }
     } catch (e) {
       // Ignore errors here to prevent app crash (common on Android)

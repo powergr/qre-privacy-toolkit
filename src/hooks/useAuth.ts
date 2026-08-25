@@ -65,15 +65,22 @@ export function useAuth() {
   const triggerWarning = useCallback(() => {
     setShowTimeoutWarning(true);
     countdownIntervalRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          performLogout();
-          return 0;
-        }
-        return prev - 1;
-      });
+      // Keep this updater a pure function of previous state - React (e.g.
+      // StrictMode in development) may invoke it more than once per tick, and
+      // performLogout() has side effects (an invoke() call, several other
+      // setState calls) that don't belong inside a functional updater. The
+      // actual logout is triggered by the effect below once countdown hits 0.
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
-  }, [performLogout]);
+  }, []);
+
+  // Fires the actual logout as a side effect once the countdown reaches
+  // zero, decoupled from the pure countdown decrement above.
+  useEffect(() => {
+    if (showTimeoutWarning && countdown === 0) {
+      performLogout();
+    }
+  }, [showTimeoutWarning, countdown, performLogout]);
 
   const resetIdleTimer = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);

@@ -341,10 +341,22 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
 /// Used when the user clicks "Delete" on a folder within the app UI.
 #[allow(dead_code)]
 pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
+    // SECURITY FIX: Never follow symlinks/junctions. `Path::is_dir()` and
+    // `fs::read_dir()` both transparently dereference them, so without this
+    // check a symlink inside the target tree would cause us to recurse into
+    // (and destructively shred) whatever it points at, which can be entirely
+    // outside the folder the user selected. Check the path's own type first,
+    // via `is_symlink()` (which does not follow the link), and if it's a
+    // symlink just unlink the link itself instead of touching its target.
+    if path.is_symlink() {
+        remove_symlink(path).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     if path.is_dir() {
         for entry in fs::read_dir(path).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            // Recursive call for nested folders
+            // Recursive call for nested folders (also re-checks for symlinks at every depth)
             shred_recursive(app, &entry.path())?;
         }
         // Once all internal files are destroyed, remove the empty folder wrapper
@@ -355,6 +367,22 @@ pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to shred {}: {}", path.display(), e))?;
     }
     Ok(())
+}
+
+/// Removes a symlink/junction entry itself without following it.
+/// On Windows, directory-type reparse points (symlinks-to-dirs and junctions)
+/// must be removed via `remove_dir`, while file-type symlinks need
+/// `remove_file` — and a dangling link's target type can't be queried via
+/// `metadata()`, so we just try both. On Unix, `remove_file` (unlink) works
+/// uniformly for every symlink regardless of what it points to.
+#[cfg(windows)]
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    fs::remove_dir(path).or_else(|_| fs::remove_file(path))
+}
+
+#[cfg(not(windows))]
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    fs::remove_file(path)
 }
 
 // ==========================================

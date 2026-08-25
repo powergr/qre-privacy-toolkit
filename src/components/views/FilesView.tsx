@@ -149,7 +149,16 @@ export function FilesView(props: FilesViewProps) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (inputModal || itemsToDelete || showEntropyModal || showCompression)
+      if (
+        inputModal ||
+        itemsToDelete ||
+        showEntropyModal ||
+        showCompression ||
+        showGhostWarning ||
+        showExtractModal ||
+        timeLockTarget ||
+        menuData
+      )
         return;
       if ((e.target as HTMLElement).tagName === "INPUT") return;
 
@@ -181,6 +190,10 @@ export function FilesView(props: FilesViewProps) {
     itemsToDelete,
     showEntropyModal,
     showCompression,
+    showGhostWarning,
+    showExtractModal,
+    timeLockTarget,
+    menuData,
   ]);
 
   // ─── TIME-LOCK STATUS LOADING ─────────────────────────────────────────────
@@ -242,7 +255,12 @@ export function FilesView(props: FilesViewProps) {
         executeLock(targets);
       }
     },
-    [props.portable.drives, fs.currentPath],
+    // `crypto` must be a dependency: it's a fresh object every render (from
+    // useCrypto()), and without it here this callback would stay memoized
+    // against a stale executeLock/crypto closure — silently ignoring a
+    // just-toggled Paranoid Mode, compression mode, or keyfile selection
+    // whenever Lock is clicked without an intervening path/drive-list change.
+    [props.portable.drives, fs.currentPath, crypto],
   );
 
   const executeLock = async (targets: string[], explicitEntropy?: number[]) => {
@@ -318,7 +336,9 @@ export function FilesView(props: FilesViewProps) {
       // Refresh so badges update if a lock just expired
       fs.loadDir(fs.currentPath);
     },
-    [props.portable.drives, fs.currentPath],
+    // See the matching comment on requestLock — `crypto` must be a dependency
+    // so this callback always uses the current keyfile/crypto state.
+    [props.portable.drives, fs.currentPath, crypto],
   );
 
   const handleEntropyComplete = async (entropy: number[]) => {

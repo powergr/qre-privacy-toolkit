@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { ArrowUp, Home, ChevronRight, X } from "lucide-react";
+import { platform } from "@tauri-apps/plugin-os";
 
 interface AddressBarProps {
   currentPath: string;
@@ -18,7 +19,15 @@ export function AddressBar({
   const [tempPath, setTempPath] = useState(currentPath);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isWindows = navigator.userAgent.includes("Windows");
+  // Uses Tauri's platform() rather than user-agent sniffing, consistent with
+  // every other component in the app (FilesView, Toolbar, ShredderView, etc.)
+  const isWindows = (() => {
+    try {
+      return platform() === "windows";
+    } catch {
+      return navigator.userAgent.includes("Windows");
+    }
+  })();
   const separator = isWindows ? "\\" : "/";
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useMutationQueue } from "./useMutationQueue";
 
 export interface NoteEntry {
   id: string;
@@ -20,6 +21,14 @@ export function useNotes() {
   const [entries, setEntries] = useState<NoteEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Serializes saveNote/deleteNote so concurrent calls can't race and
+  // silently drop each other's change - see useMutationQueue.
+  const queue = useMutationQueue<NoteEntry[]>([]);
+
+  function commit(next: NoteEntry[]) {
+    queue.sync(next);
+    setEntries(next);
+  }
 
   useEffect(() => {
     refreshVault();
@@ -42,7 +51,7 @@ export function useNotes() {
         return true;
       });
 
-      setEntries(validEntries.sort((a, b) => b.updated_at - a.updated_at));
+      commit(validEntries.sort((a, b) => b.updated_at - a.updated_at));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -50,40 +59,44 @@ export function useNotes() {
     }
   }
 
-  async function saveNote(note: NoteEntry): Promise<void> {
-    try {
-      setError(null);
-      if (!note.title?.trim()) throw new Error("Title cannot be empty");
+  function saveNote(note: NoteEntry): Promise<void> {
+    return queue.run(async (current) => {
+      try {
+        setError(null);
+        if (!note.title?.trim()) throw new Error("Title cannot be empty");
 
-      const newEntries = [...entries];
-      const index = newEntries.findIndex((e) => e.id === note.id);
+        const newEntries = [...current];
+        const index = newEntries.findIndex((e) => e.id === note.id);
 
-      if (index >= 0) newEntries[index] = note;
-      else newEntries.unshift(note);
+        if (index >= 0) newEntries[index] = note;
+        else newEntries.unshift(note);
 
-      await invoke("save_notes_vault", {
-        vault: { entries: newEntries },
-        vaultId: "local",
-      });
-      setEntries(newEntries);
-    } catch (e) {
-      const msg = "Failed to save note: " + String(e);
-      setError(msg);
-      throw new Error(msg); // Re-throw for UI handling
-    }
+        await invoke("save_notes_vault", {
+          vault: { entries: newEntries },
+          vaultId: "local",
+        });
+        commit(newEntries);
+      } catch (e) {
+        const msg = "Failed to save note: " + String(e);
+        setError(msg);
+        throw new Error(msg); // Re-throw for UI handling
+      }
+    });
   }
 
-  async function deleteNote(id: string): Promise<void> {
-    try {
-      const newEntries = entries.filter((e) => e.id !== id);
-      await invoke("save_notes_vault", {
-        vault: { entries: newEntries },
-        vaultId: "local",
-      });
-      setEntries(newEntries);
-    } catch (e) {
-      throw new Error("Failed to delete: " + String(e));
-    }
+  function deleteNote(id: string): Promise<void> {
+    return queue.run(async (current) => {
+      try {
+        const newEntries = current.filter((e) => e.id !== id);
+        await invoke("save_notes_vault", {
+          vault: { entries: newEntries },
+          vaultId: "local",
+        });
+        commit(newEntries);
+      } catch (e) {
+        throw new Error("Failed to delete: " + String(e));
+      }
+    });
   }
 
   return { entries, loading, error, saveNote, deleteNote, refreshVault };
