@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 // Argon2id is currently the industry standard, cryptographically recommended Key Derivation Function (KDF).
 use argon2::password_hash::{rand_core::OsRng as Argon2OsRng, SaltString};
 use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
-use rand::{rngs::OsRng, TryRngCore};
+use rand::{rngs::SysRng, TryRng};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -157,7 +157,7 @@ fn generate_recovery_code() -> Result<String> {
     for _ in 0..4 {
         let mut buf = [0u8; 4];
         // FIX F-07: Propagate RNG errors as Results instead of panicking.
-        OsRng
+        SysRng
             .try_fill_bytes(&mut buf)
             .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
         raw_parts.push(format!("{:08X}", u32::from_le_bytes(buf)));
@@ -202,7 +202,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
     // 2. Generate Truly Random Master Key
     // FIX F-07: Use ? instead of .expect() so RNG failure surfaces as a recoverable error.
     let mut mk_bytes = [0u8; 32];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut mk_bytes)
         .map_err(|e| anyhow!("OS RNG failed generating master key: {}", e))?;
     let master_key = MasterKey(mk_bytes);
@@ -217,7 +217,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
 
     let mut pass_nonce_bytes = [0u8; NONCE_LEN];
     // FIX F-07: Propagate RNG errors.
-    OsRng
+    SysRng
         .try_fill_bytes(&mut pass_nonce_bytes)
         .map_err(|e| anyhow!("OS RNG failed generating nonce: {}", e))?;
 
@@ -238,7 +238,7 @@ pub fn init_keychain(path: &Path, password: &str) -> Result<(String, MasterKey)>
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
     // FIX F-07: Propagate RNG errors.
-    OsRng
+    SysRng
         .try_fill_bytes(&mut rec_nonce_bytes)
         .map_err(|e| anyhow!("OS RNG failed generating recovery nonce: {}", e))?;
 
@@ -395,7 +395,7 @@ pub fn recover_with_code(
 
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
     // FIX F-07: Propagate RNG errors.
-    OsRng
+    SysRng
         .try_fill_bytes(&mut new_pass_nonce_bytes)
         .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
 
@@ -443,7 +443,7 @@ pub fn reset_recovery_code(path: &Path, master_key: &MasterKey) -> Result<String
 
     let mut rec_nonce_bytes = [0u8; NONCE_LEN];
     // FIX F-07: Propagate RNG errors.
-    OsRng
+    SysRng
         .try_fill_bytes(&mut rec_nonce_bytes)
         .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
     let rec_nonce = Nonce::from_slice(&rec_nonce_bytes);
@@ -486,7 +486,7 @@ pub fn change_password(path: &Path, master_key: &MasterKey, new_password: &str) 
     // 3. Encrypt the existing active Master Key with the new KEK
     let mut new_pass_nonce_bytes = [0u8; NONCE_LEN];
     // FIX F-07: Propagate RNG errors.
-    OsRng
+    SysRng
         .try_fill_bytes(&mut new_pass_nonce_bytes)
         .map_err(|e| anyhow!("OS RNG failed: {}", e))?;
 
@@ -668,6 +668,92 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    // --- init_keychain TOCTOU / ClaimGuard defense ---
+
+    #[test]
+    fn test_claim_guard_removes_file_on_drop_without_disarm() {
+        let path = get_temp_keychain_path("test_claim_guard_cleanup");
+        let _ = fs::remove_file(&path);
+        fs::File::create(&path).unwrap();
+        assert!(path.exists());
+
+        {
+            let _guard = ClaimGuard::new(&path);
+            // guard drops here without disarm() being called
+        }
+
+        assert!(
+            !path.exists(),
+            "ClaimGuard must remove the placeholder file when dropped without disarm()"
+        );
+    }
+
+    #[test]
+    fn test_claim_guard_leaves_file_when_disarmed() {
+        let path = get_temp_keychain_path("test_claim_guard_disarmed");
+        let _ = fs::remove_file(&path);
+        fs::File::create(&path).unwrap();
+
+        let guard = ClaimGuard::new(&path);
+        guard.disarm();
+
+        assert!(
+            path.exists(),
+            "A disarmed ClaimGuard must not remove the file on drop"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_init_keychain_concurrent_calls_only_one_winner() {
+        // Regression test for the TOCTOU gap: a plain path.exists() check
+        // followed later by a write let two near-simultaneous init_keychain
+        // calls both pass the check and race to write, silently discarding
+        // one of them. create_new() should now let exactly one caller win,
+        // no matter how tightly the calls overlap.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let path = get_temp_keychain_path("test_init_keychain_race");
+        let _ = fs::remove_file(&path);
+
+        const THREADS: usize = 8;
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let path = Arc::new(path);
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let barrier = Arc::clone(&barrier);
+                let path = Arc::clone(&path);
+                thread::spawn(move || {
+                    barrier.wait(); // maximize the chance all threads hit create_new() together
+                    init_keychain(&path, &format!("Password{}", i)).is_ok()
+                })
+            })
+            .collect();
+
+        let successes = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|ok| *ok)
+            .count();
+
+        assert_eq!(
+            successes, 1,
+            "Exactly one concurrent init_keychain call must win; a TOCTOU race would let more than one succeed"
+        );
+        assert!(
+            path.exists(),
+            "The winning call must leave a real keychain file behind"
+        );
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "No leftover .tmp file should remain after the race"
+        );
+
+        let _ = fs::remove_file(path.as_path());
     }
 }
 

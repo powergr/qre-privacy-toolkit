@@ -375,3 +375,64 @@ pub const WORDLIST: &[&str] = &[
     "yummy", "zany", "zap", "zeal", "zebra", "zen", "zero", "zest", "zinc", "zing",
     "zip", "zipper", "zombie", "zone", "zoo", "zoom",
 ];
+
+// ==========================================
+// --- TESTS ---
+// ==========================================
+//
+// Regression coverage for a real bug: 8 duplicate entries (e.g. "curl",
+// "eerie", "husk", "poppy") were previously found in this list by manual
+// inspection. A duplicate word is picked with roughly double the probability
+// of any other word by commands::tools::generate_passphrase, which quietly
+// undermines the passphrase's actual entropy below what this file's own
+// doc comment claims. Nothing else in the codebase would catch that if it
+// were reintroduced by a future edit, so it's covered here directly.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_wordlist_has_no_duplicates() {
+        let mut seen = HashSet::new();
+        let mut duplicates = Vec::new();
+        for word in WORDLIST {
+            if !seen.insert(word) {
+                duplicates.push(*word);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "WORDLIST contains duplicate entries, which skews passphrase word \
+             selection away from uniform: {:?}",
+            duplicates
+        );
+    }
+
+    #[test]
+    fn test_wordlist_entries_are_lowercase_ascii_alphabetic_and_non_empty() {
+        for word in WORDLIST {
+            assert!(!word.is_empty(), "WORDLIST contains an empty entry");
+            assert!(
+                word.chars().all(|c| c.is_ascii_lowercase()),
+                "WORDLIST entry {:?} must be lowercase ASCII letters only",
+                word
+            );
+        }
+    }
+
+    #[test]
+    fn test_wordlist_provides_reasonable_passphrase_entropy() {
+        // Sanity floor, not a check of the exact doc-comment figure: at least
+        // 2048 (2^11) words gives >= 11 bits/word, i.e. >= 66 bits across the
+        // 6-word passphrase generate_passphrase() builds. This exists to catch
+        // a future edit that accidentally shrinks the list drastically, not to
+        // pin down its precise size.
+        assert!(
+            WORDLIST.len() >= 2048,
+            "WORDLIST has only {} words, too few for a strong 6-word passphrase",
+            WORDLIST.len()
+        );
+    }
+}

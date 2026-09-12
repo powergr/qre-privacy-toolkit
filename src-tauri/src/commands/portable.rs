@@ -189,7 +189,7 @@ pub fn init_portable_vault(
         let (mem, iter, par) = tier.get_params();
         let vault_id = uuid::Uuid::new_v4().to_string();
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
 
         let mut mk_bytes = [0u8; 32];

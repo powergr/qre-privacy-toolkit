@@ -1,6 +1,6 @@
 // --- START OF FILE utils.rs ---
 
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
@@ -341,15 +341,8 @@ fn shred_file_internal(app: &AppHandle, path: &Path) -> std::io::Result<()> {
 /// Used when the user clicks "Delete" on a folder within the app UI.
 #[allow(dead_code)]
 pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
-    // SECURITY FIX: Never follow symlinks/junctions. `Path::is_dir()` and
-    // `fs::read_dir()` both transparently dereference them, so without this
-    // check a symlink inside the target tree would cause us to recurse into
-    // (and destructively shred) whatever it points at, which can be entirely
-    // outside the folder the user selected. Check the path's own type first,
-    // via `is_symlink()` (which does not follow the link), and if it's a
-    // symlink just unlink the link itself instead of touching its target.
-    if path.is_symlink() {
-        remove_symlink(path).map_err(|e| e.to_string())?;
+    // SECURITY FIX: Never follow symlinks/junctions - see remove_if_symlink_entry().
+    if remove_if_symlink_entry(path)? {
         return Ok(());
     }
 
@@ -367,6 +360,24 @@ pub fn shred_recursive(app: &AppHandle, path: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to shred {}: {}", path.display(), e))?;
     }
     Ok(())
+}
+
+/// If `path` is a symlink or junction, removes just the link entry (without
+/// following it) and returns `Ok(true)`. Returns `Ok(false)` for a real file
+/// or directory, meaning the caller should handle it normally.
+///
+/// This is the actual security decision behind `shred_recursive`'s symlink
+/// defense, split out as its own AppHandle-free function so it can be unit
+/// tested directly: `Path::is_dir()` and `fs::read_dir()` both transparently
+/// dereference symlinks/junctions, so without this check first, recursing
+/// into a folder containing one would destructively shred whatever it
+/// points at - which can be entirely outside the folder the user selected.
+fn remove_if_symlink_entry(path: &Path) -> Result<bool, String> {
+    if path.is_symlink() {
+        remove_symlink(path).map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Removes a symlink/junction entry itself without following it.
@@ -548,6 +559,87 @@ mod tests {
                 "CRITICAL: The Zip function followed a symlink and leaked external files!"
             );
         }
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    // --- Shred Recursive Symlink Defense ---
+    //
+    // `shred_recursive` itself needs a real `AppHandle` (for progress events on
+    // the file-shredding leg), which isn't available in a unit test without a
+    // running Tauri app. The actual security decision - "is this a symlink, and
+    // if so, don't follow it" - lives entirely in `remove_if_symlink_entry`,
+    // which takes no AppHandle, so we test that directly instead.
+
+    #[test]
+    fn test_remove_if_symlink_entry_does_not_follow_the_link() {
+        let dir = setup_test_dir("symlink_entry_defense");
+
+        // A directory simulating something a symlink might point at, containing
+        // a file that must survive if the link is handled correctly.
+        let outside_dir = dir.join("outside_sensitive");
+        fs::create_dir_all(&outside_dir).unwrap();
+        let protected_file = outside_dir.join("protected.txt");
+        fs::File::create(&protected_file)
+            .unwrap()
+            .write_all(b"must survive")
+            .unwrap();
+
+        let link_path = dir.join("link_to_outside");
+        let link_res = create_test_dir_symlink(&outside_dir, &link_path);
+
+        // Only assert if this OS/user actually allowed symlink creation
+        // (Windows needs admin or Developer Mode; skip silently otherwise).
+        if link_res.is_ok() {
+            let result = remove_if_symlink_entry(&link_path);
+            assert_eq!(
+                result,
+                Ok(true),
+                "A symlink/junction must be recognized and reported as handled"
+            );
+
+            assert!(
+                !link_path.exists(),
+                "The symlink entry itself should be removed"
+            );
+            assert!(
+                outside_dir.exists() && protected_file.exists(),
+                "CRITICAL: the symlink's target was followed and destroyed instead of just unlinking the symlink itself"
+            );
+            let content = fs::read_to_string(&protected_file).unwrap();
+            assert_eq!(
+                content, "must survive",
+                "Protected file content behind the symlink was altered"
+            );
+        }
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_remove_if_symlink_entry_leaves_real_files_and_dirs_alone() {
+        let dir = setup_test_dir("symlink_entry_real_paths");
+
+        let real_file = dir.join("real.txt");
+        fs::File::create(&real_file).unwrap().write_all(b"x").unwrap();
+        let real_subdir = dir.join("real_subdir");
+        fs::create_dir_all(&real_subdir).unwrap();
+
+        assert_eq!(
+            remove_if_symlink_entry(&real_file),
+            Ok(false),
+            "A real file must not be reported as a symlink"
+        );
+        assert_eq!(
+            remove_if_symlink_entry(&real_subdir),
+            Ok(false),
+            "A real directory must not be reported as a symlink"
+        );
+        assert!(real_file.exists(), "A real file must never be touched by this check");
+        assert!(
+            real_subdir.exists(),
+            "A real directory must never be touched by this check"
+        );
 
         let _ = fs::remove_dir_all(dir);
     }

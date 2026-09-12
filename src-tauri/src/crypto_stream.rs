@@ -7,7 +7,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Context, Result};
-use rand::{rngs::OsRng, RngCore, SeedableRng, TryRngCore};
+use rand::{rngs::SysRng, Rng, SeedableRng, TryRng};
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -310,7 +310,7 @@ pub fn encrypt_file_stream(
 
     // Entropy mixing (Paranoid Mode)
     let mut combined_seed = [0u8; 32];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut combined_seed)
         .expect("OS RNG failed");
     if let Some(user_seed) = entropy_seed {

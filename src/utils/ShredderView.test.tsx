@@ -145,6 +145,38 @@ describe("formatSize (via UI rendering)", () => {
       expect(screen.getAllByText("1.5 KB").length).toBeGreaterThan(0);
     });
   });
+
+  it("formats a wipe result of 1 TB or more correctly (regression: sizes array was missing the TB tier)", async () => {
+    // Before the fix, this component's local formatSize() only defined
+    // ["Bytes", "KB", "MB", "GB"], so any value >= 1 TB indexed past the
+    // array and rendered as "X.XX undefined" instead of "X.XX TB" - exactly
+    // the scale this Drive Maintenance feature is meant to handle.
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "wipe_free_space"
+        ? Promise.resolve({
+            bytes_wiped: 2 * 1024 * 1024 * 1024 * 1024, // 2 TB
+            target_path: "/mnt/big-drive",
+          })
+        : Promise.resolve(null),
+    );
+    renderShredder();
+    await switchToDriveMaintenance();
+
+    fireEvent.change(screen.getByPlaceholderText(/e\.g\. \/home/i), {
+      target: { value: "/mnt/big-drive" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wipe" }));
+    await waitFor(() =>
+      expect(screen.getByText("Confirm Free Space Wipe")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("Yes, Wipe Free Space"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Wipe Complete")).toBeInTheDocument();
+      expect(screen.getByText(/2 TB/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

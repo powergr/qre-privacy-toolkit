@@ -17,6 +17,18 @@ use md5::Md5;
 use sha1::Sha1;
 use sha2::Sha256;
 
+/// Formats a digest's raw output bytes as a lowercase hex string.
+/// `digest` 0.11's `finalize()` output type no longer implements `LowerHex`
+/// directly (unlike 0.10's `GenericArray`), so `format!("{:x}", ...)` no
+/// longer works on it - this is the replacement.
+fn to_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,9 +198,9 @@ where
     });
 
     Ok(HashResult {
-        sha256: format!("{:x}", sha256.finalize()),
-        sha1: format!("{:x}", sha1.finalize()),
-        md5: format!("{:x}", md5_hasher.finalize()),
+        sha256: to_hex(sha256.finalize()),
+        sha1: to_hex(sha1.finalize()),
+        md5: to_hex(md5_hasher.finalize()),
     })
 }
 
@@ -230,9 +242,9 @@ pub fn calculate_text_hashes(text: &str) -> HashResult {
     md5_hasher.update(bytes);
 
     HashResult {
-        sha256: format!("{:x}", sha256.finalize()),
-        sha1: format!("{:x}", sha1.finalize()),
-        md5: format!("{:x}", md5_hasher.finalize()),
+        sha256: to_hex(sha256.finalize()),
+        sha1: to_hex(sha1.finalize()),
+        md5: to_hex(md5_hasher.finalize()),
     }
 }
 

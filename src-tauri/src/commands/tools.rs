@@ -8,7 +8,7 @@ use crate::qr;
 use crate::registry_cleaner;
 use crate::system_cleaner;
 use crate::wordlist::WORDLIST;
-use rand::RngCore;
+use rand::Rng;
 use tauri::AppHandle;
 
 /// Standardized result type for Tauri commands in this module.

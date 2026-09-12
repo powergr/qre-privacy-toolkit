@@ -1,7 +1,7 @@
 // --- START OF FILE shredder.rs ---
 
 use anyhow::{anyhow, Result};
-use rand::Rng;
+use rand::RngExt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -642,6 +642,23 @@ pub fn batch_shred<R: tauri::Runtime>(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DRIVE LETTER VALIDATION (shared by wipe_free_space and trim_drive)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Returns true only if `drive_letter` is safe to interpolate directly into a
+/// PowerShell command string: a real Windows drive letter is always exactly
+/// one ASCII letter. Both `wipe_free_space` and `trim_drive` build a
+/// PowerShell script around this value, so anything else (a quote, a
+/// semicolon, multiple characters, etc.) must be rejected before it ever
+/// reaches the shell - this is the actual security check behind the
+/// PowerShell command-injection fix, kept as its own pure function so it can
+/// be unit tested without needing a real Windows drive or PowerShell.
+#[allow(dead_code)]
+fn is_valid_drive_letter(drive_letter: &str) -> bool {
+    drive_letter.len() == 1 && drive_letter.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // FREE SPACE WIPE (HDD)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -709,7 +726,7 @@ pub fn wipe_free_space<R: tauri::Runtime>(
             // is always exactly one ASCII letter, so reject anything else
             // outright rather than passing it through — this closes off
             // PowerShell command injection via a crafted drive_path.
-            if drive_letter.len() != 1 || !drive_letter.chars().all(|c| c.is_ascii_alphabetic()) {
+            if !is_valid_drive_letter(&drive_letter) {
                 return Err(anyhow!("Invalid drive letter: '{}'", drive_letter));
             }
 
@@ -973,7 +990,7 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
         // ASCII letter, so validate strictly before it ever reaches the
         // shell — this closes off PowerShell command injection via a
         // crafted drive_path.
-        if drive_letter.len() != 1 || !drive_letter.chars().all(|c| c.is_ascii_alphabetic()) {
+        if !is_valid_drive_letter(drive_letter) {
             return Err(anyhow!("Invalid drive letter: '{}'", drive_letter));
         }
 
@@ -1349,6 +1366,36 @@ mod tests {
         assert_eq!(format_size(1536), "1.50 KB");
         assert_eq!(format_size(1024 * 1024), "1.00 MB");
         assert_eq!(format_size(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    // ── Drive Letter Validation (PowerShell injection defense) ────────────
+
+    #[test]
+    fn test_is_valid_drive_letter_accepts_real_drive_letters() {
+        assert!(is_valid_drive_letter("C"));
+        assert!(is_valid_drive_letter("Z"));
+        assert!(is_valid_drive_letter("a"));
+    }
+
+    #[test]
+    fn test_is_valid_drive_letter_rejects_injection_payloads() {
+        // A single quote is what actually breaks out of the PowerShell string
+        // literal these values get interpolated into.
+        assert!(!is_valid_drive_letter("C'; Remove-Item -Recurse C:\\; '"));
+        assert!(!is_valid_drive_letter("C'"));
+        assert!(!is_valid_drive_letter("'"));
+        assert!(!is_valid_drive_letter(";"));
+        assert!(!is_valid_drive_letter("$(whoami)"));
+    }
+
+    #[test]
+    fn test_is_valid_drive_letter_rejects_non_single_letter_input() {
+        assert!(!is_valid_drive_letter(""));
+        assert!(!is_valid_drive_letter("CC"));
+        assert!(!is_valid_drive_letter("1"));
+        assert!(!is_valid_drive_letter(":"));
+        assert!(!is_valid_drive_letter(" "));
+        assert!(!is_valid_drive_letter("C:"));
     }
 
     // ── Blacklist Built Once ──────────────────────────────────────────────
