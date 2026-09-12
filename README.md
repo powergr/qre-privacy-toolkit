@@ -8,9 +8,9 @@
 ![Downloads](https://img.shields.io/github/downloads/powergr/qre-privacy-toolkit/total)
 ![Stars](https://img.shields.io/github/stars/powergr/qre-privacy-toolkit?style=social)
 
-![Rust](https://img.shields.io/badge/Rust-1.97-000000?logo=rust&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-1.98-000000?logo=rust&logoColor=white)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white)
-![React](https://img.shields.io/badge/React-19.1-61DAFB?logo=react&logoColor=black)
+![React](https://img.shields.io/badge/React-19.3-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)
 
 ![Last Commit](https://img.shields.io/github/last-commit/powergr/qre-privacy-toolkit)
