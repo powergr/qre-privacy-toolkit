@@ -81,6 +81,8 @@ pub struct RegistryCleanItemResult {
 /// Input for a single registry deletion — passed from the frontend. `id` is echoed
 /// back unchanged in the matching `RegistryCleanItemResult` so the caller can tell
 /// which specific item a result belongs to.
+// Fields are only read inside the target_os = "windows" half of clean_registry_entries.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 #[derive(Deserialize, Debug, Clone)]
 pub struct RegistryCleanEntry {
     pub id: String,

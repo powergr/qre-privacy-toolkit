@@ -91,6 +91,8 @@ pub enum ShredMethod {
 // ─── Free-space wipe structs ────────────────────────────────────────────────
 
 /// Incremental progress emitted during a free-space wipe (indeterminate total).
+// wipe_free_space (the only place this is constructed) is called only on desktop.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 #[derive(Clone, serde::Serialize)]
 pub struct WipeProgress {
     /// Total bytes written to the wipe temp file so far.
@@ -671,6 +673,8 @@ fn is_valid_drive_letter(drive_letter: &str) -> bool {
 ///
 /// NOTE: This is meaningful on HDDs only. On SSDs, the controller's wear-leveling
 /// may still retain traces — use TRIM or full-disk encryption for SSDs.
+// Only called from commands::files::wipe_free_space's non-Android branch.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn wipe_free_space<R: tauri::Runtime>(
     drive_path: String,
     app_handle: &tauri::AppHandle<R>,
@@ -946,6 +950,8 @@ pub fn wipe_free_space<R: tauri::Runtime>(
 ///   Linux  — requires root or a mount with the `discard` option for fstrim.
 ///   Windows — requires Administrator to run Optimize-Volume.
 ///   macOS  — TRIM is fully automatic; this returns an informational message.
+// Only called from commands::files::trim_drive's non-Android branch.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
     #[cfg(target_os = "linux")]
     {

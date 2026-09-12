@@ -25,6 +25,8 @@ use zeroize::Zeroizing;
 use sysinfo::Disks;
 
 pub type CommandResult<T> = Result<T, String>;
+// Only read in the desktop-only half of init_portable_vault (see the Nonce import above).
+#[cfg_attr(target_os = "android", allow(dead_code))]
 const NONCE_LEN: usize = 12;
 
 // ==========================================
@@ -51,6 +53,8 @@ pub enum KdfTier {
 }
 
 impl KdfTier {
+    // Only called from the desktop-only half of init_portable_vault.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub(crate) fn get_params(&self) -> (u32, u32, u32) {
         match self {
             KdfTier::Standard => (262_144, 5, 4),
