@@ -207,11 +207,11 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 367 tests passed from 345 total (Covers memory wiping, file routing, steganography detection, Zip-Bomb prevention, AES-GCM streaming integrity, and metadata-cleaner round-trips across every supported file format).
+- 367 tests passed from 367 total (Covers memory wiping, file routing, steganography detection, Zip-Bomb prevention, AES-GCM streaming integrity, and metadata-cleaner round-trips across every supported file format).
 
 **Frontend (`npm test`):**
 
-- 187 tests passed from 185 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
+- 187 tests passed from 187 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
 
 ---
 
