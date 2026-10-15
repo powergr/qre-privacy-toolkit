@@ -11,6 +11,8 @@ use std::sync::Arc;
 use tauri::Emitter;
 use walkdir::WalkDir;
 
+use crate::utils::CancelSlot;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -19,7 +21,9 @@ const MAX_TOTAL_SIZE: u64 = 50 * 1024 * 1024 * 1024; // 50 GB hard safety limit
 const MAX_DEPTH: usize = 10;
 const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // Warn at 10 GB
 
-static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+// Each cleaning run gets its own cancel flag, so starting a new run cannot un-cancel an older
+// one that is still winding down.
+static CANCEL_SLOT: CancelSlot = CancelSlot::new();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
@@ -45,6 +49,9 @@ pub struct CleanProgress {
     pub current_file: String,
     pub percentage: u8,
 }
+
+/// Where cleaning progress goes. The app sends it to the UI; tests collect it.
+type ProgressFn<'a> = &'a dyn Fn(CleanProgress);
 
 #[derive(Serialize)]
 pub struct CleanResult {
@@ -671,7 +678,18 @@ pub fn clean_paths<R: tauri::Runtime>(
     paths: Vec<String>,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<CleanResult> {
-    CANCEL_FLAG.store(false, Ordering::Relaxed);
+    clean_paths_with(paths, &CANCEL_SLOT, &|p| {
+        let _ = app_handle.emit("clean-progress", p);
+    })
+}
+
+/// Runs one cleaning on `slot`, so a cancel request reaches this run only.
+fn clean_paths_with(
+    paths: Vec<String>,
+    slot: &CancelSlot,
+    progress: ProgressFn,
+) -> Result<CleanResult> {
+    let cancel = slot.begin();
 
     let whitelist = get_whitelist();
     let mut errors = Vec::new();
@@ -712,7 +730,7 @@ pub fn clean_paths<R: tauri::Runtime>(
     let results: Vec<_> = validated_paths
         .into_iter()
         .map(|path_str| {
-            if CANCEL_FLAG.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
                 return (0u64, 0u64, vec!["Operation cancelled".to_string()]);
             }
 
@@ -720,7 +738,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::DNS_CACHE::" => {
                     return virtual_result(
                         flush_dns(),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -730,7 +748,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::CLIPBOARD::" => {
                     return virtual_result(
                         clear_clipboard(),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -740,7 +758,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::CLEAR_BASH_HISTORY::" => {
                     return virtual_result(
                         clear_shell_history("bash"),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -750,7 +768,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::CLEAR_ZSH_HISTORY::" => {
                     return virtual_result(
                         clear_shell_history("zsh"),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -760,7 +778,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::RECYCLE_BIN::" => {
                     return virtual_result(
                         empty_recycle_bin(),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -770,7 +788,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                 "::TRASH::" => {
                     return virtual_result(
                         empty_trash(),
-                        app_handle,
+                        progress,
                         &files_processed,
                         &total_files,
                         &bytes_freed,
@@ -782,7 +800,7 @@ pub fn clean_paths<R: tauri::Runtime>(
                         Ok(freed) => {
                             bytes_freed.fetch_add(freed, Ordering::Relaxed);
                             emit_progress(
-                                app_handle,
+                                progress,
                                 files_processed.load(Ordering::Relaxed),
                                 total_files.load(Ordering::Relaxed),
                                 bytes_freed.load(Ordering::Relaxed),
@@ -798,7 +816,8 @@ pub fn clean_paths<R: tauri::Runtime>(
 
             clean_single_path(
                 &path_str,
-                app_handle,
+                progress,
+                &cancel,
                 &files_processed,
                 &total_files,
                 &bytes_freed,
@@ -815,7 +834,7 @@ pub fn clean_paths<R: tauri::Runtime>(
     }
 
     emit_progress(
-        app_handle,
+        progress,
         files_processed.load(Ordering::Relaxed),
         total_files.load(Ordering::Relaxed),
         total_bytes_freed,
@@ -829,9 +848,9 @@ pub fn clean_paths<R: tauri::Runtime>(
     })
 }
 
-fn virtual_result<R: tauri::Runtime>(
+fn virtual_result(
     result: Result<(), String>,
-    app_handle: &tauri::AppHandle<R>,
+    progress: ProgressFn,
     files_processed: &Arc<AtomicU64>,
     total_files: &Arc<AtomicU64>,
     bytes_freed: &Arc<AtomicU64>,
@@ -840,7 +859,7 @@ fn virtual_result<R: tauri::Runtime>(
     match result {
         Ok(_) => {
             emit_progress(
-                app_handle,
+                progress,
                 files_processed.load(Ordering::Relaxed),
                 total_files.load(Ordering::Relaxed),
                 bytes_freed.load(Ordering::Relaxed),
@@ -869,9 +888,10 @@ fn count_files(path: &Path) -> u64 {
         .count() as u64
 }
 
-fn clean_single_path<R: tauri::Runtime>(
+fn clean_single_path(
     path_str: &str,
-    app_handle: &tauri::AppHandle<R>,
+    progress: ProgressFn,
+    cancel: &AtomicBool,
     files_processed: &Arc<AtomicU64>,
     total_files: &Arc<AtomicU64>,
     bytes_freed: &Arc<AtomicU64>,
@@ -884,7 +904,7 @@ fn clean_single_path<R: tauri::Runtime>(
     if path.is_dir() {
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
-                if CANCEL_FLAG.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
                     break;
                 }
                 let p = entry.path();
@@ -893,7 +913,7 @@ fn clean_single_path<R: tauri::Runtime>(
                         continue;
                     }
                     emit_progress(
-                        app_handle,
+                        progress,
                         files_processed.load(Ordering::Relaxed),
                         total_files.load(Ordering::Relaxed),
                         bytes_freed.load(Ordering::Relaxed),
@@ -954,8 +974,8 @@ fn clean_single_path<R: tauri::Runtime>(
     (local_freed, local_files, local_errors)
 }
 
-fn emit_progress<R: tauri::Runtime>(
-    app_handle: &tauri::AppHandle<R>,
+fn emit_progress(
+    progress: ProgressFn,
     files_processed: u64,
     total_files: u64,
     bytes_freed: u64,
@@ -966,16 +986,13 @@ fn emit_progress<R: tauri::Runtime>(
     } else {
         100
     };
-    let _ = app_handle.emit(
-        "clean-progress",
-        CleanProgress {
-            files_processed,
-            total_files,
-            bytes_freed,
-            current_file,
-            percentage,
-        },
-    );
+    progress(CleanProgress {
+        files_processed,
+        total_files,
+        bytes_freed,
+        current_file,
+        percentage,
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -983,7 +1000,7 @@ fn emit_progress<R: tauri::Runtime>(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub fn cancel_cleaning() {
-    CANCEL_FLAG.store(true, Ordering::Relaxed);
+    CANCEL_SLOT.cancel();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1851,16 +1868,116 @@ mod tests {
 
     #[test]
     fn test_cancel_cleaning_sets_flag() {
-        CANCEL_FLAG.store(false, Ordering::Relaxed);
-        assert!(!CANCEL_FLAG.load(Ordering::Relaxed));
+        let flag = CANCEL_SLOT.begin();
+        assert!(!flag.load(Ordering::Relaxed));
 
         cancel_cleaning();
         assert!(
-            CANCEL_FLAG.load(Ordering::Relaxed),
-            "CANCEL_FLAG must be true after cancel_cleaning()"
+            flag.load(Ordering::Relaxed),
+            "the running clean's flag must be set after cancel_cleaning()"
         );
+    }
 
-        CANCEL_FLAG.store(false, Ordering::Relaxed);
+    // ── cancellation of a whole run ────────────────────────────────────────
+
+    /// A fresh directory inside the cleaner's own whitelist, so clean_paths accepts it.
+    fn whitelisted_workdir(name: &str) -> PathBuf {
+        let base = get_whitelist()
+            .into_iter()
+            .next()
+            .expect("the cleaner whitelist always contains a temp directory");
+        let dir = base.join(format!("qre_syscl_cancel_{}_{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Three folders with two files each. Returns the folders.
+    fn three_folders(root: &Path) -> Vec<PathBuf> {
+        (0..3)
+            .map(|i| {
+                let d = root.join(format!("d{i}"));
+                fs::create_dir_all(&d).unwrap();
+                fs::write(d.join("a.tmp"), b"aaaa").unwrap();
+                fs::write(d.join("b.tmp"), b"bbbb").unwrap();
+                d
+            })
+            .collect()
+    }
+
+    fn as_paths(dirs: &[PathBuf]) -> Vec<String> {
+        dirs.iter().map(|d| d.display().to_string()).collect()
+    }
+
+    fn files_left(dir: &Path) -> usize {
+        fs::read_dir(dir).unwrap().count()
+    }
+
+    fn cancelled_errors(result: &CleanResult) -> usize {
+        result.errors.iter().filter(|e| *e == "Operation cancelled").count()
+    }
+
+    #[test]
+    fn test_cancel_stops_the_rest_of_the_run() {
+        let root = whitelisted_workdir("stop");
+        let dirs = three_folders(&root);
+        let slot = CancelSlot::new();
+        let first = std::cell::Cell::new(true);
+
+        let result = clean_paths_with(as_paths(&dirs), &slot, &|_p| {
+            if first.replace(false) {
+                slot.cancel();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(cancelled_errors(&result), 2, "folders 2 and 3 must be skipped");
+        assert_eq!(files_left(&dirs[1]), 2, "folder 2 must be untouched");
+        assert_eq!(files_left(&dirs[2]), 2, "folder 3 must be untouched");
+        assert!(files_left(&dirs[0]) >= 1, "folder 1 must stop part way");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_cancelled_run_stays_cancelled_when_another_run_starts() {
+        // Cancel run A, then start run B while A is still going. Starting B must not
+        // un-cancel A, which a single shared flag that B resets would do.
+        let root = whitelisted_workdir("race");
+        let dirs = three_folders(&root);
+        let slot = CancelSlot::new();
+        let first = std::cell::Cell::new(true);
+
+        let result = clean_paths_with(as_paths(&dirs), &slot, &|_p| {
+            if first.replace(false) {
+                slot.cancel();
+                clean_paths_with(vec![], &slot, &|_| {}).unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(cancelled_errors(&result), 2, "run A must still be cancelled");
+        assert_eq!(files_left(&dirs[1]), 2, "folder 2 must be untouched");
+        assert_eq!(files_left(&dirs[2]), 2, "folder 3 must be untouched");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_a_cancel_sent_before_a_run_does_not_stop_it() {
+        let root = whitelisted_workdir("stale");
+        let dirs = three_folders(&root);
+        let slot = CancelSlot::new();
+        slot.cancel();
+
+        let result = clean_paths_with(as_paths(&dirs), &slot, &|_| {}).unwrap();
+
+        assert_eq!(cancelled_errors(&result), 0);
+        for d in &dirs {
+            assert_eq!(files_left(d), 0, "every file must be cleaned");
+        }
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(target_os = "windows")]

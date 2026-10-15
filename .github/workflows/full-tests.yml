@@ -1,0 +1,54 @@
+name: Full tests
+
+# Every test, including the ones too slow for every push. Runs once a week and
+# can be started by hand from the Actions tab (for example before a release).
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Every Sunday at 3 AM UTC
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Frontend (typecheck + all tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: type-check
+        run: npx tsc --noEmit
+
+      - name: run frontend tests
+        run: npm test -- --ci
+
+      - name: build
+        run: npm run build
+
+  rust:
+    name: Rust (all tests)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: run all Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib --locked

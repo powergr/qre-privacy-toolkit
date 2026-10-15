@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
@@ -127,6 +127,10 @@ export function SystemCleanerView() {
   const [cleaning, setCleaning]         = useState(false);
   const [progress, setProgress]         = useState<CleanProgress | null>(null);
   const [cleanResult, setCleanResult]   = useState<CleanResult | null>(null);
+  // A cancel request only asks the backend to stop. The cleaning keeps running until its
+  // own command returns, so the screen must keep showing it as running until then.
+  const [cancelling, setCancelling]     = useState(false);
+  const cancelRequested = useRef(false);
 
   // ── Registry state ──────────────────────────────────────────────────────
   const [registryItems, setRegistryItems]           = useState<RegistryItem[]>([]);
@@ -150,10 +154,14 @@ export function SystemCleanerView() {
   // ── Progress listener ───────────────────────────────────────────────────
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    let closed = false;
     (async () => {
-      unlisten = await listen<CleanProgress>("clean-progress", (e) => setProgress(e.payload));
+      const fn = await listen<CleanProgress>("clean-progress", (e) => setProgress(e.payload));
+      // The screen may have been closed while the listener was being set up.
+      if (closed) fn();
+      else unlisten = fn;
     })();
-    return () => { if (unlisten) unlisten(); };
+    return () => { closed = true; if (unlisten) unlisten(); };
   }, []);
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -172,6 +180,15 @@ export function SystemCleanerView() {
       // No preselection — user chooses what to delete
       setSelectedIds(new Set());
       setScanned(true);
+      // Open on a category that has something in it. Tabs of empty categories are hidden,
+      // so staying on one would show "nothing found" next to tabs that do have items.
+      setActiveTab((current) => {
+        if (current === "Registry" || res.some((i) => i.category === current)) return current;
+        const first = ["System", "Browser", "Network", "Developer", "Privacy"].find((c) =>
+          res.some((i) => i.category === c),
+        );
+        return first ?? current;
+      });
     } catch (e) {
       setError("Scan failed: " + e);
     } finally {
@@ -213,6 +230,8 @@ export function SystemCleanerView() {
     setShowConfirmation(false);
     setConfirmChecked(false);
     setProgress(null);
+    cancelRequested.current = false;
+    setCancelling(false);
     const paths = items.filter((i) => selectedIds.has(i.id)).map((i) => i.path);
     try {
       const result = await invoke<CleanResult>("clean_system_junk", { paths });
@@ -220,26 +239,33 @@ export function SystemCleanerView() {
       setItems([]);
       setScanned(false);
       setShowPreview(false);
-      if (result.errors.length > 0) {
-        setError(`Cleaned with ${result.errors.length} error(s). See details above.`);
+      if (cancelRequested.current) {
+        setError("Cleanup cancelled by user.");
+      } else if (result.errors.length > 0) {
+        setError(`Cleaned with ${result.errors.length} error(s). See details below.`);
       } else {
         setMsg("Cleanup completed successfully!");
       }
     } catch (e) {
-      setError("Clean failed: " + e);
+      setError(cancelRequested.current ? "Cleanup cancelled by user." : "Clean failed: " + e);
     } finally {
       setCleaning(false);
+      setCancelling(false);
       setProgress(null);
     }
   }
 
   async function cancelClean() {
+    if (cancelRequested.current) return;
+    cancelRequested.current = true;
+    setCancelling(true);
     try {
       await invoke("cancel_system_clean");
-      setError("Cleanup cancelled by user.");
-      setCleaning(false);
+      // Nothing else changes here: the cleaning stops when its own command returns.
     } catch (e) {
       console.error("Failed to cancel:", e);
+      cancelRequested.current = false;
+      setCancelling(false);
     }
   }
 
@@ -370,8 +396,10 @@ export function SystemCleanerView() {
     try {
       await invoke("relaunch_as_admin");
     } catch (e) {
-      setRegistryError("Could not relaunch as Administrator: " + e);
-      setError("Could not relaunch as Administrator: " + e);
+      // Show it once, in the banner of the tab the user is on.
+      const message = "Could not relaunch as Administrator: " + e;
+      if (activeTab === "Registry") setRegistryError(message);
+      else setError(message);
     }
   }
 
@@ -589,7 +617,7 @@ export function SystemCleanerView() {
         )}
 
         {/* ── RESULTS LIST (all tabs except Registry) ──────────────────── */}
-        {scanned && items.length > 0 && !showPreview && !isRegistryTab && (
+        {scanned && items.length > 0 && !showPreview && !cleaning && !isRegistryTab && (
           <div style={{ maxWidth: 700, margin: "0 auto", width: "100%" }}>
 
             {/* Toolbar */}
@@ -726,7 +754,7 @@ export function SystemCleanerView() {
         )}
 
         {/* ── PREVIEW / DRY RUN ────────────────────────────────────────── */}
-        {showPreview && dryRunResult && (
+        {showPreview && dryRunResult && !cleaning && (
           <div style={{ maxWidth: 700, margin: "0 auto", width: "100%" }}>
             <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)",
               borderRadius: 10, padding: 20, marginBottom: 20 }}>
@@ -785,24 +813,29 @@ export function SystemCleanerView() {
         )}
 
         {/* ── CLEANING PROGRESS ────────────────────────────────────────── */}
-        {cleaning && progress && (
+        {cleaning && (
           <div style={{ maxWidth: 600, margin: "0 auto", width: "100%" }}>
             <div className="modern-card" style={{ padding: 30, textAlign: "center" }}>
               <Loader2 size={48} className="spinner" style={{ marginBottom: 20 }} />
               <h3>Cleaning in Progress...</h3>
               <div style={{ width: "100%", background: "var(--border)", height: 8, borderRadius: 4,
                 overflow: "hidden", margin: "20px 0" }}>
-                <div style={{ width: `${progress.percentage}%`, height: "100%",
+                <div style={{ width: `${progress?.percentage ?? 0}%`, height: "100%",
                   background: "var(--accent)", transition: "width 0.3s ease" }} />
               </div>
               <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                {progress.percentage}% — {progress.files_processed} of {progress.total_files} files
+                {progress
+                  ? `${progress.percentage}% — ${progress.files_processed} of ${progress.total_files} files`
+                  : "Preparing…"}
               </p>
-              <p style={{ color: "var(--text-dim)", fontSize: "0.8rem", marginTop: 10, wordBreak: "break-all" }}>
-                {formatSize(progress.bytes_freed)} freed
-              </p>
-              <button className="secondary-btn" onClick={cancelClean} style={{ marginTop: 20 }}>
-                Cancel
+              {progress && (
+                <p style={{ color: "var(--text-dim)", fontSize: "0.8rem", marginTop: 10, wordBreak: "break-all" }}>
+                  {formatSize(progress.bytes_freed)} freed
+                </p>
+              )}
+              <button className="secondary-btn" onClick={cancelClean} disabled={cancelling}
+                style={{ marginTop: 20 }}>
+                {cancelling ? "Cancelling…" : "Cancel"}
               </button>
             </div>
           </div>
@@ -1071,7 +1104,7 @@ export function SystemCleanerView() {
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
           background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center",
           justifyContent: "center", zIndex: 1000 }}
-          onClick={() => setShowConfirmation(false)}>
+          onClick={() => { setShowConfirmation(false); setConfirmChecked(false); }}>
           <div className="modern-card" style={{ maxWidth: 500, width: "90%", padding: 30 }}
             onClick={(e) => e.stopPropagation()}>
             <div style={{ textAlign: "center", marginBottom: 20 }}>

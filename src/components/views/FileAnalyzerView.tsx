@@ -36,6 +36,9 @@ export function FileAnalyzerView() {
   const [isMobile, setIsMobile] = useState(false);
 
   const isCancelled = useRef(false);
+  // Identifies the scan that owns the screen. Starting or cancelling a scan bumps it,
+  // so a cancelled scan that finishes late cannot overwrite a newer one.
+  const scanIdRef = useRef(0);
 
   useEffect(() => {
     const p = platform();
@@ -65,6 +68,7 @@ export function FileAnalyzerView() {
   }, []);
 
   async function runScan(path: string | null) {
+    const scanId = ++scanIdRef.current;
     setLoading(true);
     setResults([]);
     setHasScanned(false);
@@ -77,7 +81,7 @@ export function FileAnalyzerView() {
       const res = await invoke<AnalysisResult[]>("scan_directory_targets", {
         path,
       });
-      if (!isCancelled.current) {
+      if (scanId === scanIdRef.current) {
         const sorted = res.sort((a, b) => {
           if (a.risk_level === "DANGER" && b.risk_level !== "DANGER") return -1;
           if (b.risk_level === "DANGER" && a.risk_level !== "DANGER") return 1;
@@ -87,16 +91,17 @@ export function FileAnalyzerView() {
         setHasScanned(true);
       }
     } catch (e) {
-      if (!isCancelled.current) {
+      if (scanId === scanIdRef.current) {
         setError("Scan Error: " + e);
         setHasScanned(false);
       }
     } finally {
-      if (!isCancelled.current) setLoading(false);
+      if (scanId === scanIdRef.current) setLoading(false);
     }
   }
 
   const handleCancel = () => {
+    scanIdRef.current += 1;
     isCancelled.current = true;
     setLoading(false);
     setScanLog([]);
@@ -120,7 +125,7 @@ export function FileAnalyzerView() {
   }
 
   function showInFolder(path: string) {
-    invoke("show_in_folder", { path });
+    invoke("show_in_folder", { path }).catch((e) => setError(String(e)));
   }
 
   function searchMismatch(ext: string, realType: string) {

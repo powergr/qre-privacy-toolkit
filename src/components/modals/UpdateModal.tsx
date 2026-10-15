@@ -84,14 +84,17 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
   }
 
   async function startUpdate() {
-    const update = await check();
-    if (!update) return;
-
-    setStatus("downloading");
     let downloaded = 0;
     let contentLength = 0;
 
     try {
+      const update = await check();
+      if (!update) return;
+
+      setStatus("downloading");
+      // "Finished" only means the download is done; the install still runs after it.
+      // "ready" is set once downloadAndInstall itself returns, so a failed install
+      // shows as a failure and not as "Update Installed!".
       await update.downloadAndInstall((event) => {
         switch (event.event) {
           case "Started":
@@ -103,9 +106,6 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
               const pct = Math.round((downloaded / contentLength) * 100);
               setProgress(pct);
             }
-            break;
-          case "Finished":
-            setStatus("ready");
             break;
         }
       });
@@ -120,9 +120,11 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
   }
 
   async function restartApp() {
+    setErrorMsg("");
     try {
       await relaunch();
     } catch (e) {
+      // Shown on the "ready" screen itself: the update is installed, only the restart failed.
       setErrorMsg("Failed to restart: " + String(e));
     }
   }
@@ -291,6 +293,18 @@ export function UpdateModal({ onClose }: UpdateModalProps) {
                 style={{ marginBottom: 15 }}
               />
               <h3>Update Installed!</h3>
+              {errorMsg && (
+                <p
+                  style={{
+                    color: "var(--btn-danger)",
+                    fontSize: "0.9rem",
+                    margin: "10px 0",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {errorMsg}
+                </p>
+              )}
               <button
                 className="auth-btn"
                 onClick={restartApp}

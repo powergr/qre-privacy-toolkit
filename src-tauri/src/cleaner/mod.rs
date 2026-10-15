@@ -4,8 +4,10 @@ use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tauri::Emitter;
+
+use crate::utils::CancelSlot;
 
 mod documents;
 mod media;
@@ -33,11 +35,9 @@ const MEDIA_EXTENSIONS: &[&str] =
 const MAX_ZIP_SIZE: u64 = 500 * 1024 * 1024; // Limit total uncompressed ZIP size to 500 MB (prevents Zip Bombs)
 const MAX_ZIP_FILES: usize = 10_000; // Limit the number of files inside a ZIP (prevents directory traversal attacks/CPU exhaustion)
 
-// Global thread-safe flag allowing the user to cancel a long-running batch clean operation via the UI.
-// LIMITATION: This is a process-wide singleton. Concurrent batch operations (which Tauri does not
-// prevent) would interfere with each other. A future improvement is to pass an Arc<AtomicBool>
-// per invocation rather than using a global.
-static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+// Lets the user cancel a long-running batch clean from the UI. Each batch gets its own
+// cancel flag, so starting a new batch cannot un-cancel an older one that is still winding down.
+static CANCEL_SLOT: CancelSlot = CancelSlot::new();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
@@ -348,8 +348,21 @@ pub fn batch_clean<R: tauri::Runtime>(
     options: CleaningOptions,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<CleanResult> {
-    // SeqCst ensures the flag reset is visible to all threads before work begins.
-    CANCEL_FLAG.store(false, Ordering::SeqCst);
+    batch_clean_with(paths, output_dir, options, &CANCEL_SLOT, |current, total, file| {
+        emit_progress(app_handle, current, total, file)
+    })
+}
+
+/// Runs one batch on `slot`, so a cancel request reaches this batch only.
+/// `progress` receives (files done, total files, current file name).
+fn batch_clean_with(
+    paths: Vec<String>,
+    output_dir: Option<String>,
+    options: CleaningOptions,
+    slot: &CancelSlot,
+    mut progress: impl FnMut(usize, usize, String),
+) -> Result<CleanResult> {
+    let cancel = slot.begin();
 
     // FIX: Deduplicate input paths to avoid processing the same file multiple times
     // (e.g., from accidental double-drops).
@@ -367,7 +380,7 @@ pub fn batch_clean<R: tauri::Runtime>(
 
     for (idx, path_str) in paths.iter().enumerate() {
         // Check if the user clicked "Cancel" in the frontend
-        if CANCEL_FLAG.load(Ordering::Acquire) {
+        if cancel.load(Ordering::Acquire) {
             failed.push(FailedFile {
                 path: path_str.clone(),
                 error: "Operation cancelled by user".to_string(),
@@ -381,7 +394,7 @@ pub fn batch_clean<R: tauri::Runtime>(
             .unwrap_or("Unknown")
             .to_string();
 
-        emit_progress(app_handle, idx, total, filename);
+        progress(idx, total, filename);
 
         // Try to clean file
         match remove_metadata(path_str, output_dir.as_deref(), options.clone()) {
@@ -406,7 +419,7 @@ pub fn batch_clean<R: tauri::Runtime>(
 
     // FIX: Pass an empty string rather than the misleading "Complete" filename literal,
     // so the UI filename display blanks out cleanly at 100%.
-    emit_progress(app_handle, total, total, String::new());
+    progress(total, total, String::new());
 
     Ok(CleanResult {
         success,
@@ -442,7 +455,7 @@ fn emit_progress<R: tauri::Runtime>(
 
 /// Cancels ongoing batch operation by flipping the atomic flag.
 pub fn cancel_cleaning() {
-    CANCEL_FLAG.store(true, Ordering::Release);
+    CANCEL_SLOT.cancel();
 }
 
 /// Compares a file before and after cleaning, mapping exactly which tags were deleted.
@@ -1519,6 +1532,90 @@ mod tests {
                 "{ext} should not be supported (case-sensitive - callers lowercase first)"
             );
         }
+    }
+
+    // ─── cancellation ──────────────────────────────────────────────────────
+
+    fn all_off() -> CleaningOptions {
+        CleaningOptions {
+            gps: false,
+            author: false,
+            date: false,
+            remove_cover_art: false,
+        }
+    }
+
+    fn cancelled_markers(result: &CleanResult) -> usize {
+        result
+            .failed
+            .iter()
+            .filter(|f| f.error == "Operation cancelled by user")
+            .count()
+    }
+
+    #[test]
+    fn test_batch_stops_when_cancelled() {
+        let slot = CancelSlot::new();
+        let paths: Vec<String> = (0..3).map(|i| format!("Z:\\no\\such\\file{i}.jpg")).collect();
+
+        let result = batch_clean_with(paths, None, all_off(), &slot, |idx, _total, _name| {
+            if idx == 0 {
+                slot.cancel();
+            }
+        })
+        .unwrap();
+
+        // File 0 was already under way; file 1 sees the cancel and stops the batch.
+        assert_eq!(cancelled_markers(&result), 1);
+        assert_eq!(result.failed.len(), 2, "files after the cancel must not be processed");
+    }
+
+    #[test]
+    fn test_cancelled_batch_stays_cancelled_when_another_batch_starts() {
+        // Cancel batch A, then start batch B while A is still winding down. Starting
+        // B must not un-cancel A, which a single shared flag that B resets would do.
+        let slot = CancelSlot::new();
+        let paths: Vec<String> = (0..3).map(|i| format!("Z:\\no\\such\\file{i}.jpg")).collect();
+        let started_b = std::cell::Cell::new(false);
+        let b_result = std::cell::RefCell::new(None);
+
+        let a = batch_clean_with(paths, None, all_off(), &slot, |_idx, _total, _name| {
+            if !started_b.replace(true) {
+                slot.cancel();
+                *b_result.borrow_mut() = Some(batch_clean_with(
+                    vec!["Z:\\other\\b.jpg".to_string()],
+                    None,
+                    all_off(),
+                    &slot,
+                    |_, _, _| {},
+                ));
+            }
+        })
+        .unwrap();
+
+        assert_eq!(cancelled_markers(&a), 1, "batch A must still be cancelled");
+        assert_eq!(a.failed.len(), 2, "batch A must stop after its first file");
+
+        let b = b_result.borrow_mut().take().unwrap().unwrap();
+        assert_eq!(cancelled_markers(&b), 0, "batch B was never cancelled");
+        assert_eq!(b.failed.len(), 1, "batch B must process its own file");
+    }
+
+    #[test]
+    fn test_cancel_cleaning_cancels_the_running_batch() {
+        let flag = CANCEL_SLOT.begin();
+        assert!(!flag.load(Ordering::SeqCst));
+        cancel_cleaning();
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_a_cancel_sent_before_a_batch_does_not_stop_it() {
+        let slot = CancelSlot::new();
+        slot.cancel();
+        let paths = vec!["Z:\\no\\such\\file.jpg".to_string()];
+        let result = batch_clean_with(paths, None, all_off(), &slot, |_, _, _| {}).unwrap();
+        assert_eq!(cancelled_markers(&result), 0);
     }
 }
 

@@ -157,6 +157,15 @@ export function CleanerView() {
     null,
   );
   const cleanInputPaths = useRef<string[]>([]);
+  // Always the latest list, so adding files never depends on a stale copy.
+  const filesRef = useRef<string[]>([]);
+  filesRef.current = files;
+  // Only the newest analysis may update the preview; a slower earlier one is dropped.
+  const analyzeSeq = useRef(0);
+  // A cancel request only asks the backend to stop. The cleaning keeps running until its
+  // own command returns, so the screen must keep showing it as running until then.
+  const [cancelling, setCancelling] = useState(false);
+  const cancelRequested = useRef(false);
 
   // --- STEGO STATE ---
   const [stegoLoading, setStegoLoading] = useState(false);
@@ -166,6 +175,8 @@ export function CleanerView() {
   );
 
   const { isDragging } = useDragDrop(async (newFiles) => {
+    // Files dropped while something is running would be wiped from the list when it ends.
+    if (cleaning || stegoLoading) return;
     if (activeTab === "meta") addFiles(newFiles);
     if (activeTab === "stego") addStegoFiles(newFiles);
   });
@@ -173,20 +184,27 @@ export function CleanerView() {
   useEffect(() => {
     let unlistenMeta: UnlistenFn | null = null;
     let unlistenStego: UnlistenFn | null = null;
+    let closed = false;
 
     async function setupProgressListener() {
-      unlistenMeta = await listen<CleanProgress>(
+      const meta = await listen<CleanProgress>(
         "clean-metadata-progress",
         (event) => {
           setProgress(event.payload);
         },
       );
-      unlistenStego = await listen<CleanProgress>("stego-progress", (event) => {
+      // The screen may have been closed while the listener was being set up.
+      if (closed) meta();
+      else unlistenMeta = meta;
+      const stego = await listen<CleanProgress>("stego-progress", (event) => {
         setStegoProgress(event.payload);
       });
+      if (closed) stego();
+      else unlistenStego = stego;
     }
     setupProgressListener();
     return () => {
+      closed = true;
       if (unlistenMeta) unlistenMeta();
       if (unlistenStego) unlistenStego();
     };
@@ -196,12 +214,16 @@ export function CleanerView() {
 
   const addFiles = (newPaths: string[]) => {
     setError(null);
-    setFiles((prev) => {
-      const unique = [...new Set([...prev, ...newPaths])];
-      if (prev.length === 0 && newPaths.length > 0) analyze(newPaths[0]);
-      return unique;
-    });
-    setPreviewIndex(0);
+    const prev = filesRef.current;
+    const unique = [...new Set([...prev, ...newPaths])];
+    filesRef.current = unique;
+    setFiles(unique);
+    // The preview only restarts when the list was empty. Otherwise it keeps pointing at
+    // the file the user was looking at, whose report is the one on screen.
+    if (prev.length === 0 && unique.length > 0) {
+      setPreviewIndex(0);
+      analyze(unique[0]);
+    }
   };
 
   async function handleBrowse() {
@@ -260,6 +282,8 @@ export function CleanerView() {
     setFiles(newFiles);
 
     if (newFiles.length === 0) {
+      analyzeSeq.current++; // drop any analysis still on its way
+      setAnalyzingPreview(false);
       setPreviewReport(null);
       setPreviewIndex(0);
     } else {
@@ -290,8 +314,10 @@ export function CleanerView() {
   };
 
   async function analyze(path: string) {
+    const requestId = ++analyzeSeq.current;
     if (analyzeCache.current.has(path)) {
       setPreviewReport(analyzeCache.current.get(path)!);
+      setAnalyzingPreview(false);
       return;
     }
     setAnalyzingPreview(true);
@@ -300,11 +326,13 @@ export function CleanerView() {
     try {
       const res = await invoke<MetaReport>("analyze_file_metadata", { path });
       analyzeCache.current.set(path, res);
+      if (requestId !== analyzeSeq.current) return;
       setPreviewReport(res);
     } catch (e) {
+      if (requestId !== analyzeSeq.current) return;
       setError("Analysis failed: " + e);
     } finally {
-      setAnalyzingPreview(false);
+      if (requestId === analyzeSeq.current) setAnalyzingPreview(false);
     }
   }
 
@@ -316,6 +344,8 @@ export function CleanerView() {
     setResult(null);
     setProgress(null);
     setComparisons(new Map());
+    cancelRequested.current = false;
+    setCancelling(false);
     try {
       const res = await invoke<CleanResult>("batch_clean_metadata", {
         paths: files,
@@ -329,21 +359,31 @@ export function CleanerView() {
       setShowRaw(false);
       setRawFilter("");
       analyzeCache.current.clear();
+      if (cancelRequested.current) setError("Cleaning cancelled by user");
     } catch (e) {
-      setError("Cleaning failed: " + e);
+      setError(
+        cancelRequested.current
+          ? "Cleaning cancelled by user"
+          : "Cleaning failed: " + e,
+      );
     } finally {
       setCleaning(false);
+      setCancelling(false);
       setProgress(null);
     }
   }
 
   async function cancelClean() {
+    if (cancelRequested.current) return;
+    cancelRequested.current = true;
+    setCancelling(true);
     try {
       await invoke("cancel_metadata_clean");
-      setError("Cleaning cancelled by user");
-      setCleaning(false);
+      // Nothing else changes here: the cleaning stops when its own command returns.
     } catch (e) {
       console.error(e);
+      cancelRequested.current = false;
+      setCancelling(false);
     }
   }
 
@@ -365,6 +405,7 @@ export function CleanerView() {
       setComparisons((prev) => new Map(prev).set(outputPath, cmp));
     } catch (e) {
       console.error("Comparison failed:", e);
+      setError("Comparison failed: " + e);
     } finally {
       setLoadingComparison(null);
     }
@@ -609,7 +650,7 @@ export function CleanerView() {
             )}
 
             {/* CLEANING PROGRESS */}
-            {cleaning && progress && (
+            {cleaning && (
               <div
                 style={{
                   flex: 1,
@@ -645,7 +686,7 @@ export function CleanerView() {
                   >
                     <div
                       style={{
-                        width: `${progress.percentage}%`,
+                        width: `${progress?.percentage ?? 0}%`,
                         height: "100%",
                         background: "var(--accent)",
                         transition: "width 0.3s ease",
@@ -653,10 +694,11 @@ export function CleanerView() {
                     />
                   </div>
                   <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                    {progress.percentage}% — {progress.current} of{" "}
-                    {progress.total} files
+                    {progress
+                      ? `${progress.percentage}% — ${progress.current} of ${progress.total} files`
+                      : "Preparing…"}
                   </p>
-                  {progress.current_file && (
+                  {progress?.current_file && (
                     <p
                       style={{
                         color: "var(--text-dim)",
@@ -671,9 +713,10 @@ export function CleanerView() {
                   <button
                     className="secondary-btn"
                     onClick={cancelClean}
+                    disabled={cancelling}
                     style={{ marginTop: 20 }}
                   >
-                    Cancel
+                    {cancelling ? "Cancelling…" : "Cancel"}
                   </button>
                 </div>
               </div>
@@ -989,6 +1032,8 @@ export function CleanerView() {
                         className="icon-btn-ghost"
                         onClick={() => {
                           analyzeCache.current.clear();
+                          analyzeSeq.current++; // drop any analysis still on its way
+                          setAnalyzingPreview(false);
                           setFiles([]);
                           setPreviewReport(null);
                           setPreviewIndex(0);

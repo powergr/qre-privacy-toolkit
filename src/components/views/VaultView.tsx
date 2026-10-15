@@ -145,9 +145,44 @@ function parseCSV(raw: string): string[][] {
   return rows;
 }
 
+type CsvField = "service" | "url" | "username" | "password" | "notes" | "totp";
+
+// Header names (lower case) accepted on import, including the ones other password
+// managers use for the same thing.
+const CSV_COLUMN_ALIASES: Record<string, CsvField> = {
+  name: "service",
+  title: "service",
+  service: "service",
+  account: "service",
+  url: "url",
+  website: "url",
+  "web site": "url",
+  login_uri: "url",
+  username: "username",
+  login: "username",
+  login_username: "username",
+  user: "username",
+  email: "username",
+  password: "password",
+  login_password: "password",
+  note: "notes",
+  notes: "notes",
+  extra: "notes",
+  comments: "notes",
+  totp_secret: "totp",
+  totp: "totp",
+  otp: "totp",
+  login_totp: "totp",
+};
+
 function csvEscape(value: string): string {
   if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
+}
+
+/** 2FA keys are often pasted in groups ("JBSW Y3DP ...") and in any case. */
+function normalizeTotpSecret(secret: string): string {
+  return secret.replace(/\s+/g, "").toUpperCase();
 }
 
 function getInitial(name: string): string {
@@ -180,7 +215,8 @@ function TotpDisplay({
 
     async function fetchCode() {
       // Allow standard 16-char and longer 32-char base32 secrets
-      if (!secret || secret.trim().length < 16) {
+      const cleanSecret = normalizeTotpSecret(secret || "");
+      if (cleanSecret.length < 16) {
         if (isMounted) {
           setCode("------");
           setError(false);
@@ -191,7 +227,7 @@ function TotpDisplay({
       try {
         const [newCode, remaining] = await invoke<[string, number]>(
           "generate_totp_code",
-          { secret: secret.trim() }, // ← trim here too
+          { secret: cleanSecret },
         );
         if (isMounted) {
           setCode(newCode);
@@ -331,14 +367,25 @@ export function VaultView() {
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
+  // True while a Save is in flight, so a second click cannot store the entry twice.
+  const [isSaving, setIsSaving] = useState(false);
 
-  const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // A password revealed in one editor must not stay revealed for the next entry.
+  const editorOpen = editing !== null;
   useEffect(() => {
-    return () => {
-      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
-    };
-  }, []);
+    if (!editorOpen) setShowEditPass(false);
+  }, [editorOpen]);
+
+  // Every way of leaving the editor discards its pending error as well, or it would pop
+  // up on its own in a dialog afterwards.
+  const closeEditor = () => {
+    setSaveError(null);
+    setEditing(null);
+  };
+
+  // Not cancelled on unmount: the timer only wipes the clipboard, and it must still
+  // fire if the user switches screens before the 30 seconds are up.
+  const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const strength = editing
     ? getPasswordStrength(editing.password || "")
@@ -363,7 +410,16 @@ export function VaultView() {
   }, [entries, searchQuery]);
 
   const handleCopy = async (text: string, isTotp = false) => {
-    await writeText(text);
+    try {
+      await writeText(text);
+    } catch (e) {
+      // Nothing was copied, so no wipe timer and no "copied" message.
+      setCopyModalMsg({
+        message: "Could not copy to the clipboard: " + String(e),
+        type: "error",
+      });
+      return;
+    }
     if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
     clipboardTimerRef.current = setTimeout(async () => {
       try {
@@ -390,6 +446,8 @@ export function VaultView() {
       const contents = await invoke<string>("read_text_file_content", {
         path: selected,
       });
+      // A spreadsheet's invisible byte-order mark at the start of the file is removed by
+      // the trim() applied to the header names and values below.
       const rows = parseCSV(contents);
 
       if (rows.length === 0) {
@@ -400,25 +458,40 @@ export function VaultView() {
         return;
       }
 
-      const firstRow = rows[0].map((c) => c.toLowerCase());
-      const hasHeader =
-        firstRow.includes("password") ||
-        firstRow.includes("name") ||
-        firstRow.includes("username");
+      const header = rows[0].map((c) => c.trim().toLowerCase());
+      const hasHeader = header.some((c) => c in CSV_COLUMN_ALIASES);
       const startIdx = hasHeader ? 1 : 0;
+
+      // With a header row the columns are found by name, so files in another order, or
+      // from another password manager, still import correctly. Without one the layout is
+      // name, url, username, password, then the note (which may itself contain commas).
+      const columns: Record<CsvField, number> = hasHeader
+        ? { service: -1, url: -1, username: -1, password: -1, notes: -1, totp: -1 }
+        : { service: 0, url: 1, username: 2, password: 3, notes: 4, totp: -1 };
+      if (hasHeader) {
+        header.forEach((name, index) => {
+          const field = CSV_COLUMN_ALIASES[name];
+          if (field && columns[field] === -1) columns[field] = index;
+        });
+      }
+      const cell = (parts: string[], field: CsvField) =>
+        columns[field] >= 0 ? (parts[columns[field]]?.trim() ?? "") : "";
 
       const newEntries: VaultEntry[] = [];
       const skipped: number[] = [];
 
       for (let i = startIdx; i < rows.length; i++) {
         const parts = rows[i];
-        if (parts.length < 3) continue;
+        if (parts.every((c) => c.trim() === "")) continue; // blank line
 
-        const service = parts[0]?.trim() || "";
-        const url = parts[1]?.trim() || "";
-        const username = parts[2]?.trim() || "";
-        const password = parts[3]?.trim() || "";
-        const notes = parts.slice(4).join(",").trim();
+        const service = cell(parts, "service");
+        const url = cell(parts, "url");
+        const username = cell(parts, "username");
+        const password = cell(parts, "password");
+        const notes = hasHeader
+          ? cell(parts, "notes")
+          : parts.slice(4).join(",").trim();
+        const totp = normalizeTotpSecret(cell(parts, "totp"));
 
         if (!service || !password) {
           skipped.push(i + 1);
@@ -432,6 +505,7 @@ export function VaultView() {
           username,
           password,
           notes,
+          totp_secret: totp || undefined,
           color: BRAND_COLORS[0],
           is_pinned: false,
           created_at: Math.floor(Date.now() / 1000),
@@ -440,7 +514,14 @@ export function VaultView() {
       }
 
       if (newEntries.length > 0) {
-        await importEntries(newEntries);
+        const saved = await importEntries(newEntries);
+        if (!saved) {
+          setCopyModalMsg({
+            message: "Import failed: the passwords could not be saved.",
+            type: "error",
+          });
+          return;
+        }
         const skippedMsg =
           skipped.length > 0 ? ` (${skipped.length} rows skipped)` : "";
         setCopyModalMsg({
@@ -672,6 +753,7 @@ export function VaultView() {
                 )}
                 <button
                   className="icon-btn-ghost danger"
+                  title="Delete"
                   onClick={() => setItemToDelete(entry)}
                 >
                   <Trash2 size={16} />
@@ -732,6 +814,7 @@ export function VaultView() {
                 </span>
                 <button
                   className="icon-btn-ghost"
+                  title={showPass === entry.id ? "Hide password" : "Show password"}
                   onClick={() =>
                     setShowPass(showPass === entry.id ? null : entry.id)
                   }
@@ -744,6 +827,7 @@ export function VaultView() {
                 </button>
                 <button
                   className="icon-btn-ghost"
+                  title="Copy Password"
                   onClick={() => handleCopy(entry.password)}
                 >
                   <Copy size={16} />
@@ -761,6 +845,7 @@ export function VaultView() {
               <div className="card-actions" style={{ marginTop: 10 }}>
                 <button
                   className="icon-btn-ghost"
+                  title={entry.is_pinned ? "Unpin" : "Pin"}
                   onClick={async (e) => {
                     e.stopPropagation();
                     try {
@@ -777,6 +862,7 @@ export function VaultView() {
                 </button>
                 <button
                   className="icon-btn-ghost danger"
+                  title="Delete"
                   onClick={(e) => {
                     e.stopPropagation();
                     setItemToDelete(entry);
@@ -809,7 +895,7 @@ export function VaultView() {
         <div
           className="modal-overlay"
           style={{ zIndex: 100010 }}
-          onClick={() => setEditing(null)}
+          onClick={closeEditor}
         >
           <div
             className="auth-card"
@@ -827,6 +913,7 @@ export function VaultView() {
               <h3>{editing.id ? "Edit Entry" : "New Entry"}</h3>
               <button
                 className="icon-btn-ghost"
+                title={editing.is_pinned ? "Unpin" : "Pin"}
                 onClick={() =>
                   setEditing({ ...editing, is_pinned: !editing.is_pinned })
                 }
@@ -1058,7 +1145,8 @@ export function VaultView() {
                   </p>
 
                   {/* LIVE FEEDBACK: Show the generated code instantly! */}
-                  {editing.totp_secret && editing.totp_secret.length >= 16 && (
+                  {editing.totp_secret &&
+                    normalizeTotpSecret(editing.totp_secret).length >= 16 && (
                     <div
                       style={{
                         background: "var(--bg-color)",
@@ -1096,7 +1184,9 @@ export function VaultView() {
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
+                  disabled={isSaving}
                   onClick={async () => {
+                    if (isSaving) return;
                     setSaveError(null);
                     const trimmedService = (editing.service || "").trim();
                     const trimmedPassword = (editing.password || "").trim();
@@ -1109,6 +1199,7 @@ export function VaultView() {
                       return;
                     }
 
+                    setIsSaving(true);
                     try {
                       const now = Math.floor(Date.now() / 1000);
 
@@ -1116,9 +1207,7 @@ export function VaultView() {
                       // If it's empty, we make it undefined so Rust parses it as None.
                       const cleanTotp =
                         editing.totp_secret && editing.totp_secret.trim() !== ""
-                          ? editing.totp_secret
-                              .replace(/\s+/g, "")
-                              .toUpperCase()
+                          ? normalizeTotpSecret(editing.totp_secret)
                           : undefined;
 
                       await saveEntry({
@@ -1137,6 +1226,8 @@ export function VaultView() {
                       setEditing(null);
                     } catch (e) {
                       setSaveError("Error saving: " + e);
+                    } finally {
+                      setIsSaving(false);
                     }
                   }}
                 >
@@ -1145,10 +1236,7 @@ export function VaultView() {
                 <button
                   className="secondary-btn"
                   style={{ flex: 1 }}
-                  onClick={() => {
-                    setSaveError(null);
-                    setEditing(null);
-                  }}
+                  onClick={closeEditor}
                 >
                   Cancel
                 </button>
@@ -1162,7 +1250,9 @@ export function VaultView() {
         <EntryDeleteModal
           title={itemToDelete.service}
           onConfirm={() => {
-            deleteEntry(itemToDelete.id);
+            deleteEntry(itemToDelete.id).catch((e) =>
+              setSaveError("Delete failed: " + e),
+            );
             setItemToDelete(null);
           }}
           onCancel={() => setItemToDelete(null)}

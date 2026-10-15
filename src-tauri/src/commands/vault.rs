@@ -32,6 +32,16 @@ fn lockout_duration_secs(fail_count: u32) -> u64 {
     30u64 * (1u64 << extra.min(4))
 }
 
+/// Seconds left on the lockout, or `None` if another attempt is allowed.
+fn lockout_remaining_secs(fail_count: u32, last_fail_secs: u64, now: u64) -> Option<u64> {
+    if fail_count < MAX_ATTEMPTS_BEFORE_LOCKOUT {
+        return None;
+    }
+    let wait = lockout_duration_secs(fail_count);
+    let elapsed = now.saturating_sub(last_fail_secs);
+    (elapsed < wait).then(|| wait - elapsed)
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -92,6 +102,92 @@ macro_rules! lock_session {
             }
         }
     };
+}
+
+// ==========================================
+// --- VAULT FILE HELPERS ---
+// ==========================================
+
+/// The unlocked key for `vault_id`, or an error if that vault is locked.
+fn session_key(state: &SessionState, vault_id: &str) -> CommandResult<keychain::MasterKey> {
+    let guard = lock_session!(state)?;
+    guard
+        .get(vault_id)
+        .cloned()
+        .ok_or_else(|| "Vault is locked".to_string())
+}
+
+/// Path of a data file (e.g. `notes.qre`) that sits next to the keychain.
+fn vault_file_path(app: &AppHandle, vault_id: &str, file_name: &str) -> CommandResult<PathBuf> {
+    let keychain_path = resolve_keychain_path(app, vault_id)?;
+    let dir = keychain_path
+        .parent()
+        .ok_or_else(|| "Keychain path has no parent directory".to_string())?;
+    Ok(dir.join(file_name))
+}
+
+/// Decrypts and parses a vault file. `Ok(None)` means the file doesn't exist yet.
+fn read_vault_file<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    key: &keychain::MasterKey,
+    parse_error: &str,
+) -> CommandResult<Option<T>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let container =
+        crypto::EncryptedFileContainer::load(path_to_str(path)?).map_err(|e| e.to_string())?;
+    let payload =
+        crypto::decrypt_file_with_master_key(key, None, &container).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&payload.content)
+        .map(Some)
+        .map_err(|_| parse_error.to_string())
+}
+
+/// Serializes, encrypts and writes a vault file. `inner_name` is the name stored inside it.
+fn write_vault_file<T: serde::Serialize>(
+    path: &Path,
+    key: &keychain::MasterKey,
+    inner_name: &str,
+    value: &T,
+) -> CommandResult<()> {
+    let json_data = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    let container =
+        crypto::encrypt_file_with_master_key(key, None, inner_name, &json_data, None, 3)
+            .map_err(|e| e.to_string())?;
+    container
+        .save(path_to_str(path)?)
+        .map_err(|e| e.to_string())
+}
+
+/// Drops clipboard entries older than the retention window. Returns true if any were removed.
+/// `created_at` may be in seconds or milliseconds; values above 9999999999 are treated as ms.
+fn drop_expired_clipboard_entries(
+    vault: &mut ClipboardVault,
+    now_ms: i64,
+    retention_hours: u64,
+) -> bool {
+    // Clamped so an absurd value can't wrap to a negative i64 and expire everything.
+    let ttl_seconds = retention_hours
+        .saturating_mul(60 * 60)
+        .min(i64::MAX as u64) as i64;
+    let initial_count = vault.entries.len();
+    let now_sec = now_ms / 1000;
+
+    vault.entries.retain(|e| {
+        // Pinned entries are exempt from auto-deletion (see ClipboardEntry::is_pinned).
+        if e.is_pinned {
+            return true;
+        }
+        let entry_time_sec = if e.created_at > 9999999999 {
+            e.created_at / 1000
+        } else {
+            e.created_at
+        };
+        (now_sec - entry_time_sec) < ttl_seconds
+    });
+
+    vault.entries.len() != initial_count
 }
 
 // ==========================================
@@ -200,26 +296,25 @@ fn clear_backup_done(app: &AppHandle) {
 
 #[tauri::command]
 pub fn check_auth_status(app: AppHandle, state: tauri::State<SessionState>) -> String {
-    let vault_id = "local"; // Boot auth check is always for the local vault
+    // Boot auth check is always for the local vault
+    let keychain_path = resolve_keychain_path(&app, "local").ok();
+    auth_status(&state, keychain_path.as_deref())
+}
 
+/// "unlocked", "locked" or "setup_needed". `keychain_path` is `None` if it couldn't be resolved.
+fn auth_status(state: &SessionState, keychain_path: Option<&Path>) -> String {
     let guard = match state.vaults.lock() {
         Ok(g) => g,
         Err(_) => return "locked".to_string(),
     };
 
-    if guard.contains_key(vault_id) {
+    if guard.contains_key("local") {
         return "unlocked".to_string();
     }
 
-    match resolve_keychain_path(&app, vault_id) {
-        Ok(path) => {
-            if keychain::keychain_exists(&path) {
-                "locked".to_string()
-            } else {
-                "setup_needed".to_string()
-            }
-        }
-        Err(_) => "setup_needed".to_string(),
+    match keychain_path {
+        Some(path) if keychain::keychain_exists(path) => "locked".to_string(),
+        _ => "setup_needed".to_string(),
     }
 }
 
@@ -247,18 +342,15 @@ pub fn login(
     vault_id: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let fail_count = LOGIN_FAIL_COUNT.load(Ordering::SeqCst);
-    if fail_count >= MAX_ATTEMPTS_BEFORE_LOCKOUT {
-        let last_fail = LOGIN_LAST_FAIL_SECS.load(Ordering::SeqCst);
-        let wait = lockout_duration_secs(fail_count);
-        let elapsed = now_secs().saturating_sub(last_fail);
-
-        if elapsed < wait {
-            return Err(format!(
-                "Too many failed attempts. Please wait {} more second(s).",
-                wait - elapsed
-            ));
-        }
+    if let Some(wait) = lockout_remaining_secs(
+        LOGIN_FAIL_COUNT.load(Ordering::SeqCst),
+        LOGIN_LAST_FAIL_SECS.load(Ordering::SeqCst),
+        now_secs(),
+    ) {
+        return Err(format!(
+            "Too many failed attempts. Please wait {} more second(s).",
+            wait
+        ));
     }
 
     let path = resolve_keychain_path(&app, &vault_id)?;
@@ -279,14 +371,14 @@ pub fn login(
 
 #[tauri::command]
 pub fn logout(state: tauri::State<SessionState>) {
+    clear_all_sessions(&state);
+}
+
+/// Locks ALL vaults, even if the mutex was poisoned.
+fn clear_all_sessions(state: &SessionState) {
     match state.vaults.lock() {
-        Ok(mut guard) => {
-            guard.clear(); // Lock ALL vaults
-        }
-        Err(poisoned) => {
-            let mut guard = poisoned.into_inner();
-            guard.clear();
-        }
+        Ok(mut guard) => guard.clear(),
+        Err(poisoned) => poisoned.into_inner().clear(),
     }
 }
 
@@ -321,18 +413,15 @@ pub fn recover_vault(
     vault_id: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<String> {
-    let fail_count = RECOVERY_FAIL_COUNT.load(Ordering::SeqCst);
-    if fail_count >= MAX_ATTEMPTS_BEFORE_LOCKOUT {
-        let last_fail = RECOVERY_LAST_FAIL_SECS.load(Ordering::SeqCst);
-        let wait = lockout_duration_secs(fail_count);
-        let elapsed = now_secs().saturating_sub(last_fail);
-
-        if elapsed < wait {
-            return Err(format!(
-                "Too many failed recovery attempts. Please wait {} more second(s).",
-                wait - elapsed
-            ));
-        }
+    if let Some(wait) = lockout_remaining_secs(
+        RECOVERY_FAIL_COUNT.load(Ordering::SeqCst),
+        RECOVERY_LAST_FAIL_SECS.load(Ordering::SeqCst),
+        now_secs(),
+    ) {
+        return Err(format!(
+            "Too many failed recovery attempts. Please wait {} more second(s).",
+            wait
+        ));
     }
 
     let path = resolve_keychain_path(&app, &vault_id)?;
@@ -381,28 +470,10 @@ pub fn load_password_vault(
     vault_id: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<PasswordVault> {
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("passwords.qre");
-
-    if !path.exists() {
-        return Ok(PasswordVault::new());
-    }
-
-    let container =
-        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
-    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
-        .map_err(|e| e.to_string())?;
-
-    let vault: PasswordVault = serde_json::from_slice(&payload.content)
-        .map_err(|_| "Failed to parse vault".to_string())?;
-    Ok(vault)
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "passwords.qre")?;
+    Ok(read_vault_file(&path, &master_key, "Failed to parse vault")?
+        .unwrap_or_else(PasswordVault::new))
 }
 
 #[tauri::command]
@@ -414,30 +485,9 @@ pub fn save_password_vault(
 ) -> CommandResult<()> {
     vault.validate().map_err(|e| e.to_string())?;
 
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("passwords.qre");
-    let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-
-    let container = crypto::encrypt_file_with_master_key(
-        &master_key,
-        None,
-        "passwords.json",
-        &json_data,
-        None,
-        3,
-    )
-    .map_err(|e| e.to_string())?;
-    container
-        .save(path_to_str(&path)?)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "passwords.qre")?;
+    write_vault_file(&path, &master_key, "passwords.json", &vault)
 }
 
 // ==========================================
@@ -450,26 +500,10 @@ pub fn load_notes_vault(
     vault_id: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<NotesVault> {
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("notes.qre");
-
-    if !path.exists() {
-        return Ok(NotesVault::new());
-    }
-
-    let container =
-        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
-    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
-        .map_err(|e| e.to_string())?;
-    let vault: NotesVault = serde_json::from_slice(&payload.content)
-        .map_err(|_| "Failed to parse notes".to_string())?;
-    Ok(vault)
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "notes.qre")?;
+    Ok(read_vault_file(&path, &master_key, "Failed to parse notes")?
+        .unwrap_or_else(NotesVault::new))
 }
 
 #[tauri::command]
@@ -481,24 +515,9 @@ pub fn save_notes_vault(
 ) -> CommandResult<()> {
     vault.validate().map_err(|e| e.to_string())?;
 
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("notes.qre");
-    let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-
-    let container =
-        crypto::encrypt_file_with_master_key(&master_key, None, "notes.json", &json_data, None, 3)
-            .map_err(|e| e.to_string())?;
-    container
-        .save(path_to_str(&path)?)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "notes.qre")?;
+    write_vault_file(&path, &master_key, "notes.json", &vault)
 }
 
 // ==========================================
@@ -511,26 +530,12 @@ pub fn load_bookmarks_vault(
     vault_id: String,
     state: tauri::State<SessionState>,
 ) -> CommandResult<BookmarksVault> {
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("bookmarks.qre");
-    if !path.exists() {
-        return Ok(BookmarksVault::new());
-    }
-
-    let container =
-        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
-    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
-        .map_err(|e| e.to_string())?;
-    let vault: BookmarksVault = serde_json::from_slice(&payload.content)
-        .map_err(|_| "Failed to parse bookmarks data".to_string())?;
-    Ok(vault)
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "bookmarks.qre")?;
+    Ok(
+        read_vault_file(&path, &master_key, "Failed to parse bookmarks data")?
+            .unwrap_or_else(BookmarksVault::new),
+    )
 }
 
 #[tauri::command]
@@ -542,30 +547,9 @@ pub fn save_bookmarks_vault(
 ) -> CommandResult<()> {
     vault.validate().map_err(|e| e.to_string())?;
 
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("bookmarks.qre");
-    let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-
-    let container = crypto::encrypt_file_with_master_key(
-        &master_key,
-        None,
-        "bookmarks.json",
-        &json_data,
-        None,
-        3,
-    )
-    .map_err(|e| e.to_string())?;
-    container
-        .save(path_to_str(&path)?)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "bookmarks.qre")?;
+    write_vault_file(&path, &master_key, "bookmarks.json", &vault)
 }
 
 #[tauri::command]
@@ -598,57 +582,21 @@ pub fn load_clipboard_vault(
     state: tauri::State<SessionState>,
     retention_hours: u64,
 ) -> CommandResult<ClipboardVault> {
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "clipboard.qre")?;
+    let Some(mut vault) =
+        read_vault_file::<ClipboardVault>(&path, &master_key, "Failed to parse clipboard data")?
+    else {
+        return Ok(ClipboardVault::new());
     };
 
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("clipboard.qre");
-    if !path.exists() {
-        return Ok(ClipboardVault::new());
-    }
-
-    let container =
-        crypto::EncryptedFileContainer::load(path_to_str(&path)?).map_err(|e| e.to_string())?;
-    let payload = crypto::decrypt_file_with_master_key(&master_key, None, &container)
-        .map_err(|e| e.to_string())?;
-    let mut vault: ClipboardVault = serde_json::from_slice(&payload.content)
-        .map_err(|_| "Failed to parse clipboard data".to_string())?;
-
-    let now = std::time::SystemTime::now()
+    let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    let ttl_seconds = retention_hours * 60 * 60;
-    let initial_count = vault.entries.len();
 
-    vault.entries.retain(|e| {
-        let entry_time_sec = if e.created_at > 9999999999 {
-            e.created_at / 1000
-        } else {
-            e.created_at
-        };
-        let now_sec = now / 1000;
-        (now_sec - entry_time_sec) < (ttl_seconds as i64)
-    });
-
-    if vault.entries.len() != initial_count {
-        let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-        let container = crypto::encrypt_file_with_master_key(
-            &master_key,
-            None,
-            "clipboard.json",
-            &json_data,
-            None,
-            3,
-        )
-        .map_err(|e| e.to_string())?;
-        container
-            .save(path_to_str(&path)?)
-            .map_err(|e| e.to_string())?;
+    if drop_expired_clipboard_entries(&mut vault, now_ms, retention_hours) {
+        write_vault_file(&path, &master_key, "clipboard.json", &vault)?;
     }
 
     Ok(vault)
@@ -663,30 +611,9 @@ pub fn save_clipboard_vault(
 ) -> CommandResult<()> {
     vault.validate().map_err(|e| e.to_string())?;
 
-    let master_key = {
-        let guard = lock_session!(state)?;
-        guard.get(&vault_id).ok_or("Vault is locked")?.clone()
-    };
-
-    let path = resolve_keychain_path(&app, &vault_id)?
-        .parent()
-        .unwrap()
-        .join("clipboard.qre");
-    let json_data = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-
-    let container = crypto::encrypt_file_with_master_key(
-        &master_key,
-        None,
-        "clipboard.json",
-        &json_data,
-        None,
-        3,
-    )
-    .map_err(|e| e.to_string())?;
-    container
-        .save(path_to_str(&path)?)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    let master_key = session_key(&state, &vault_id)?;
+    let path = vault_file_path(&app, &vault_id, "clipboard.qre")?;
+    write_vault_file(&path, &master_key, "clipboard.json", &vault)
 }
 
 #[tauri::command]
@@ -713,6 +640,11 @@ pub fn add_clipboard_entry(
 /// Returns the 6-digit code and the number of seconds remaining until it expires.
 #[tauri::command]
 pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
+    totp_code_at(&secret, now_secs())
+}
+
+/// Same as `generate_totp_code`, but for an explicit Unix time so it can be tested.
+fn totp_code_at(secret: &str, now: u64) -> CommandResult<(String, u64)> {
     // 1. Clean up the secret: Remove spaces, dashes, make uppercase
     let clean_secret = secret
         .split_whitespace()
@@ -726,11 +658,8 @@ pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
     // 2. Parse the Base32 secret robustly into raw bytes
     let secret_bytes = match BASE32_NOPAD.decode(stripped_secret.as_bytes()) {
         Ok(b) => b,
-        Err(e) => {
-            println!(
-                "Base32 Decode Error: {} for string '{}'",
-                e, stripped_secret
-            );
+        Err(_) => {
+            // Never log the secret itself.
             return Err("Invalid 2FA Secret Key (Must be valid Base32)".to_string());
         }
     };
@@ -745,18 +674,14 @@ pub fn generate_totp_code(secret: String) -> CommandResult<(String, u64)> {
         .build()
         .map_err(|e| format!("Invalid TOTP configuration: {}", e))?;
 
-    // 4. Generate the code based on the current Unix timestamp
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // generate_current() is infallible as of totp-rs 6.0 (panics only on a
-    // pre-Unix-Epoch system clock), so there's no Result to map_err here anymore.
-    let code = totp.generate_current().to_string();
+    // 4. Generate the code for the given Unix timestamp
+    let code = totp.generate(now).to_string();
 
     // Calculate remaining seconds in the current 30-second window
     let remaining_seconds = 30 - (now % 30);
 
     Ok((code, remaining_seconds))
 }
+
+#[cfg(test)]
+mod tests;

@@ -87,10 +87,10 @@ export function useBookmarks() {
   }
 
   function saveBookmark(bookmark: BookmarkEntry): Promise<void> {
+    // `error` is only for failing to load the vault, because the view replaces the
+    // whole screen with it. Save and delete failures are thrown for the caller to show.
     return queue.run(async (current) => {
       try {
-        setError(null);
-
         if (!bookmark.title.trim()) throw new Error("Title cannot be empty.");
         if (!bookmark.url.trim()) throw new Error("URL cannot be empty.");
 
@@ -125,9 +125,7 @@ export function useBookmarks() {
         });
         commit(sortedEntries);
       } catch (e) {
-        const msg = "Failed to save: " + String(e);
-        setError(msg);
-        throw new Error(msg);
+        throw new Error("Failed to save: " + String(e));
       }
     });
   }
@@ -135,7 +133,6 @@ export function useBookmarks() {
   function deleteBookmark(id: string): Promise<void> {
     return queue.run(async (current) => {
       try {
-        setError(null);
         const newEntries = current.filter((e) => e.id !== id);
         await invoke("save_bookmarks_vault", {
           vault: { entries: newEntries },
@@ -143,7 +140,7 @@ export function useBookmarks() {
         });
         commit(newEntries);
       } catch (e) {
-        setError("Failed to delete: " + String(e));
+        throw new Error("Failed to delete: " + String(e));
       }
     });
   }

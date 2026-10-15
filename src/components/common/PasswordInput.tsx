@@ -77,6 +77,7 @@ export function PasswordInput({
             className="password-toggle"
             style={{ position: "static", width: "30px" }}
             onClick={() => setShowPass(!showPass)}
+            aria-label={showPass ? "Hide password" : "Show password"}
             tabIndex={-1}
           >
             {showPass ? <EyeOff size={18} /> : <Eye size={18} />}

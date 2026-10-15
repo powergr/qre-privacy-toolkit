@@ -1,17 +1,31 @@
 name: CI
 
+# Runs on every push to main and on every pull request, so it has to stay quick.
+# Both jobs run side by side and should finish in a few minutes once the Rust
+# build cache is warm (the very first run, or one after a dependency change,
+# compiles every crate and takes much longer).
+#
+# The complete test suites (including the slow, machine-dependent tests) run in
+# full-tests.yml instead: weekly, and on demand from the Actions tab.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an older, still running check pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # --- Frontend: type-check + Jest ---
-  # Rust tests aren't run here - cargo test is slow on GitHub-hosted runners
-  # and is expected to be run locally before each release instead.
+  # The whole Jest suite takes about ten seconds, so all of it runs here.
   frontend:
     name: Frontend (typecheck + tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -28,4 +42,36 @@ jobs:
         run: npx tsc --noEmit
 
       - name: run frontend tests
-        run: npm test
+        run: npm test -- --ci
+
+  # --- Rust: fast tests ---
+  # Nearly all of the 459 Rust tests finish in well under a second each. The cost
+  # on a CI machine is compiling the dependency tree, which the cache removes.
+  # Two tests are left for full-tests.yml: they scan the real file system of the
+  # machine they run on, which makes them slow (tens of seconds) and dependent on
+  # whatever happens to be on that machine.
+  #
+  # Runs on Windows because that is where these tests are developed and known to
+  # pass; a Linux job can be added once they have been checked there.
+  rust:
+    name: Rust (fast tests)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: run Rust tests
+        working-directory: src-tauri
+        shell: bash
+        run: >
+          cargo test --lib --locked --
+          --skip test_scan_targets_virtual_commands_have_zero_size
+          --skip test_scan_targets_filters_empty_filesystem_items

@@ -147,19 +147,25 @@ export function FilesView(props: FilesViewProps) {
 
   // ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────
 
+  // Any dialog or menu on top of the list. Shortcuts such as Backspace (go up) and Delete must
+  // not act on the list behind it.
+  const overlayOpen = Boolean(
+    inputModal ||
+      itemsToDelete ||
+      showEntropyModal ||
+      showCompression ||
+      showGhostWarning ||
+      showExtractModal ||
+      timeLockTarget ||
+      menuData ||
+      crypto.errorMsg ||
+      fs.accessDenied ||
+      (scopeCorrupted && !scopeCorruptionDismissed),
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        inputModal ||
-        itemsToDelete ||
-        showEntropyModal ||
-        showCompression ||
-        showGhostWarning ||
-        showExtractModal ||
-        timeLockTarget ||
-        menuData
-      )
-        return;
+      if (overlayOpen) return;
       if ((e.target as HTMLElement).tagName === "INPUT") return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === "a") {
@@ -183,18 +189,7 @@ export function FilesView(props: FilesViewProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    fs.selectedPaths,
-    fs.entries,
-    inputModal,
-    itemsToDelete,
-    showEntropyModal,
-    showCompression,
-    showGhostWarning,
-    showExtractModal,
-    timeLockTarget,
-    menuData,
-  ]);
+  }, [fs.selectedPaths, fs.entries, overlayOpen]);
 
   // ─── TIME-LOCK STATUS LOADING ─────────────────────────────────────────────
   //
@@ -203,10 +198,19 @@ export function FilesView(props: FilesViewProps) {
   // StreamHeader and requires no master key, so this is fast.
 
   useEffect(() => {
-    loadTimeLockStatuses(fs.entries);
+    // The answers can arrive after the user has already moved on. Only the latest listing
+    // may update the badges, or a slow answer for the old folder would replace the new one's.
+    let stale = false;
+    loadTimeLockStatuses(fs.entries, () => stale);
+    return () => {
+      stale = true;
+    };
   }, [fs.entries]);
 
-  async function loadTimeLockStatuses(entries: FileEntry[]) {
+  async function loadTimeLockStatuses(
+    entries: FileEntry[],
+    isStale: () => boolean,
+  ) {
     const qreFiles = entries.filter(
       (e) => !e.isDirectory && e.name.endsWith(".qre"),
     );
@@ -223,6 +227,7 @@ export function FilesView(props: FilesViewProps) {
         ),
       ),
     );
+    if (isStale()) return;
 
     const info = new Map<string, number>();
     results.forEach((r, i) => {
@@ -264,6 +269,11 @@ export function FilesView(props: FilesViewProps) {
   );
 
   const executeLock = async (targets: string[], explicitEntropy?: number[]) => {
+    // Say so before Paranoid Mode makes the user wave the mouse around for nothing.
+    if (targets.length === 0) {
+      crypto.setErrorMsg("No files selected.");
+      return;
+    }
     if (crypto.isParanoid && !explicitEntropy) {
       setPendingLockTargets(targets);
       setShowEntropyModal(true);
@@ -316,21 +326,23 @@ export function FilesView(props: FilesViewProps) {
           (r) => !r.success && !r.message.startsWith("TIME_LOCKED:"),
         );
 
+        // Show both kinds in one message; a second setErrorMsg would replace the first.
+        const sections: string[] = [];
         if (timeLocked.length > 0) {
           // Parse "TIME_LOCKED:<unix_ts>:<human message>" from Rust
           const msgs = timeLocked.map((r) => {
             const parts = r.message.split(":");
             return `🔒 ${parts.slice(2).join(":")}`;
           });
-          crypto.setErrorMsg(msgs.join("\n\n"));
+          sections.push(msgs.join("\n\n"));
         }
-
         if (realFailures.length > 0) {
-          crypto.setErrorMsg(
+          sections.push(
             "Unlock failed:\n" +
               realFailures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
           );
         }
+        if (sections.length > 0) crypto.setErrorMsg(sections.join("\n\n"));
       }
 
       // Refresh so badges update if a lock just expired
@@ -463,8 +475,10 @@ export function FilesView(props: FilesViewProps) {
 
   // ─── OTHER HANDLERS ───────────────────────────────────────────────────────
 
-  async function handleInputConfirm(val: string) {
-    if (!inputModal || !val.trim()) return;
+  async function handleInputConfirm(rawName: string) {
+    // Leading and trailing spaces are never wanted in a name (Windows drops or rejects them).
+    const val = rawName.trim();
+    if (!inputModal || !val) return;
     const { mode, path } = inputModal;
     setInputModal(null);
     try {

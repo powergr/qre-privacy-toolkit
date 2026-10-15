@@ -35,16 +35,20 @@ const PRESETS: { label: string; secs: number }[] = [
 // --- HELPERS ---
 // ==========================================
 
+// A datetime-local input reads and writes LOCAL time ("2030-06-15T08:01"), so its min and
+// max must be built from local date parts. toISOString() is UTC and would shift them by
+// the user's time zone offset.
+function toDatetimeLocalValue(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function getMinDatetimeLocal(): string {
-  return new Date(Date.now() + MIN_DURATION_SECS * 1000)
-    .toISOString()
-    .slice(0, 16);
+  return toDatetimeLocalValue(new Date(Date.now() + MIN_DURATION_SECS * 1000));
 }
 
 function getMaxDatetimeLocal(): string {
-  return new Date(Date.now() + MAX_DURATION_SECS * 1000)
-    .toISOString()
-    .slice(0, 16);
+  return toDatetimeLocalValue(new Date(Date.now() + MAX_DURATION_SECS * 1000));
 }
 
 function formatUnlockDate(unixSecs: number): string {
@@ -67,14 +71,12 @@ function datetimeLocalToUnix(value: string): number | null {
 function formatRemainingFromNow(unixSecs: number): string {
   const secs = unixSecs - Math.floor(Date.now() / 1000);
   if (secs <= 0) return "immediately";
-  if (secs < 3600) {
-    const m = Math.round(secs / 60);
-    return `${m} minute${m !== 1 ? "s" : ""}`;
-  }
-  if (secs < 86400) {
-    const h = Math.round(secs / 3600);
-    return `${h} hour${h !== 1 ? "s" : ""}`;
-  }
+  // Round first, then pick the unit. Choosing the unit from the raw seconds would make a
+  // one hour preset read "60 minutes" once a second has ticked by.
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${m} minute${m !== 1 ? "s" : ""}`;
+  const h = Math.round(secs / 3600);
+  if (h < 24) return `${h} hour${h !== 1 ? "s" : ""}`;
   const d = Math.round(secs / 86400);
   return `${d} day${d !== 1 ? "s" : ""}`;
 }

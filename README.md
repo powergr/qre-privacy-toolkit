@@ -27,7 +27,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.8.3)
+## 🛠️ The 12-Tool Suite (v2.8.4)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -134,24 +134,6 @@ Also see: Time-Lock Encryption, added in v2.7.6. Read more in the [Time-lock blo
 
 ---
 
-## 🔮 What's Next
-
-A larger Rust dependency upgrade is intentionally being held back. It needs a dedicated, careful pass, since it touches the `.qre` file format directly:
-
-- **`bincode`** (1.x → 3.x): serializes the `.qre` container format itself. It needs verified round-trip compatibility with files already encrypted by earlier versions before upgrading.
-
-### Dependency audit notes (2026-09-12)
-
-`Cargo.lock` now resolves 702 packages, 619 of them distinct crate names. 53 crate names still appear more than once in the tree. Most of those are the same version built twice under different feature sets. That's a normal effect of Cargo's per-target feature resolver, not a real version conflict.
-
-- **Completed this pass: 3 of 5 targeted duplicates removed.** `qre-gui`'s own `rand`/`rand_chacha`, `md-5`, and `zip` pins were bumped. They now match what `lopdf` and `tauri-plugin-updater` already pulled in. That removed 5 duplicate packages from the tree, 707 down to 702. All tests still pass. No code changes were needed for `zip`'s 2.x-to-4.x jump. Only a few digest hex-formatting call sites needed fixing for `sha2`/`sha1`/`md-5` 0.11's new output type.
-- **`sha1` and `sha2` stay duplicated, but not for a reason we control.** The original audit missed something. Bumping our own pin to 0.11 just moved us into a different camp. It didn't shrink the camp count. `zip` 4.6.1 itself still depends on `sha1` 0.10 internally. Tauri's own build-time `tauri-codegen` crate still depends on `sha2` 0.10. Neither depends on what `qre-gui` pins. Fixing these two would need zip's or Tauri's own maintainers to upgrade. It's not something we can change from our side.
-- **Not prunable, unavoidable ecosystem skew.** Most remaining duplicates (`windows`/`windows-core`, `reqwest`, `toml`, `indexmap`, `hashbrown`, `syn`, `thiserror`, `getrandom`, `winnow`, etc.) come from transitive major-version conflicts between Tauri's own plugins and their sub-dependencies (e.g. `winreg` wanting an older `windows` than `tao`/`muda`/`arboard`). Cargo already collapses everything semver allows here; what's left can't be removed without upstream crates converging.
-- **Checked for redundant direct dependencies, none found.** `id3` + `lofty` + `ape` look like three overlapping audio-tag libraries. Each actually covers a gap the others don't handle correctly (see the APEv2 header/footer and ID3v1/APEv2 ordering fixes in past release notes). Removing any one breaks real, tested behavior in `cleaner/media/mp3.rs`. Likewise, `reqwest` and `tauri-plugin-http` look redundant by name. They actually serve different halves of the app. `reqwest` is the direct backend HTTP client in `breach.rs`, for HIBP and IP checks. `tauri-plugin-http` is the frontend CORS-bypass fetch, used by the Android update checker. Every one of the 702 resolved packages traces back to a real cause. It's either a direct dependency the codebase actually uses, or a transitive requirement of Tauri and its official plugins. None are dead weight pulled in by mistake.
-- Android build warnings about unused functions (`wipe_free_space`, `trim_drive`, etc.) are false alarms. Those are `#[cfg(not(target_os = "android"))]`-gated desktop-only code, correctly unreachable when cross-compiling for Android.
-
----
-
 ## 🚀 Getting Started & Building
 
 ```bash
@@ -177,11 +159,13 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 378 tests passed from 378 total. Covers memory wiping, file routing, steganography detection, and Zip-Bomb prevention. Also covers AES-GCM streaming integrity and metadata-cleaner round-trips across every supported file format. Includes concurrency and injection regression tests for the Shredder and keychain.
+- 459 tests passed from 459 total. Covers memory wiping, file routing, steganography detection, and Zip-Bomb prevention. Also covers AES-GCM streaming integrity and metadata-cleaner round-trips across every supported file format. Includes concurrency and injection regression tests for the Shredder and keychain. The command layer now has tests for login lockout, session wiping, vault file encryption, clipboard expiry, TOTP codes, paste, and time-lock checks. Cancelling a scan, hash, or clean is tested too, including starting a new run right after a cancel.
+
+**Automated checks (GitHub Actions):** every push and pull request runs the type-check, the whole frontend suite (about ten seconds) and the Rust tests except two slow file-system scans. A full run of everything happens weekly and can be started by hand from the Actions tab.
 
 **Frontend (`npm test`):**
 
-- 216 tests passed from 216 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries).
+- 1546 tests passed from 1546 total (Jest suite covering UI state, ReDoS-safe regex heuristic parsing, and password strength algorithm boundaries). Tests run in a fixed US Eastern time zone, so date handling is checked the same way on every machine. Also covers the login, setup, and recovery flows, file browsing, key file handling, and portable USB vaults. Nearly every screen is tested end to end, including the Vault, Notes, Bookmarks, Clipboard, Integrity Checker, QR, Privacy Check, and File Analyzer, with their failed-save and cancelled-scan cases. The dialogs are tested too, including the password health check, time-lock picker, update flows, and the entropy collector. The Files screen is covered as well, including locking and unlocking, USB drive warnings, drag and drop, cut, copy and paste, deleting, keyboard shortcuts, time-lock badges, and the right-click menu. The main app shell is tested too: sign-in screens, tab switching, keychain backup, password changes, USB vault dialogs, and what happens to open dialogs when a session ends. The sign-in screen and the password field (show or hide, passphrase generator, strength meter) are tested as well. The Notes editor is covered in depth: sorting, the markdown preview, the formatting buttons, find and replace, tags, auto-save, and import and export. The password vault is covered the same way, including live 2FA codes, the editor, and CSV import and export. The shredder is tested too, including cancelling, progress, the free-space wipe and TRIM cards, and their safeguards. The metadata cleaner and steganography scanner are covered as well, including cancelling, comparisons and scan results. The system and registry cleaner is tested as well, including its size limits, backup requirement, cancelling and administrator relaunch.
 
 ---
 

@@ -56,6 +56,7 @@ export function useFileSystem(view: string) {
   // NEW: Access Denied State for Modal
   const [accessDenied, setAccessDenied] = useState<string | null>(null);
 
+  const loadSeqRef = useRef(0);
   const currentPathRef = useRef(currentPath);
   useEffect(() => {
     currentPathRef.current = currentPath;
@@ -148,10 +149,16 @@ export function useFileSystem(view: string) {
         return;
       }
 
+      // Only the most recently started load may update the screen. Without this, a
+      // slow listing for a folder the user already left can land last and overwrite
+      // the folder they are actually in.
+      const requestId = ++loadSeqRef.current;
+
       try {
         // Handle Root/Drives
         if (path === "") {
           const drives = await invoke<string[]>("get_drives");
+          if (requestId !== loadSeqRef.current) return;
           setRawEntries(
             drives.map((d) => ({
               name: d,
@@ -179,6 +186,7 @@ export function useFileSystem(view: string) {
         // compiled from a real path), and gets everything in one IPC round trip instead of
         // one readDir() plus one stat() per file.
         const contents = await invoke<DirListEntry[]>("list_directory", { path });
+        if (requestId !== loadSeqRef.current) return;
 
         const mapped: FileEntry[] = contents.map((entry) => ({
           name: entry.name,
@@ -200,6 +208,7 @@ export function useFileSystem(view: string) {
           setSelectedPaths((prev) => prev.filter((p) => newPathSet.has(p)));
         }
       } catch (e) {
+        if (requestId !== loadSeqRef.current) return;
         if (!preserveSelection) setStatusMsg(`Error: ${e}`);
       }
     },

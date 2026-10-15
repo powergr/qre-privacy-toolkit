@@ -5,10 +5,51 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
+
+// ==========================================
+// --- CANCELLATION ---
+// ==========================================
+
+/// Tracks the cancel flag of the operation that started most recently.
+///
+/// Each operation gets its own flag from `begin()`. A single shared flag that every
+/// new run resets is not safe: cancel a long scan, start another one straight away,
+/// and the reset un-cancels the first scan, which is still running on its thread.
+/// With one flag per operation, the first scan keeps its own "cancelled" flag.
+pub struct CancelSlot {
+    current: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+impl CancelSlot {
+    pub const fn new() -> Self {
+        Self {
+            current: Mutex::new(None),
+        }
+    }
+
+    /// Starts a new operation and returns the flag it must check while it runs.
+    pub fn begin(&self) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        // A cancel flag holds no secrets, so on poison we just keep going.
+        let mut slot = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = Some(Arc::clone(&flag));
+        flag
+    }
+
+    /// Cancels the operation that started most recently. Does nothing if none has.
+    pub fn cancel(&self) {
+        let slot = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(flag) = &*slot {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+}
 
 // ==========================================
 // --- CRYPTO HELPERS ---
@@ -405,6 +446,94 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
+
+    // --- CancelSlot Tests ---
+
+    fn is_set(flag: &Arc<AtomicBool>) -> bool {
+        flag.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn test_cancel_slot_new_operation_starts_uncancelled() {
+        let slot = CancelSlot::new();
+        assert!(!is_set(&slot.begin()));
+    }
+
+    #[test]
+    fn test_cancel_slot_cancel_sets_the_running_operations_flag() {
+        let slot = CancelSlot::new();
+        let flag = slot.begin();
+        slot.cancel();
+        assert!(is_set(&flag));
+    }
+
+    #[test]
+    fn test_cancel_slot_cancel_with_nothing_running_is_harmless() {
+        let slot = CancelSlot::new();
+        slot.cancel(); // must not panic
+        assert!(!is_set(&slot.begin()), "an early cancel must not leak into the next run");
+    }
+
+    #[test]
+    fn test_cancel_slot_starting_a_new_operation_does_not_uncancel_the_old_one() {
+        let slot = CancelSlot::new();
+        let a = slot.begin();
+        slot.cancel();
+        let b = slot.begin();
+
+        assert!(is_set(&a), "operation A was cancelled and must stay cancelled");
+        assert!(!is_set(&b), "operation B was never cancelled");
+    }
+
+    #[test]
+    fn test_cancel_slot_cancel_reaches_only_the_newest_operation() {
+        let slot = CancelSlot::new();
+        let a = slot.begin();
+        let b = slot.begin();
+        slot.cancel();
+
+        assert!(is_set(&b));
+        assert!(!is_set(&a));
+    }
+
+    #[test]
+    fn test_cancel_slot_a_second_cancel_does_not_touch_a_later_operation() {
+        let slot = CancelSlot::new();
+        let a = slot.begin();
+        slot.cancel();
+        slot.cancel();
+        let b = slot.begin();
+
+        assert!(is_set(&a));
+        assert!(!is_set(&b));
+    }
+
+    #[test]
+    fn test_cancel_slot_works_across_threads() {
+        let slot = Arc::new(CancelSlot::new());
+        let flag = slot.begin();
+        let worker_slot = Arc::clone(&slot);
+
+        std::thread::spawn(move || worker_slot.cancel()).join().unwrap();
+
+        assert!(is_set(&flag));
+    }
+
+    #[test]
+    fn test_cancel_slot_survives_a_poisoned_lock() {
+        let slot = Arc::new(CancelSlot::new());
+        let poisoner = Arc::clone(&slot);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.current.lock().unwrap();
+            panic!("deliberate panic to poison the lock");
+        })
+        .join();
+        assert!(slot.current.is_poisoned());
+
+        let flag = slot.begin();
+        slot.cancel();
+        assert!(is_set(&flag));
+    }
 
     // Helper to create a temporary environment
     fn setup_test_dir(name: &str) -> PathBuf {

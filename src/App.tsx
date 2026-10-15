@@ -106,6 +106,29 @@ function App() {
   const [changePassError, setChangePassError] = useState<string | null>(null);
   const [backupDone, setBackupDone] = useState(false);
 
+  // When the session ends (logout, inactivity timeout, recovery-code reset) every dialog
+  // and everything typed into one must go with it. Otherwise the next sign-in would open on
+  // a stale dialog, with an old USB vault password or a freshly shown recovery code still
+  // held in memory.
+  useEffect(() => {
+    if (auth.view === "dashboard") return;
+    setShowAbout(false);
+    setShowChangePass(false);
+    setShowResetConfirm(false);
+    setShowThemeModal(false);
+    setShowHelpModal(false);
+    setShowBackupModal(false);
+    setShowUpdateModal(false);
+    setShowBackupReminder(false);
+    setChangePassError(null);
+    setPortableModal(null);
+    setPortableTargetPath(null);
+    setPortablePassword("");
+    setPortableConfirm("");
+    setPortableError(null);
+    setPortableInitResult(null);
+  }, [auth.view]);
+
   useEffect(() => {
     if (auth.view !== "dashboard") return;
     invoke<boolean>("get_backup_done")

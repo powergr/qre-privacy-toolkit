@@ -104,6 +104,9 @@ export function AddressBar({
             <X
               size={16}
               style={{ cursor: "pointer", marginLeft: 8 }}
+              // Pressing the mouse here would blur the input first, and the input commits
+              // on blur, so "cancel" would navigate to the typed text. Keep the focus.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 setIsEditing(false);
                 setTempPath(currentPath);

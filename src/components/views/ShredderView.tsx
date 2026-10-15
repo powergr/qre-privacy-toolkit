@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   Trash2,
@@ -263,12 +263,21 @@ export function ShredderView() {
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
   const [showTrimConfirm, setShowTrimConfirm] = useState(false);
 
+  // A cancel request only asks the backend to stop. The operation keeps running until its
+  // command returns, so the screen must keep showing it as running until then.
+  const [shredCancelling, setShredCancelling] = useState(false);
+  const [wipeCancelling, setWipeCancelling] = useState(false);
+  const shredCancelRequested = useRef(false);
+  const wipeCancelRequested = useRef(false);
+
   // ── Platform ──────────────────────────────────────────────────────────
   const [isAndroid, setIsAndroid] = useState(false);
 
   // ── Drag & Drop ───────────────────────────────────────────────────────
   const { isDragging } = useDragDrop((newFiles) => {
-    if (isAndroid) return;
+    // Files dropped while something is running would be wiped from the list when it ends,
+    // and switching tabs would hide the running operation.
+    if (isAndroid || shredding || wipeRunning || trimRunning) return;
     setTopTab("shred");
     setDroppedFiles((prev) => [...new Set([...prev, ...newFiles])]);
   });
@@ -292,16 +301,23 @@ export function ShredderView() {
   useEffect(() => {
     let unlistenShred: UnlistenFn | null = null;
     let unlistenWipe: UnlistenFn | null = null;
+    let closed = false;
     async function setup() {
-      unlistenShred = await listen<ShredProgress>("shred-progress", (e) =>
+      const shred = await listen<ShredProgress>("shred-progress", (e) =>
         setShredProgress(e.payload),
       );
-      unlistenWipe = await listen<WipeProgress>("wipe-progress", (e) =>
+      // The screen may have been closed while the listener was being set up.
+      if (closed) shred();
+      else unlistenShred = shred;
+      const wipe = await listen<WipeProgress>("wipe-progress", (e) =>
         setWipeProgress(e.payload),
       );
+      if (closed) wipe();
+      else unlistenWipe = wipe;
     }
     setup();
     return () => {
+      closed = true;
       unlistenShred?.();
       unlistenWipe?.();
     };
@@ -329,6 +345,8 @@ export function ShredderView() {
     if (droppedFiles.length === 0) return;
     setShowPreview(true);
     setShredError(null);
+    // Never show the answer for an earlier list while the new one is being worked out.
+    setDryRunResult(null);
     try {
       const res = await invoke<DryRunResult>("dry_run_shred", {
         paths: droppedFiles,
@@ -359,6 +377,8 @@ export function ShredderView() {
     setResult(null);
     setShredProgress(null);
     setShowPreview(false);
+    shredCancelRequested.current = false;
+    setShredCancelling(false);
     try {
       const res = await invoke<ShredResult>("batch_shred_files", {
         paths: droppedFiles,
@@ -366,21 +386,32 @@ export function ShredderView() {
       });
       setResult(res);
       setDroppedFiles([]);
+      if (shredCancelRequested.current)
+        setShredError("Shredding cancelled by user");
     } catch (e) {
-      setShredError("Shredding failed: " + e);
+      setShredError(
+        shredCancelRequested.current
+          ? "Shredding cancelled by user"
+          : "Shredding failed: " + e,
+      );
     } finally {
       setShredding(false);
+      setShredCancelling(false);
       setShredProgress(null);
     }
   }
 
   async function cancelShred() {
+    if (shredCancelRequested.current) return;
+    shredCancelRequested.current = true;
+    setShredCancelling(true);
     try {
       await invoke("cancel_shred");
-      setShredError("Shredding cancelled by user");
-      setShredding(false);
+      // Nothing else changes here: the shredding stops when its own command returns.
     } catch (e) {
       console.error("Failed to cancel:", e);
+      shredCancelRequested.current = false;
+      setShredCancelling(false);
     }
   }
 
@@ -392,15 +423,25 @@ export function ShredderView() {
     setDriveError(null);
     setWipeResult(null);
     setWipeProgress(null);
+    wipeCancelRequested.current = false;
+    setWipeCancelling(false);
     try {
       const res = await invoke<WipeFreeSpaceResult>("wipe_free_space", {
         drivePath: wipePath.trim(),
       });
-      setWipeResult(res);
+      // A wipe that was cancelled did not finish, so it is not shown as complete.
+      if (wipeCancelRequested.current)
+        setDriveError("Wipe cancelled by user");
+      else setWipeResult(res);
     } catch (e) {
-      setDriveError("Free-space wipe failed: " + e);
+      setDriveError(
+        wipeCancelRequested.current
+          ? "Wipe cancelled by user"
+          : "Free-space wipe failed: " + e,
+      );
     } finally {
       setWipeRunning(false);
+      setWipeCancelling(false);
       setWipeProgress(null);
     }
   }
@@ -418,8 +459,10 @@ export function ShredderView() {
     } catch (e) {
       // Strip raw PowerShell / fstrim noise down to the first meaningful sentence
       const raw = String(e);
+      // A sentence ends at a full stop followed by a space, or at a line break; a dot inside
+      // a device name or version number (nvme0n1.1) must not cut the message short.
       const firstSentence = raw
-        .split(/[.\n]/)[0]
+        .split(/\.\s|\.$|\n/)[0]
         .replace(/^TRIM failed:\s*/i, "")
         .trim();
       setDriveError("TRIM failed: " + (firstSentence || raw));
@@ -429,12 +472,16 @@ export function ShredderView() {
   }
 
   async function cancelWipe() {
+    if (wipeCancelRequested.current) return;
+    wipeCancelRequested.current = true;
+    setWipeCancelling(true);
     try {
       await invoke("cancel_shred");
-      setDriveError("Wipe cancelled by user");
-      setWipeRunning(false);
+      // The wipe stops when its own command returns.
     } catch (e) {
       console.error("Failed to cancel:", e);
+      wipeCancelRequested.current = false;
+      setWipeCancelling(false);
     }
   }
 
@@ -540,7 +587,7 @@ export function ShredderView() {
         {topTab === "shred" && (
           <>
             {/* Active shred progress */}
-            {shredding && shredProgress && (
+            {shredding && (
               <div
                 data-testid="progress-card"
                 style={{
@@ -571,7 +618,7 @@ export function ShredderView() {
                   >
                     <div
                       style={{
-                        width: `${shredProgress.percentage}%`,
+                        width: `${shredProgress?.percentage ?? 0}%`,
                         height: "100%",
                         background: "var(--accent)",
                         transition: "width 0.3s ease",
@@ -579,41 +626,57 @@ export function ShredderView() {
                       }}
                     />
                   </div>
-                  <p
-                    style={{
-                      color: "var(--text-dim)",
-                      fontSize: "0.875rem",
-                      margin: "0 0 4px 0",
-                    }}
-                  >
-                    <span data-testid="progress-counter">{`File ${shredProgress.current_file} of ${shredProgress.total_files} · Pass ${shredProgress.current_pass} of ${shredProgress.total_passes}`}</span>
-                  </p>
-                  <p
-                    style={{
-                      color: "var(--text-dim)",
-                      fontSize: "0.82rem",
-                      marginTop: 6,
-                      marginBottom: 0,
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {shredProgress.current_file_name}
-                  </p>
-                  <p
-                    style={{
-                      color: "var(--text-dim)",
-                      fontSize: "0.78rem",
-                      marginTop: 4,
-                    }}
-                  >
-                    <span data-testid="progress-bytes">{`${formatSize(shredProgress.bytes_processed)} of ${formatSize(shredProgress.total_bytes)} processed`}</span>
-                  </p>
+                  {shredProgress ? (
+                    <>
+                      <p
+                        style={{
+                          color: "var(--text-dim)",
+                          fontSize: "0.875rem",
+                          margin: "0 0 4px 0",
+                        }}
+                      >
+                        <span data-testid="progress-counter">{`File ${shredProgress.current_file} of ${shredProgress.total_files} · Pass ${shredProgress.current_pass} of ${shredProgress.total_passes}`}</span>
+                      </p>
+                      <p
+                        style={{
+                          color: "var(--text-dim)",
+                          fontSize: "0.82rem",
+                          marginTop: 6,
+                          marginBottom: 0,
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        {shredProgress.current_file_name}
+                      </p>
+                      <p
+                        style={{
+                          color: "var(--text-dim)",
+                          fontSize: "0.78rem",
+                          marginTop: 4,
+                        }}
+                      >
+                        <span data-testid="progress-bytes">{`${formatSize(shredProgress.bytes_processed)} of ${formatSize(shredProgress.total_bytes)} processed`}</span>
+                      </p>
+                    </>
+                  ) : (
+                    <p
+                      data-testid="progress-starting"
+                      style={{
+                        color: "var(--text-dim)",
+                        fontSize: "0.875rem",
+                        margin: "0 0 4px 0",
+                      }}
+                    >
+                      Preparing…
+                    </p>
+                  )}
                   <button
                     className="secondary-btn"
                     onClick={cancelShred}
+                    disabled={shredCancelling}
                     style={{ marginTop: 18 }}
                   >
-                    Cancel
+                    {shredCancelling ? "Cancelling…" : "Cancel"}
                   </button>
                 </div>
               </div>
@@ -637,17 +700,24 @@ export function ShredderView() {
                       result.success.length === 0 && result.failed.length > 0;
                     const isPartial =
                       result.success.length > 0 && result.failed.length > 0;
+                    // Nothing shredded and nothing failed (for example a cancel before
+                    // the first file): not a success, so do not say "Complete".
+                    const isEmpty =
+                      result.success.length === 0 && result.failed.length === 0;
                     const color = isFail
                       ? "var(--btn-danger)"
-                      : isPartial
+                      : isPartial || isEmpty
                         ? "#f59e0b"
                         : "#4ade80";
-                    const Icon = isFail || isPartial ? AlertTriangle : FileX;
+                    const Icon =
+                      isFail || isPartial || isEmpty ? AlertTriangle : FileX;
                     const title = isFail
                       ? "Shredding Failed"
                       : isPartial
                         ? "Partial Success"
-                        : "Shredding Complete!";
+                        : isEmpty
+                          ? "Nothing Was Shredded"
+                          : "Shredding Complete!";
                     return (
                       <>
                         <Icon
@@ -1347,7 +1417,7 @@ export function ShredderView() {
                   SSDs, or better yet, full-disk encryption with key destruction
                   for guaranteed erasure.
                 </InfoBox>
-                {wipeRunning && wipeProgress ? (
+                {wipeRunning ? (
                   <div style={{ textAlign: "center", padding: "6px 0" }}>
                     <Loader2
                       size={38}
@@ -1357,16 +1427,18 @@ export function ShredderView() {
                     <p
                       data-testid="wipe-phase"
                       style={{ fontWeight: 600, margin: "0 0 4px 0" }}
-                    >{`${wipeProgress.phase}…`}</p>
-                    <p
-                      style={{
-                        color: "var(--text-dim)",
-                        fontSize: "0.83rem",
-                        margin: "0 0 4px 0",
-                      }}
-                    >
-                      {formatSize(wipeProgress.bytes_written)} written
-                    </p>
+                    >{`${wipeProgress?.phase ?? "Starting"}…`}</p>
+                    {wipeProgress && (
+                      <p
+                        style={{
+                          color: "var(--text-dim)",
+                          fontSize: "0.83rem",
+                          margin: "0 0 4px 0",
+                        }}
+                      >
+                        {formatSize(wipeProgress.bytes_written)} written
+                      </p>
+                    )}
                     <p
                       style={{
                         color: "var(--text-dim)",
@@ -1376,8 +1448,12 @@ export function ShredderView() {
                     >
                       Drive will appear full until the operation completes.
                     </p>
-                    <button className="secondary-btn" onClick={cancelWipe}>
-                      Cancel
+                    <button
+                      className="secondary-btn"
+                      onClick={cancelWipe}
+                      disabled={wipeCancelling}
+                    >
+                      {wipeCancelling ? "Cancelling…" : "Cancel"}
                     </button>
                   </div>
                 ) : wipeResult ? (
@@ -1449,10 +1525,12 @@ export function ShredderView() {
                           const isWindowsDriveRoot = /^[a-zA-Z]:[/\\]?$/.test(
                             p,
                           );
-                          // Unix root or common system paths
+                          // Unix root or common system paths. Trailing slashes
+                          // ("/etc/") name the same folder, so ignore them.
+                          const unixPath = p.replace(/\/+$/, "") || "/";
                           const isUnixSystemPath =
                             /^(\/|\/etc|\/bin|\/sbin|\/usr|\/boot|\/var|\/sys|\/proc|\/dev)$/.test(
-                              p,
+                              unixPath,
                             );
                           if (isWindowsDriveRoot || isUnixSystemPath) {
                             setDriveError(

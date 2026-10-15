@@ -156,7 +156,7 @@ export function Sidebar({
           id: "shred",
           label: "Shredder",
           icon: <Trash2 size={20} strokeWidth={2.5} />,
-          desc: "Permanetly destroy files",
+          desc: "Permanently destroy files",
         },
         {
           id: "analyzer",

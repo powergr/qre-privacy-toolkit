@@ -20,7 +20,7 @@ import {
   Pin,
   PinOff, // <--- Icons
 } from "lucide-react";
-import { useClipboard } from "../../hooks/useClipboard";
+import { useClipboard, ClipboardEntry } from "../../hooks/useClipboard";
 import { InfoModal } from "../modals/AppModals";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
@@ -130,6 +130,15 @@ export function ClipboardView() {
     try {
       await copyToClipboard(text);
       setMsg("Copied to clipboard — will auto-clear in 30 seconds.");
+    } catch (e) {
+      setActionError(String(e));
+    }
+  };
+
+  const handleTogglePin = async (entry: ClipboardEntry) => {
+    setActionError(null);
+    try {
+      await togglePin(entry);
     } catch (e) {
       setActionError(String(e));
     }
@@ -464,7 +473,7 @@ export function ClipboardView() {
                 {/* NEW PIN BUTTON */}
                 <button
                   className={`icon-btn-ghost ${entry.is_pinned ? "active" : ""}`}
-                  onClick={() => togglePin(entry)}
+                  onClick={() => handleTogglePin(entry)}
                   title={entry.is_pinned ? "Unpin" : "Pin to Top"}
                 >
                   {entry.is_pinned ? <PinOff size={18} /> : <Pin size={18} />}

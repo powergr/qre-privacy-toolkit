@@ -38,7 +38,8 @@ function formatRemaining(lockedUntil: number): string {
   if (secs <= 0) return "expired";
   if (secs < 3600) {
     const m = Math.ceil(secs / 60);
-    return `${m}m`;
+    // 59m 30s rounds up to 60; call it an hour rather than show "60m".
+    return m >= 60 ? "1h" : `${m}m`;
   }
   if (secs < 86400) {
     const h = Math.floor(secs / 3600);
@@ -99,6 +100,33 @@ interface ColWidths {
   size: number;
 }
 
+const GRID_LAYOUT_KEY = "qre-grid-layout";
+const MIN_COL_WIDTH = 50;
+const DEFAULT_COL_WIDTHS: ColWidths = { name: 400, type: 100, size: 100 };
+
+/**
+ * Reads the saved column widths. Anything that is not exactly three usable widths (bad JSON,
+ * `null`, a number, a missing column, a negative or non-finite width) falls back to the
+ * defaults, because a bad value would otherwise crash the screen or produce an invalid grid.
+ */
+function loadColWidths(): ColWidths {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(GRID_LAYOUT_KEY) ?? "null",
+    );
+    if (saved === null || typeof saved !== "object" || Array.isArray(saved))
+      return DEFAULT_COL_WIDTHS;
+    const { name, type, size } = saved as Record<string, unknown>;
+    const usable = (w: unknown): w is number =>
+      typeof w === "number" && Number.isFinite(w) && w >= MIN_COL_WIDTH;
+    return usable(name) && usable(type) && usable(size)
+      ? { name, type, size }
+      : DEFAULT_COL_WIDTHS;
+  } catch {
+    return DEFAULT_COL_WIDTHS;
+  }
+}
+
 // ─── COMPONENT ───────────────────────────────────────────────────────────────
 
 export function FileGrid({
@@ -113,20 +141,17 @@ export function FileGrid({
   timeLockPaths,
   timeLockInfo,
 }: FileGridProps) {
-  const [colWidths, setColWidths] = useState<ColWidths>(() => {
-    const defaults = { name: 400, type: 100, size: 100 };
-    try {
-      const saved = localStorage.getItem("qre-grid-layout");
-      return saved ? JSON.parse(saved) : defaults;
-    } catch {
-      return defaults;
-    }
-  });
+  const [colWidths, setColWidths] = useState<ColWidths>(loadColWidths);
 
   const [isResizing, setIsResizing] = useState<keyof ColWidths | null>(null);
 
   useEffect(() => {
-    localStorage.setItem("qre-grid-layout", JSON.stringify(colWidths));
+    // Remembering the layout is a convenience; blocked storage must not break the screen.
+    try {
+      localStorage.setItem(GRID_LAYOUT_KEY, JSON.stringify(colWidths));
+    } catch {
+      /* ignore */
+    }
   }, [colWidths]);
 
   const gridTemplate = `40px ${colWidths.name}px ${colWidths.type}px ${colWidths.size}px 1fr`;
@@ -142,7 +167,7 @@ export function FileGrid({
     const handleMouseMove = (e: MouseEvent) => {
       setColWidths((prev) => ({
         ...prev,
-        [isResizing]: Math.max(50, prev[isResizing] + e.movementX),
+        [isResizing]: Math.max(MIN_COL_WIDTH, prev[isResizing] + e.movementX),
       }));
     };
     const handleMouseUp = () => setIsResizing(null);

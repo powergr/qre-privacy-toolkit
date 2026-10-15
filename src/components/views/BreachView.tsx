@@ -84,7 +84,9 @@ export function BreachView() {
   const [scanError, setScanError] = useState<string | null>(null); // Fix #1
   const [scanCancelled, setScanCancelled] = useState(false); // Cancel button
   const scanUnlisten = useRef<(() => void) | null>(null);
-  const scanCancelledRef = useRef(false); // Cancel flag for async code
+  // Identifies the scan that currently owns the screen. Starting or cancelling a scan
+  // bumps it, so a finished older scan can no longer overwrite a newer one.
+  const scanIdRef = useRef(0);
 
   // --- PASSWORD STATE ---
   const [password, setPassword] = useState("");
@@ -122,7 +124,7 @@ export function BreachView() {
 
   // --- CANCEL SCAN ---
   function cancelScan() {
-    scanCancelledRef.current = true;
+    scanIdRef.current += 1;
     setScanCancelled(true);
     if (scanUnlisten.current) {
       scanUnlisten.current();
@@ -137,17 +139,18 @@ export function BreachView() {
   // --- LOCAL SCAN LOGIC ---
   async function runLocalScan() {
     if (localLoading) return; // Fix #5: guard against concurrent scans
+    let scanId = -1; // stays -1 if the user never picks a folder
     try {
       const selected = await open({
         directory: true,
         title: "Select folder to scan for exposed secrets",
       });
       if (selected && typeof selected === "string") {
+        scanId = ++scanIdRef.current;
         setLocalLoading(true);
         setLocalFindings(null);
         setScanError(null);
         setScanCancelled(false);
-        scanCancelledRef.current = false;
         setCurrentScanPath("Starting scan...");
 
         scanUnlisten.current = await listen<string>(
@@ -165,12 +168,12 @@ export function BreachView() {
           const res = await invoke<SecretFinding[]>("scan_local_secrets", {
             dirPath: selected,
           });
-          // Only update findings if not cancelled
-          if (!scanCancelledRef.current) {
+          // Only update findings if this scan was not cancelled or replaced
+          if (scanId === scanIdRef.current) {
             setLocalFindings(res);
           }
         } catch (backendError) {
-          if (!scanCancelledRef.current) {
+          if (scanId === scanIdRef.current) {
             // Fix #1: Don't expose raw Rust errors — show a safe summary
             const msg = String(backendError);
             if (
@@ -187,14 +190,17 @@ export function BreachView() {
         }
       }
     } catch (e) {
-      if (!scanCancelledRef.current) {
+      if (scanId === -1 || scanId === scanIdRef.current) {
         setScanError("Could not open folder. Please try again.");
       }
     } finally {
-      setLocalLoading(false);
-      if (scanUnlisten.current) {
-        scanUnlisten.current();
-        scanUnlisten.current = null;
+      // A replaced scan must not stop the listener or loading state of the new one.
+      if (scanId === -1 || scanId === scanIdRef.current) {
+        setLocalLoading(false);
+        if (scanUnlisten.current) {
+          scanUnlisten.current();
+          scanUnlisten.current = null;
+        }
       }
     }
   }

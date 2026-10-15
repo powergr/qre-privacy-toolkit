@@ -100,12 +100,8 @@ export function HashView() {
     };
   }, []);
 
-  // Cleanup clipboard timer on unmount
-  useEffect(() => {
-    return () => {
-      if (clipboardTimer) clearTimeout(clipboardTimer);
-    };
-  }, [clipboardTimer]);
+  // The clipboard timer is deliberately not cancelled on unmount: it only wipes the
+  // clipboard, and it must still fire if the user switches screens within 30 seconds.
 
   async function handleBrowse() {
     try {
@@ -167,7 +163,7 @@ export function HashView() {
       setHashes(res);
       setMsg("Hashing completed successfully");
     } catch (e) {
-      const errorMsg = String(e);
+      const errorMsg = e instanceof Error ? e.message : String(e);
 
       // Better error messages
       if (errorMsg.includes("cancelled")) {
@@ -241,7 +237,10 @@ export function HashView() {
 
       if (!savePath) return; // User cancelled
 
-      const matchStatus = getMatchStatus(hashes.sha256);
+      // Any of the three digests may be the one the user compared against.
+      const isMatch = [hashes.sha256, hashes.sha1, hashes.md5].some(
+        (h) => getMatchStatus(h) === "match",
+      );
       const content = `
 File Integrity Check Report
 Generated: ${new Date().toLocaleString()}
@@ -261,7 +260,7 @@ ${
   compare
     ? `VERIFICATION:
   Expected:  ${compare}
-  Status:    ${matchStatus === "match" ? "✓ MATCH CONFIRMED" : "✗ HASH MISMATCH"}
+  Status:    ${isMatch ? "✓ MATCH CONFIRMED" : "✗ HASH MISMATCH"}
   Algorithm: ${getMatchedAlgorithm()}
 `
     : ""

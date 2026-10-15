@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Shield, Copy, Check } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ViewState } from "../../types";
@@ -25,12 +25,24 @@ export function AuthOverlay(props: AuthOverlayProps) {
   const { view, password, recoveryCode } = props;
   const [copied, setCopied] = useState(false);
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only the "Copied!" label is tied to this screen. The clipboard wipe timer must keep
+  // running after the screen closes, so it is deliberately not cleaned up here.
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
 
   async function handleCopy() {
     try {
       await writeText(recoveryCode);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      // Restart the 2 second label window on every copy; an older timer would hide the
+      // label too early after a second copy.
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
       // Replace any pending clear from a previous copy so the 30s window
       // restarts from this copy instead of clearing early.
       if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
@@ -51,6 +63,7 @@ export function AuthOverlay(props: AuthOverlayProps) {
   };
 
   let title = "Unlock Vault";
+  if (view === "loading") title = "Starting";
   if (view === "setup") title = "Setup QRE";
   if (view === "recovery_entry") title = "Recovery";
   if (view === "recovery_display") title = "Recovery Code";
@@ -67,7 +80,14 @@ export function AuthOverlay(props: AuthOverlayProps) {
         </div>
 
         <div className="modal-body">
-          {view === "recovery_display" ? (
+          {view === "loading" ? (
+            /* The app has not yet found out whether a vault exists, so there is nothing
+               to sign in to. A form here would offer "Unlock" or a "New Master Password"
+               field that does the wrong thing if used. */
+            <p style={{ color: "var(--text-dim)", textAlign: "center" }}>
+              Loading...
+            </p>
+          ) : view === "recovery_display" ? (
             /* --- RECOVERY CODE DISPLAY --- */
             <>
               <p style={{ color: "var(--warning)", textAlign: "center" }}>

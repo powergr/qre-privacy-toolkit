@@ -74,7 +74,7 @@ export function QrView() {
       case "text":
         return text;
       case "url":
-        if (url && !url.startsWith("http://") && !url.startsWith("https://")) {
+        if (url && !/^https?:\/\//i.test(url)) {
           return `https://${url}`;
         }
         return url;
@@ -91,6 +91,9 @@ export function QrView() {
 
   // Generate QR
   useEffect(() => {
+    // Set when the inputs change again. A slow response for older input must not
+    // overwrite the result (or error) for what is on screen now.
+    let cancelled = false;
     const content = getContentForTab();
     
     if (!content) {
@@ -103,6 +106,7 @@ export function QrView() {
     if (activeTab !== "wifi") {
       invoke<QrValidation>("validate_qr_input", { text: content })
         .then(v => {
+          if (cancelled) return;
           setValidation(v);
           if (!v.valid) {
             setQrResult(null);
@@ -127,11 +131,13 @@ export function QrView() {
         },
       })
         .then(result => {
+          if (cancelled) return;
           setQrResult(result);
           setError(null);
           setValidation({ valid: true, errors: [], warnings: [] });
         })
         .catch(e => {
+          if (cancelled) return;
           setError(String(e));
           setQrResult(null);
         });
@@ -146,14 +152,20 @@ export function QrView() {
         },
       })
         .then(result => {
+          if (cancelled) return;
           setQrResult(result);
           setError(null);
         })
         .catch(e => {
+          if (cancelled) return;
           setError(String(e));
           setQrResult(null);
         });
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     text, url, email, phone, ssid, wifiPass, isHidden, wifiSecurity,
     activeTab, fgColor, bgColor, eccLevel, border,

@@ -68,27 +68,39 @@ export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
     }
   };
 
+  // The parent usually passes a new function on every render. Keeping the latest one in a
+  // ref lets the effect below depend on progress alone, so the hand-over is scheduled once
+  // and not once per parent render (which would start the encryption more than once).
+  const onCompleteRef = useRef(onComplete);
   useEffect(() => {
-    if (progress >= 100) {
-      // Finished!
-      setTimeout(() => {
-        // Ensure we only ever return exactly 32 bytes of the highest quality collected entropy
-        // If we collected more due to rapid movement, just take the last 32 bytes.
-        let finalEntropy = entropyPool.current;
-        if (finalEntropy.length > 32) {
-          finalEntropy = finalEntropy.slice(finalEntropy.length - 32);
-        } else
-          while (finalEntropy.length < 32) {
-            // Fallback: If somehow we hit 100% without 32 bytes, fill the rest with OS CSPRNG
-            finalEntropy.push(
-              window.crypto.getRandomValues(new Uint8Array(1))[0],
-            );
-          }
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
-        onComplete(finalEntropy);
-      }, 300);
-    }
-  }, [progress, onComplete]);
+  useEffect(() => {
+    if (progress < 100) return;
+
+    // Finished! Short pause so the user sees the bar reach 100%.
+    const timer = setTimeout(() => {
+      // Ensure we only ever return exactly 32 bytes of the highest quality collected entropy
+      // If we collected more due to rapid movement, just take the last 32 bytes.
+      let finalEntropy = entropyPool.current;
+      if (finalEntropy.length > 32) {
+        finalEntropy = finalEntropy.slice(finalEntropy.length - 32);
+      } else
+        while (finalEntropy.length < 32) {
+          // Fallback: If somehow we hit 100% without 32 bytes, fill the rest with OS CSPRNG
+          finalEntropy.push(
+            window.crypto.getRandomValues(new Uint8Array(1))[0],
+          );
+        }
+
+      onCompleteRef.current(finalEntropy);
+    }, 300);
+
+    // Closing the dialog (Cancel, or the parent removing it) during the pause must also
+    // stop the hand-over, or the cancelled action would still run.
+    return () => clearTimeout(timer);
+  }, [progress]);
 
   return (
     <div

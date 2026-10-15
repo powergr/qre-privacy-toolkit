@@ -9,6 +9,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
+use crate::utils::CancelSlot;
+
 // Import the Digest trait which provides the standard .update() and .finalize()
 // methods used by all the cryptographic hash algorithms below.
 use sha2::Digest;
@@ -66,10 +68,9 @@ pub struct ProgressPayload {
     pub percentage: u8,
 }
 
-// Global thread-safe flag used to abort a running hash operation early.
-// NOTE: For multi-file concurrent hashing in the future, this should be moved
-// into Tauri's managed state rather than being a global static variable.
-static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+// Hands each hash operation its own cancel flag, and cancels the newest one on request.
+// A single shared flag that every run resets would let a new run un-cancel an older one.
+static CANCEL_SLOT: CancelSlot = CancelSlot::new();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FILE METADATA VALIDATION
@@ -209,13 +210,18 @@ pub fn calculate_hashes<R: tauri::Runtime>(
     path_str: &str,
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<HashResult> {
-    // Reset the global flag before starting
-    CANCEL_FLAG.store(false, Ordering::Relaxed);
-
-    // Pass the global CANCEL_FLAG to the core function
-    calculate_hashes_core(path_str, &CANCEL_FLAG, |progress| {
+    calculate_hashes_with(path_str, &CANCEL_SLOT, |progress| {
         let _ = app_handle.emit("hash-progress", progress);
     })
+}
+
+/// Starts a new hash operation on `slot`, so a cancel request reaches this run only.
+fn calculate_hashes_with<F>(path_str: &str, slot: &CancelSlot, on_progress: F) -> Result<HashResult>
+where
+    F: FnMut(ProgressPayload),
+{
+    let cancel = slot.begin();
+    calculate_hashes_core(path_str, &cancel, on_progress)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,7 +229,7 @@ pub fn calculate_hashes<R: tauri::Runtime>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn cancel_hashing() {
-    CANCEL_FLAG.store(true, Ordering::Relaxed);
+    CANCEL_SLOT.cancel();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -355,6 +361,54 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("cancelled by user"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_cancelled_hash_stays_cancelled_when_another_hash_starts() {
+        // Cancel run A, then start run B while A is still going. Starting B must not
+        // un-cancel A, which is what a single shared flag that B resets would do.
+        let slot = CancelSlot::new();
+        let a = create_temp_file("race_a.txt", "contents of file a");
+        let b = create_temp_file("race_b.txt", "contents of file b");
+        let b_result = std::cell::RefCell::new(None);
+        let started_b = std::cell::Cell::new(false);
+
+        let a_result = calculate_hashes_with(a.to_str().unwrap(), &slot, |_progress| {
+            if !started_b.replace(true) {
+                slot.cancel();
+                *b_result.borrow_mut() =
+                    Some(calculate_hashes_with(b.to_str().unwrap(), &slot, |_| {}));
+            }
+        });
+
+        let err = a_result.expect_err("run A was cancelled and must not complete");
+        assert!(err.to_string().contains("cancelled by user"), "got: {err}");
+        let b_ok = b_result.borrow_mut().take().unwrap();
+        assert!(b_ok.is_ok(), "run B was never cancelled and must complete");
+
+        let _ = fs::remove_file(a);
+        let _ = fs::remove_file(b);
+    }
+
+    #[test]
+    fn test_cancel_hashing_cancels_the_running_hash() {
+        let flag = CANCEL_SLOT.begin();
+        assert!(!flag.load(Ordering::SeqCst));
+        cancel_hashing();
+        assert!(flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_cancel_request_only_affects_the_newest_hash() {
+        let slot = CancelSlot::new();
+        let path = create_temp_file("newest_only.txt", "some data");
+
+        // A cancel sent before any run starts must not leak into the next run.
+        slot.cancel();
+        let result = calculate_hashes_with(path.to_str().unwrap(), &slot, |_| {});
+        assert!(result.is_ok(), "a stale cancel must not stop a fresh run");
 
         let _ = fs::remove_file(path);
     }

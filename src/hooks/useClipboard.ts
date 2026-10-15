@@ -41,13 +41,12 @@ export function useClipboard() {
     }
   });
 
+  // Not cancelled on unmount or when retention changes: the timer only wipes the
+  // clipboard, and it must still fire after the user leaves or changes settings.
   const clipboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     refreshVault();
-    return () => {
-      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
-    };
   }, [retentionHours]);
 
   function updateRetention(hours: number) {
@@ -57,9 +56,12 @@ export function useClipboard() {
     } catch {}
   }
 
+  // `error` is only for failing to load the vault, because the view replaces the whole
+  // screen with it. Every action below throws instead, so the caller can report it.
   async function refreshVault() {
     try {
       setLoading(true);
+      setError(null);
       const vault = await invoke<ClipboardVault>("load_clipboard_vault", {
         retentionHours,
         vaultId: "local",
@@ -83,22 +85,17 @@ export function useClipboard() {
   // --- ACTIONS ---
 
   async function securePaste() {
-    try {
-      const text = await readText();
-      if (!text || !text.trim()) throw new Error("Clipboard is empty.");
-      if (text.length > 1_000_000) throw new Error("Content too large (>1MB).");
+    const text = await readText();
+    if (!text || !text.trim()) throw new Error("Clipboard is empty.");
+    if (text.length > 1_000_000) throw new Error("Content too large (>1MB).");
 
-      await invoke("add_clipboard_entry", {
-        text,
-        retentionHours,
-        vaultId: "local",
-      });
-      await writeText(""); // Wipe system clipboard
-      await refreshVault();
-    } catch (e) {
-      setError("Paste failed: " + e);
-      throw e;
-    }
+    await invoke("add_clipboard_entry", {
+      text,
+      retentionHours,
+      vaultId: "local",
+    });
+    await writeText(""); // Wipe system clipboard
+    await refreshVault();
   }
 
   function togglePin(entry: ClipboardEntry) {
@@ -122,7 +119,7 @@ export function useClipboard() {
         });
         commit(newEntries);
       } catch (e) {
-        setError("Failed to pin: " + e);
+        throw new Error("Failed to pin: " + e);
       }
     });
   }
@@ -130,15 +127,15 @@ export function useClipboard() {
   async function copyToClipboard(text: string) {
     try {
       await writeText(text);
-      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
-      clipboardTimerRef.current = setTimeout(async () => {
-        try {
-          await writeText("");
-        } catch {}
-      }, CLIPBOARD_CLEAR_DELAY_MS);
     } catch (e) {
-      setError("Copy failed: " + e);
+      throw new Error("Copy failed: " + e);
     }
+    if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
+    clipboardTimerRef.current = setTimeout(async () => {
+      try {
+        await writeText("");
+      } catch {}
+    }, CLIPBOARD_CLEAR_DELAY_MS);
   }
 
   function clearAll() {
@@ -150,7 +147,7 @@ export function useClipboard() {
         });
         commit([]);
       } catch (e) {
-        setError("Clear failed: " + e);
+        throw new Error("Clear failed: " + e);
       }
     });
   }
@@ -165,7 +162,7 @@ export function useClipboard() {
         });
         commit(newEntries);
       } catch (e) {
-        setError("Delete failed: " + e);
+        throw new Error("Delete failed: " + e);
       }
     });
   }

@@ -102,6 +102,31 @@ pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Zstd level for a lock request. `mode` is "store", "extreme", or anything else for auto.
+pub(crate) fn compression_level(mode: &str, filename: &str) -> i32 {
+    match mode {
+        "store" => 0,
+        "extreme" => 19,
+        _ => {
+            if is_already_compressed(filename) {
+                1
+            } else {
+                3
+            }
+        }
+    }
+}
+
+/// True if `path` sits on a drive that is currently an unlocked portable vault.
+/// Encrypting there would leave plaintext traces on the USB drive ("ghost files").
+pub(crate) fn is_on_portable_mount(
+    path: &str,
+    mounts: &std::collections::HashMap<String, String>,
+) -> bool {
+    let path_lower = path.to_lowercase();
+    mounts.keys().any(|m| path_lower.starts_with(&m.to_lowercase()))
+}
+
 // --- CRYPTO LOGIC ---
 
 #[tauri::command]
@@ -141,8 +166,7 @@ pub async fn lock_file(
 
             {
                 let mounts = portable_mounts_arc.lock().unwrap_or_else(|e| e.into_inner());
-                let path_lower = path.to_string_lossy().to_lowercase();
-                if mounts.keys().any(|m| path_lower.starts_with(&m.to_lowercase())) {
+                if is_on_portable_mount(&path.to_string_lossy(), &mounts) {
                     results.push(BatchItemResult {
                         name: path.to_string_lossy().to_string(),
                         success: false,
@@ -175,11 +199,7 @@ pub async fn lock_file(
             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
 
-            let level = match mode_str.as_str() {
-                "store" => 0,
-                "extreme" => 19,
-                _ => { if is_already_compressed(&filename) { 1 } else { 3 } }
-            };
+            let level = compression_level(&mode_str, &filename);
 
             let (input_path_str, is_temp) = if path.is_dir() {
                 let parent = path.parent().unwrap_or(Path::new("."));
@@ -476,6 +496,50 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// True if `dest` is `dir` itself or lies somewhere inside it.
+fn is_inside_dir(dest: &Path, dir: &Path) -> bool {
+    let dest = fs::canonicalize(dest).unwrap_or_else(|_| dest.to_path_buf());
+    let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    dest.starts_with(dir)
+}
+
+/// Copies or moves one item into `dest_base`. Never overwrites: a name clash gets a unique name.
+pub(crate) fn paste_one(src: &Path, dest_base: &Path, is_cut: bool) -> BatchItemResult {
+    if let Err(e) = reject_critical_path(src) {
+        return BatchItemResult { name: src.to_string_lossy().to_string(), success: false, message: e };
+    }
+
+    let filename = src.file_name().unwrap_or_default();
+    let name = filename.to_string_lossy().to_string();
+
+    // Without this, copy_dir_recursive keeps finding the folder it just created inside the source.
+    if src.is_dir() && is_inside_dir(dest_base, src) {
+        return BatchItemResult { name, success: false, message: "Cannot paste a folder into itself.".into() };
+    }
+
+    let dest = utils::get_unique_path(&dest_base.join(filename));
+
+    if is_cut && fs::rename(src, &dest).is_ok() {
+        return BatchItemResult { name, success: true, message: "Moved".into() };
+    }
+
+    let res = if src.is_dir() {
+        copy_dir_recursive(src, &dest)
+    } else {
+        fs::copy(src, &dest).map(|_| ())
+    };
+
+    match res {
+        Ok(_) => {
+            if is_cut {
+                let _ = if src.is_dir() { fs::remove_dir_all(src) } else { fs::remove_file(src) };
+            }
+            BatchItemResult { name, success: true, message: "Copied".into() }
+        }
+        Err(e) => BatchItemResult { name, success: false, message: e.to_string() },
+    }
+}
+
 #[tauri::command]
 pub async fn paste_items(
     app: AppHandle,
@@ -495,37 +559,9 @@ pub async fn paste_items(
         
         for src_str in sources {
             let src = Path::new(&src_str);
-            
-            if let Err(e) = reject_critical_path(src) {
-                results.push(BatchItemResult { name: src.to_string_lossy().to_string(), success: false, message: e });
-                continue;
-            }
-            
             let filename = src.file_name().unwrap_or_default();
-            let dest = utils::get_unique_path(&dest_base.join(filename));
-
             utils::emit_progress(&app, &format!("Pasting: {}", filename.to_string_lossy()), 50);
-
-            if is_cut && fs::rename(src, &dest).is_ok() {
-                results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Moved".into() });
-                continue;
-            }
-
-            let res = if src.is_dir() {
-                copy_dir_recursive(src, &dest)
-            } else {
-                fs::copy(src, &dest).map(|_| ())
-            };
-
-            match res {
-                Ok(_) => {
-                    if is_cut {
-                        let _ = if src.is_dir() { fs::remove_dir_all(src) } else { fs::remove_file(src) };
-                    }
-                    results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: true, message: "Copied".into() });
-                }
-                Err(e) => results.push(BatchItemResult { name: filename.to_string_lossy().to_string(), success: false, message: e.to_string() }),
-            }
+            results.push(paste_one(src, &dest_base, is_cut));
         }
         Ok(results)
     }).await.map_err(|e| e.to_string())?
@@ -807,3 +843,5 @@ pub fn get_startup_file() -> Option<String> {
     }
     None
 }
+#[cfg(test)]
+mod tests;

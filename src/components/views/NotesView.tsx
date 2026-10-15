@@ -36,6 +36,7 @@ import {
   EntryDeleteModal,
   ExportSuccessModal,
   ExportWarningModal,
+  InfoModal,
 } from "../modals/AppModals";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -325,6 +326,15 @@ const SimpleMarkdownRenderer = ({ content }: { content: string }) => {
     i++;
   }
 
+  // A fence that was opened and never closed still shows its text.
+  if (inCodeBlock && codeAccum.length > 0) {
+    elements.push(
+      <pre key="code-unclosed" className="md-code-block">
+        {codeAccum.join("\n")}
+      </pre>,
+    );
+  }
+
   return <>{elements}</>;
 };
 
@@ -366,6 +376,8 @@ export function NotesView() {
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [showExportWarning, setShowExportWarning] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Shown when a delete or pin from the card list could not be saved.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // ── Refs ──
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -379,11 +391,20 @@ export function NotesView() {
     editingRef.current = editing;
   }, [editing]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount. The clipboard timer is left running on purpose: it only wipes
+  // the clipboard, and it must still fire if the user switches screens within 30s.
   useEffect(() => {
     return () => {
-      if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
+  // The tick on a copied card is hidden by its own timer; keep one so a second copy
+  // restarts the two seconds instead of being cut short by the first copy's timer.
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
     };
   }, []);
 
@@ -452,9 +473,19 @@ export function NotesView() {
   // steals focus back to the editor after every single keystroke, making
   // it impossible to type more than one character in the find box.
   // The user presses Enter or clicks ‹ › to jump to a match.
+  // The first Enter after typing must go to the first match, not skip past it.
+  const hasJumpedRef = useRef(false);
   useEffect(() => {
     setCurrentMatchIdx(0);
+    hasJumpedRef.current = false;
   }, [findQuery]);
+
+  // Replacing can remove matches, which would leave the counter pointing past the end
+  // of the list. Always use a position that exists.
+  const activeMatchIdx =
+    findMatches.length === 0
+      ? 0
+      : Math.min(currentMatchIdx, findMatches.length - 1);
 
   // Navigate to current match in textarea
   const navigateToMatch = useCallback(
@@ -498,12 +529,10 @@ export function NotesView() {
           id: finalId,
         };
         await saveNote(toSave);
-        // Assign ID for brand-new notes so subsequent saves update in-place
-        if (!note.id) {
+        // Remember the creation time of a brand-new note so later saves keep it.
+        if (!note.created_at) {
           setEditing((prev) =>
-            prev
-              ? { ...prev, id: finalId, created_at: toSave.created_at }
-              : prev,
+            prev ? { ...prev, created_at: toSave.created_at } : prev,
           );
         }
         setIsDirty(false);
@@ -546,7 +575,14 @@ export function NotesView() {
     const normalizedContent = (note.content || "")
       .replace(/\r\n/g, "\n")
       .replace(/\r/g, "\n");
-    setEditing({ ...note, content: normalizedContent });
+    // A new note gets its ID now, not at its first save. Otherwise an auto-save that is
+    // still writing and a Save & Close pressed meanwhile would each invent their own ID
+    // and store the note twice.
+    setEditing({
+      ...note,
+      id: note.id || generateUUID(),
+      content: normalizedContent,
+    });
     setEditorMode("edit");
     setSaveError(null);
     setIsDirty(false);
@@ -641,25 +677,58 @@ export function NotesView() {
   }, [editing, saveCurrentNote, showFindReplace]);
 
   // ── Format insertion ──
-  const insertFormat = (prefix: string, suffix: string = "") => {
+  // `block` formats (headings, lists, code blocks) only work at the start of a line, so
+  // they are placed there whatever the cursor position. Inline formats wrap the selection.
+  const insertFormat = (
+    prefix: string,
+    suffix: string = "",
+    block: boolean = false,
+  ) => {
     if (!textareaRef.current || !editing) return;
     const start = textareaRef.current.selectionStart;
     const end = textareaRef.current.selectionEnd;
     const text = editing.content || "";
-    const newContent =
-      text.substring(0, start) +
-      prefix +
-      text.substring(start, end) +
-      suffix +
-      text.substring(end);
+
+    let newContent: string;
+    let selStart: number;
+    let selEnd: number;
+
+    if (block && !suffix) {
+      // Line marker such as "## " or "- ": goes in front of the current line.
+      const lineStart = start === 0 ? 0 : text.lastIndexOf("\n", start - 1) + 1;
+      newContent = text.substring(0, lineStart) + prefix + text.substring(lineStart);
+      selStart = start + prefix.length;
+      selEnd = end + prefix.length;
+    } else if (block) {
+      // Fenced code: the fences must each sit on a line of their own.
+      const atLineStart = start === 0 || text[start - 1] === "\n";
+      const atLineEnd = end === text.length || text[end] === "\n";
+      const open = (atLineStart ? "" : "\n") + prefix;
+      const close = suffix + (atLineEnd ? "" : "\n");
+      newContent =
+        text.substring(0, start) +
+        open +
+        text.substring(start, end) +
+        close +
+        text.substring(end);
+      selStart = start + open.length;
+      selEnd = end + open.length;
+    } else {
+      newContent =
+        text.substring(0, start) +
+        prefix +
+        text.substring(start, end) +
+        suffix +
+        text.substring(end);
+      selStart = start + prefix.length;
+      selEnd = end + prefix.length;
+    }
+
     setEditing({ ...editing, content: newContent });
     markDirty();
     setTimeout(() => {
       textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(
-        start + prefix.length,
-        end + prefix.length,
-      );
+      textareaRef.current?.setSelectionRange(selStart, selEnd);
     }, 10);
   };
 
@@ -668,7 +737,8 @@ export function NotesView() {
     const clean = tag
       .trim()
       .toLowerCase()
-      .replace(/[,\s]+/g, "-");
+      .replace(/[,\s]+/g, "-")
+      .replace(/^-+|-+$/g, "");
     if (!clean) return;
     const current = editing?.tags || [];
     if (current.includes(clean) || current.length >= 10) return;
@@ -686,7 +756,10 @@ export function NotesView() {
   // ── Find & Replace actions ──
   const findNext = () => {
     if (findMatches.length === 0) return;
-    const next = (currentMatchIdx + 1) % findMatches.length;
+    const next = hasJumpedRef.current
+      ? (activeMatchIdx + 1) % findMatches.length
+      : activeMatchIdx;
+    hasJumpedRef.current = true;
     setCurrentMatchIdx(next);
     navigateToMatch(next);
   };
@@ -694,14 +767,15 @@ export function NotesView() {
   const findPrev = () => {
     if (findMatches.length === 0) return;
     const prev =
-      (currentMatchIdx - 1 + findMatches.length) % findMatches.length;
+      (activeMatchIdx - 1 + findMatches.length) % findMatches.length;
+    hasJumpedRef.current = true;
     setCurrentMatchIdx(prev);
     navigateToMatch(prev);
   };
 
   const handleReplace = () => {
     if (!editing || findMatches.length === 0 || !findQuery) return;
-    const start = findMatches[currentMatchIdx];
+    const start = findMatches[activeMatchIdx];
     const content = editing.content || "";
     const newContent =
       content.substring(0, start) +
@@ -712,9 +786,13 @@ export function NotesView() {
 
   const handleReplaceAll = () => {
     if (!editing || !findQuery) return;
-    const newContent = (editing.content || "")
-      .split(findQuery)
-      .join(replaceText);
+    // Same case-insensitive, literal matching that findMatches uses to count results.
+    // The replacer function keeps "$&" and friends in replaceText from being expanded.
+    const escaped = findQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const newContent = (editing.content || "").replace(
+      new RegExp(escaped, "gi"),
+      () => replaceText,
+    );
     handleContentChange(newContent);
     setFindQuery("");
   };
@@ -737,6 +815,7 @@ export function NotesView() {
       }
     } catch (e) {
       console.error(e);
+      setActionError("Export failed: " + String(e));
     }
   };
 
@@ -762,9 +841,19 @@ export function NotesView() {
   };
 
   // ── Copy ──
-  const handleCopy = (e: React.MouseEvent, content: string, id: string) => {
+  const handleCopy = async (
+    e: React.MouseEvent,
+    content: string,
+    id: string,
+  ) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(content);
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch (err) {
+      // No tick and no wipe timer: nothing was copied.
+      setActionError("Could not copy to the clipboard: " + String(err));
+      return;
+    }
     setCopiedId(id);
     if (clipboardTimerRef.current) clearTimeout(clipboardTimerRef.current);
     clipboardTimerRef.current = setTimeout(async () => {
@@ -772,7 +861,8 @@ export function NotesView() {
         await navigator.clipboard.writeText("");
       } catch {}
     }, 30000);
-    setTimeout(() => setCopiedId(null), 2000);
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopiedId(null), 2000);
   };
 
   const handleTogglePin = (e: React.MouseEvent, note: NoteEntry) => {
@@ -781,7 +871,7 @@ export function NotesView() {
       ...note,
       is_pinned: !note.is_pinned,
       updated_at: Math.floor(Date.now() / 1000),
-    });
+    }).catch((err) => setActionError(String(err)));
   };
 
   // ── Auto-save status label ──
@@ -1258,28 +1348,28 @@ export function NotesView() {
 
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("# ", "")}
+                onClick={() => insertFormat("# ", "", true)}
                 title="Heading 1"
               >
                 <Heading1 size={15} />
               </button>
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("## ", "")}
+                onClick={() => insertFormat("## ", "", true)}
                 title="Heading 2"
               >
                 <Heading2 size={15} />
               </button>
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("### ", "")}
+                onClick={() => insertFormat("### ", "", true)}
                 title="Heading 3"
               >
                 <Heading3 size={15} />
               </button>
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("#### ", "")}
+                onClick={() => insertFormat("#### ", "", true)}
                 title="Heading 4"
               >
                 <Heading4 size={15} />
@@ -1289,14 +1379,14 @@ export function NotesView() {
 
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("- ", "")}
+                onClick={() => insertFormat("- ", "", true)}
                 title="Unordered list"
               >
                 <List size={15} />
               </button>
               <button
                 className="toolbar-btn"
-                onClick={() => insertFormat("```\n", "\n```")}
+                onClick={() => insertFormat("```\n", "\n```", true)}
                 title="Code block"
               >
                 <Code size={15} />
@@ -1364,7 +1454,7 @@ export function NotesView() {
                   />
                   <span className="find-counter">
                     {findMatches.length > 0
-                      ? `${currentMatchIdx + 1}/${findMatches.length}`
+                      ? `${activeMatchIdx + 1}/${findMatches.length}`
                       : findQuery
                         ? "0/0"
                         : ""}
@@ -1503,10 +1593,19 @@ export function NotesView() {
         <EntryDeleteModal
           title={itemToDelete.title || "Untitled Note"}
           onConfirm={() => {
-            deleteNote(itemToDelete.id);
+            deleteNote(itemToDelete.id).catch((err) =>
+              setActionError(String(err)),
+            );
             setItemToDelete(null);
           }}
           onCancel={() => setItemToDelete(null)}
+        />
+      )}
+      {actionError && (
+        <InfoModal
+          message={actionError}
+          type="error"
+          onClose={() => setActionError(null)}
         />
       )}
     </div>

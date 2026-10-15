@@ -250,9 +250,12 @@ use regex::Regex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
-/// Global cancellation flag for the secret scanner.
-/// Reset to `false` at the start of every scan, set to `true` by `cancel_secret_scan`.
-static SCAN_CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+use crate::utils::CancelSlot;
+
+/// Cancellation for the secret scanner. Each scan gets its own flag from `begin()`, and
+/// `cancel_secret_scan` cancels the newest scan. Starting a scan never un-cancels an older
+/// one that is still winding down on its thread.
+static SCAN_CANCEL: CancelSlot = CancelSlot::new();
 
 #[derive(serde::Serialize)]
 pub struct SecretFinding {
@@ -455,8 +458,9 @@ pub async fn scan_local_secrets(
     dir_path: String,
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<SecretFinding>, String> {
-    // Reset cancel flag for this new scan
-    SCAN_CANCEL_FLAG.store(false, Ordering::Relaxed);
+    // This scan's own cancel flag. Taken before anything is awaited, so a cancel sent
+    // from now on reaches this scan.
+    let cancel = SCAN_CANCEL.begin();
 
     // Canonicalize to resolve any ".." traversal before security checks
     let canonical = std::fs::canonicalize(&dir_path)
@@ -467,135 +471,160 @@ pub async fn scan_local_secrets(
     }
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut findings = Vec::new();
-
-        if !canonical.exists() || !canonical.is_dir() {
-            return Err("Invalid directory".to_string());
-        }
-
-        // Compile regexes ONCE outside the loop.
-        // Whitespace quantifier capped at {0,5} to prevent ReDoS.
-        // Capture group 2 captures the value so we can entropy-check it.
-        let regex_credentials = Regex::new(
-            r#"(?i)(password|secret|api_key|token|access_key)[\s]{0,5}[:=][\s]{0,5}['"]?([a-zA-Z0-9\-_]{16,})['"]?"#,
-        ).unwrap();
-        // High-confidence specific key formats — no entropy check needed, format is unique
-        let regex_api = Regex::new(
-            r"(sk_live_[0-9a-zA-Z]{24,}|sk_test_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|AKIA[0-9A-Z]{16}|eyJ[a-zA-Z0-9_-]{20,}[.][a-zA-Z0-9_-]{20,})",
-        ).unwrap();
-        // Crypto seed phrases: exactly 12 lowercase BIP-39 words on a single line
-        let regex_seed = Regex::new(r"^(?:[a-z]{3,}\s){11}[a-z]{3,}$").unwrap();
-
-        for entry in walkdir::WalkDir::new(&canonical)
-            .max_depth(5)
-            .follow_links(false) // Never follow symlinks — prevents scope escapes
-            .into_iter()
-            .filter_entry(|e| {
-                // filter_entry prunes entire directory subtrees — far more efficient
-                // than filter_map which still lists every entry before skipping
-                if e.file_type().is_dir() {
-                    let name = e.file_name().to_string_lossy().to_lowercase();
-                    return !SKIP_DIRS.iter().any(|&d| name == d);
-                }
-                true
-            })
-            .filter_map(|e| e.ok())
-        {
-            let p = entry.path();
-
-            // Check cancellation before every file
-            if SCAN_CANCEL_FLAG.load(Ordering::Relaxed) {
-                break;
-            }
-
-            // Cap total findings to prevent UI freeze
-            if findings.len() >= MAX_FINDINGS {
-                break;
-            }
-
-            if !p.is_file() {
-                continue;
-            }
-
-            // Skip blocked subdirectories encountered during the walk
-            if !is_safe_to_scan(p) {
-                continue;
-            }
-
-            if !is_scannable_extension(p) {
-                continue;
-            }
-
-            // Skip example/template/sample files — they contain fake values by design
-            if is_example_filename(p) {
-                continue;
-            }
-
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.len() > 1024 * 1024 {
-                    continue;
-                }
-            }
-
-            // Check for binary content before reading entire file into memory
-            if looks_like_binary(p) {
-                continue;
-            }
-
-            let _ = app_handle.emit("secret-scan-progress", p.to_string_lossy().to_string());
-
-            if let Ok(file_content) = std::fs::read_to_string(p) {
-                let mut found_category = None;
-
-                for line in file_content.lines() {
-                    // Skip comment lines — documentation never contains real secrets
-                    if is_comment_line(line) {
-                        continue;
-                    }
-
-                    // High-confidence API key formats — match immediately
-                    if regex_api.is_match(line) {
-                        found_category = Some("API Key");
-                        break;
-                    }
-
-                    // Credential pairs — require entropy check on the captured value
-                    if let Some(caps) = regex_credentials.captures(line) {
-                        if let Some(val) = caps.get(2) {
-                            let v = val.as_str();
-                            if !looks_like_placeholder(v) && value_entropy(v) > 3.5 {
-                                found_category = Some("Credential Pair");
-                                break;
-                            }
-                        }
-                    }
-
-                    // Seed phrases — structure is highly specific, no entropy check needed
-                    if regex_seed.is_match(line.trim()) {
-                        found_category = Some("Crypto Seed Phrase");
-                        break;
-                    }
-                }
-
-                if let Some(category) = found_category {
-                    findings.push(SecretFinding {
-                        filename: entry.file_name().to_string_lossy().to_string(),
-                        path: p.to_string_lossy().to_string(),
-                        category: category.to_string(),
-                    });
-                }
-            }
-        }
-        Ok(findings)
+        scan_for_secrets(&canonical, &cancel, |path| {
+            let _ = app_handle.emit("secret-scan-progress", path.to_string());
+        })
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+/// Starts a scan on `slot`, so a cancel request reaches this scan only.
+/// (The command itself takes its flag earlier, before awaiting, so it calls
+/// `scan_for_secrets` directly.)
+#[cfg(test)]
+fn run_secret_scan(
+    canonical: &std::path::Path,
+    slot: &CancelSlot,
+    on_progress: impl Fn(&str),
+) -> Result<Vec<SecretFinding>, String> {
+    let cancel = slot.begin();
+    scan_for_secrets(canonical, &cancel, on_progress)
+}
+
+/// Walks `canonical` looking for exposed secrets. Stops early, keeping what it has found so
+/// far, once `cancel` is set. `on_progress` is told each file path just before it is read.
+fn scan_for_secrets(
+    canonical: &std::path::Path,
+    cancel: &AtomicBool,
+    on_progress: impl Fn(&str),
+) -> Result<Vec<SecretFinding>, String> {
+    let mut findings = Vec::new();
+
+    if !canonical.exists() || !canonical.is_dir() {
+        return Err("Invalid directory".to_string());
+    }
+
+    // Compile regexes ONCE outside the loop.
+    // Whitespace quantifier capped at {0,5} to prevent ReDoS.
+    // Capture group 2 captures the value so we can entropy-check it.
+    let regex_credentials = Regex::new(
+        r#"(?i)(password|secret|api_key|token|access_key)[\s]{0,5}[:=][\s]{0,5}['"]?([a-zA-Z0-9\-_]{16,})['"]?"#,
+    ).unwrap();
+    // High-confidence specific key formats — no entropy check needed, format is unique
+    let regex_api = Regex::new(
+        r"(sk_live_[0-9a-zA-Z]{24,}|sk_test_[0-9a-zA-Z]{24,}|ghp_[0-9a-zA-Z]{36}|gho_[0-9a-zA-Z]{36}|AKIA[0-9A-Z]{16}|eyJ[a-zA-Z0-9_-]{20,}[.][a-zA-Z0-9_-]{20,})",
+    ).unwrap();
+    // Crypto seed phrases: exactly 12 lowercase BIP-39 words on a single line
+    let regex_seed = Regex::new(r"^(?:[a-z]{3,}\s){11}[a-z]{3,}$").unwrap();
+
+    for entry in walkdir::WalkDir::new(&canonical)
+        .max_depth(5)
+        .follow_links(false) // Never follow symlinks — prevents scope escapes
+        .into_iter()
+        .filter_entry(|e| {
+            // filter_entry prunes entire directory subtrees — far more efficient
+            // than filter_map which still lists every entry before skipping
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                return !SKIP_DIRS.iter().any(|&d| name == d);
+            }
+            true
+        })
+        .filter_map(|e| e.ok())
+    {
+        let p = entry.path();
+
+        // Check cancellation before every file
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Cap total findings to prevent UI freeze
+        if findings.len() >= MAX_FINDINGS {
+            break;
+        }
+
+        if !p.is_file() {
+            continue;
+        }
+
+        // Skip blocked subdirectories encountered during the walk
+        if !is_safe_to_scan(p) {
+            continue;
+        }
+
+        if !is_scannable_extension(p) {
+            continue;
+        }
+
+        // Skip example/template/sample files — they contain fake values by design
+        if is_example_filename(p) {
+            continue;
+        }
+
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.len() > 1024 * 1024 {
+                continue;
+            }
+        }
+
+        // Check for binary content before reading entire file into memory
+        if looks_like_binary(p) {
+            continue;
+        }
+
+        on_progress(&p.to_string_lossy());
+
+        if let Ok(file_content) = std::fs::read_to_string(p) {
+            let mut found_category = None;
+
+            for line in file_content.lines() {
+                // Skip comment lines — documentation never contains real secrets
+                if is_comment_line(line) {
+                    continue;
+                }
+
+                // High-confidence API key formats — match immediately
+                if regex_api.is_match(line) {
+                    found_category = Some("API Key");
+                    break;
+                }
+
+                // Credential pairs — require entropy check on the captured value
+                if let Some(caps) = regex_credentials.captures(line) {
+                    if let Some(val) = caps.get(2) {
+                        let v = val.as_str();
+                        if !looks_like_placeholder(v) && value_entropy(v) > 3.5 {
+                            found_category = Some("Credential Pair");
+                            break;
+                        }
+                    }
+                }
+
+                // Seed phrases — structure is highly specific, no entropy check needed
+                if regex_seed.is_match(line.trim()) {
+                    found_category = Some("Crypto Seed Phrase");
+                    break;
+                }
+            }
+
+            if let Some(category) = found_category {
+                findings.push(SecretFinding {
+                    filename: entry.file_name().to_string_lossy().to_string(),
+                    path: p.to_string_lossy().to_string(),
+                    category: category.to_string(),
+                });
+            }
+        }
+    }
+    Ok(findings)
+}
+
 /// Signals the secret scanner to stop after the current file and return partial results.
 #[tauri::command]
 pub async fn cancel_secret_scan() -> CommandResult<()> {
-    SCAN_CANCEL_FLAG.store(true, Ordering::Relaxed);
+    SCAN_CANCEL.cancel();
     Ok(())
 }
 
@@ -634,3 +663,6 @@ pub async fn detect_steganography(
 }
 
 // --- END OF FILE tools.rs ---
+
+#[cfg(test)]
+mod tests;

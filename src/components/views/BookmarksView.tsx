@@ -574,7 +574,9 @@ export function BookmarksView() {
                     className="icon-btn-ghost"
                     onClick={(e) => {
                       e.stopPropagation();
-                      saveBookmark({ ...entry, is_pinned: !isPinned });
+                      saveBookmark({ ...entry, is_pinned: !isPinned }).catch(
+                        (err) => setErrMsg(String(err)),
+                      );
                     }}
                   >
                     {isPinned ? <PinOff size={18} /> : <Pin size={18} />}
@@ -844,7 +846,9 @@ export function BookmarksView() {
         <EntryDeleteModal
           title={itemToDelete.title}
           onConfirm={() => {
-            deleteBookmark(itemToDelete.id);
+            deleteBookmark(itemToDelete.id).catch((err) =>
+              setErrMsg(String(err)),
+            );
             setItemToDelete(null);
           }}
           onCancel={() => setItemToDelete(null)}

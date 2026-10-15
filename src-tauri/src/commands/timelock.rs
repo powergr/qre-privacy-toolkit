@@ -9,7 +9,9 @@
 //     files.rs now handles time-locked files natively, since decrypt_file_stream
 //     checks the timestamp and returns a TIME_LOCKED: error when appropriate.
 
-use super::files::{is_already_compressed, reject_critical_path, BatchItemResult, CommandResult};
+use super::files::{
+    compression_level, is_on_portable_mount, reject_critical_path, BatchItemResult, CommandResult,
+};
 use crate::crypto_stream;
 use crate::keychain::MasterKey;
 use crate::state::SessionState;
@@ -38,20 +40,7 @@ pub async fn lock_file_with_timelock(
     unlock_at: u64,
     compression_mode: Option<String>,
 ) -> CommandResult<BatchItemResult> {
-    // ── PATH VALIDATION ───────────────────────────────────────────────────────
-    let path = Path::new(&file_path);
-
-    if path.components().any(|c| c == Component::ParentDir) {
-        return Err("Path traversal not allowed.".to_string());
-    }
-    reject_critical_path(path)?;
-
-    if !path.is_absolute() {
-        return Err("File path must be absolute.".to_string());
-    }
-    if file_path.ends_with(".qre") {
-        return Err("Cannot time-lock an already-encrypted .qre file.".to_string());
-    }
+    validate_timelock_source_path(&file_path)?;
 
     // ── TIMESTAMP VALIDATION (authoritative — Rust side) ─────────────────────
     timelock::validate_unlock_at(unlock_at)?;
@@ -72,11 +61,7 @@ pub async fn lock_file_with_timelock(
             let mounts = portable_mounts_arc
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let path_low = file_path.to_lowercase();
-            if mounts
-                .keys()
-                .any(|m| path_low.starts_with(&m.to_lowercase()))
-            {
+            if is_on_portable_mount(&file_path, &mounts) {
                 return Ok(BatchItemResult {
                     name: filename,
                     success: false,
@@ -116,17 +101,7 @@ pub async fn lock_file_with_timelock(
 
         // Compression level
         let mode_str = compression_mode.unwrap_or_else(|| "auto".to_string());
-        let level = match mode_str.as_str() {
-            "store" => 0,
-            "extreme" => 19,
-            _ => {
-                if is_already_compressed(&filename) {
-                    1
-                } else {
-                    3
-                }
-            }
-        };
+        let level = compression_level(&mode_str, &filename);
 
         utils::emit_progress(&app, &format!("Time-locking: {}", filename), 10);
 
@@ -195,28 +170,48 @@ pub fn get_file_timelock_status(qre_path: String) -> CommandResult<TimeLockStatu
         return Err("Path traversal not allowed.".to_string());
     }
 
-    match crypto_stream::read_timelock_header(&qre_path) {
-        Ok(Some(meta)) => {
-            let now = timelock::now_secs();
-            let is_locked = now < meta.locked_until;
-            let remaining = if is_locked {
-                timelock::format_duration(meta.locked_until.saturating_sub(now))
+    let locked_until = crypto_stream::read_timelock_header(&qre_path)
+        .ok()
+        .flatten()
+        .map(|meta| meta.locked_until);
+    Ok(timelock_status_at(locked_until, timelock::now_secs()))
+}
+
+/// Builds the status the UI shows. `None` means not time-locked, a V5 file, or unreadable.
+pub(crate) fn timelock_status_at(locked_until: Option<u64>, now: u64) -> TimeLockStatus {
+    match locked_until {
+        Some(until) => {
+            let is_locked = now < until;
+            let remaining_display = if is_locked {
+                timelock::format_duration(until.saturating_sub(now))
             } else {
                 String::new()
             };
-            Ok(TimeLockStatus {
-                is_locked,
-                locked_until: meta.locked_until,
-                remaining_display: remaining,
-            })
+            TimeLockStatus { is_locked, locked_until: until, remaining_display }
         }
-        // Not time-locked, V5 file, or unreadable — treat as unlocked
-        Ok(None) | Err(_) => Ok(TimeLockStatus {
-            is_locked: false,
-            locked_until: 0,
-            remaining_display: String::new(),
-        }),
+        None => TimeLockStatus { is_locked: false, locked_until: 0, remaining_display: String::new() },
     }
 }
 
+/// Source-path rules for time-locking a file. The frontend check is UX only.
+pub(crate) fn validate_timelock_source_path(file_path: &str) -> CommandResult<()> {
+    let path = Path::new(file_path);
+
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err("Path traversal not allowed.".to_string());
+    }
+    reject_critical_path(path)?;
+
+    if !path.is_absolute() {
+        return Err("File path must be absolute.".to_string());
+    }
+    if file_path.ends_with(".qre") {
+        return Err("Cannot time-lock an already-encrypted .qre file.".to_string());
+    }
+    Ok(())
+}
+
 // --- END OF FILE src-tauri/src/commands/timelock.rs ---
+
+#[cfg(test)]
+mod tests;
