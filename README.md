@@ -33,7 +33,7 @@ QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically 
 
 ### **1. 🔐 File Encryption**
 
-Secure any file—photos, tax documents, 50GB video backups—using military-grade **AES-256-GCM**.
+Secure any file, such as photos, tax documents or 50GB video backups, using military-grade **AES-256-GCM**.
 
 - **Unlimited Size:** Powered by a custom **Rust Streaming Engine**, you can encrypt files of any size without exhausting your RAM.
 - **Smart Compression:** Automatically compresses documents while skipping already-compressed media files to save CPU cycles.
@@ -63,8 +63,8 @@ Grabs text from your clipboard, encrypts it into a secure history, and **wipes**
 
 A dual-purpose media privacy suite:
 
-- **Meta Cleaner:** Scrub hidden GPS coordinates, camera/device models, and author data from Images (JPG/PNG/WebP/TIFF), PDFs, Office Docs, ZIP archives, Audio (MP3/FLAC/OGG), Video (MP4/MOV), and RAW camera formats (CR2/NEF/ARW/DNG, analysis-only — cleaning is disabled to protect irreplaceable originals). Embedded images (cover art, pasted photos) are scrubbed recursively too, not just the outer file.
-- **Steganography Detector:** Two complementary checks on an image's decoded pixel data — a direct plaintext-recovery pass that tries to read a hidden message straight out of each color channel's Least Significant Bits, and a statistical pass that flags a channel/region whose LSB entropy is an outlier relative to the rest of that image, for encrypted or compressed payloads that don't look like readable text.
+- **Meta Cleaner:** Scrub hidden GPS coordinates, camera/device models, and author data from Images (JPG/PNG/WebP/TIFF), PDFs, Office Docs, ZIP archives, Audio (MP3/FLAC/OGG), Video (MP4/MOV), and RAW camera formats. RAW formats (CR2/NEF/ARW/DNG) are analysis-only: cleaning is disabled to protect irreplaceable originals. Embedded images (cover art, pasted photos) are scrubbed recursively too, not just the outer file.
+- **Steganography Detector:** Two complementary checks run on an image's decoded pixel data. A direct plaintext-recovery pass tries to read a hidden message straight out of each color channel's Least Significant Bits. A statistical pass flags a channel or region whose LSB entropy is an outlier relative to the rest of the image. This catches encrypted or compressed payloads that don't look like readable text.
 
 ### **7. 🕵️‍♂️ Local Secret Scanner & Breach Check**
 
@@ -107,7 +107,7 @@ Detects malicious files hiding behind fake extensions (e.g., `salary.pdf.exe`). 
 
 ## 💾 Portable USB Vaults
 
-Transform any standard USB flash drive into a highly secure, cross-platform encrypted vault—no hardware encryption chips required.
+Transform any standard USB flash drive into a highly secure, cross-platform encrypted vault. No hardware encryption chips required.
 
 - **True Portability:** Initialize a USB drive on your PC, unplug it, and securely unlock your files on any Windows, macOS, or Linux machine running QRE.
 - **Multi-Vault Architecture:** QRE’s Rust backend functions as a dynamic Key Manager, securely holding multiple active `MasterKeys` in isolated memory environments simultaneously.
@@ -117,18 +117,26 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ---
 
-## New in v2.8.3
+## New in v2.8.4
 
-- **Security:** Fixed a symlink-following bug in the Shredder. Deleting a folder containing a symlink or junction could overwrite files outside it. Symlinks are now unlinked in place, never followed.
-- **Security:** Closed a command-injection risk in the free-space-wipe and TRIM tools. The drive letter wasn't strictly validated before use. It's now checked before it ever reaches the shell.
-- **Fixed:** encrypted-file saves now explicitly flush to disk. Before, a late write error like disk-full could go unnoticed. A save could report success even on a truncated file.
-- **Fixed:** copying some non-English or emoji text into the Secure Clipboard could crash that save. Long previews are now always cut on a safe character boundary.
-- **Fixed:** a UI bug could silently ignore a setting you just changed. This affected Paranoid Mode, compression, and keyfile choices. Toggling one right before Lock/Unlock now always applies it.
-- **Fixed:** a race condition in the Vault, Notes, Bookmarks, and Clipboard views. Editing two entries in quick succession could silently discard one change.
-- **Fixed:** native window theme syncing was dead code. It never ran on any platform. The OS window frame now correctly follows the app's theme.
-- **Fixed:** shredding or wiping 1 TB or more could show a broken byte count. This showed up in progress and result screens.
-- **Fixed:** several smaller issues: a keychain-init race, duplicate wordlist entries, and missing keyboard-shortcut guards.
-- **Maintenance:** routine npm and Cargo dependency updates. Also bumped `rand`, `sha2`/`sha1`/`md-5`, and `zip` to remove 5 duplicate crates from the dependency tree. See the dependency audit notes below for details.
+- **Security:** A 2FA secret key could end up in the application log. It no longer does.
+- **Security:** The recovery code of a new USB vault is now wiped from the clipboard 30 seconds after you copy it. The sign-in screen already did this.
+- **Security:** Leaving a screen no longer cancels the 30 second clipboard wipe of a copied password, note or code.
+- **Security:** When your session ends, open dialogs close and any typed USB vault password is discarded. Before, a stale dialog could be waiting after you signed in again.
+- **Fixed:** Cancel now really cancels. In the Shredder, the free-space wipe, the Metadata Cleaner and the System Cleaner, the screen used to return to normal while files were still being changed. You could start a second run on the same files. These screens now show "Cancelling…" until the work has stopped. A cancelled scan, hash or clean also no longer affects the next one.
+- **Fixed:** Pasting a folder into itself in the Files screen is now refused with a clear message.
+- **Fixed:** Password Vault: exported 2FA keys used to come back as note text when re-imported. Import now finds columns by name, so files from other password managers work too. Pressing Save twice no longer stores an entry twice.
+- **Fixed:** Secure Notes: Replace could paste the whole note into itself, and Find skipped the first match. The heading and list buttons now put their marker at the start of the line. A code block without a closing fence now shows in the preview. A slow auto-save could store a new note twice.
+- **Fixed:** The Time-Lock dialog used UTC for its earliest and latest dates, so the limits were off by your time zone. A one hour lock no longer reads "60 minutes".
+- **Fixed:** The update dialog said "installed" before the install had finished, and it hid a failed restart.
+- **Fixed:** Paranoid Mode could start encryption twice, or after you cancelled the mouse-movement step. It also asked for movement when no file was selected.
+- **Fixed:** Files screen: time-lock badges from a folder you had left could appear in the new one. A message about a time-locked file was lost when another file failed. Shortcuts such as Backspace no longer act behind an open dialog. Cancelling in the address bar no longer opens the typed path.
+- **Fixed:** Several screens could show results for something you had already left, such as a slow folder listing, QR code, scan or metadata report. The newest request now always wins.
+- **Fixed:** A failed delete or pin was silent in some screens, and a CSV import could claim success when the save had failed. Both now report the problem.
+- **Fixed:** The exported report of the Integrity Checker now matches the results shown on screen.
+- **Fixed:** System Cleaner: "Confirm & Clean" in the preview could be clicked a second time while cleaning. It also now opens on a category that has items.
+- **Maintenance:** The Tauri plugins now match the Tauri version, which fixes the release build. Updated `zip`, `zstd`, `lopdf`, Vite and other npm and Cargo packages, and cleared the Android build warnings.
+- **Testing:** The project now has 459 Rust tests and over 1,500 frontend tests, and every screen and dialog is covered. Each push to GitHub runs a fast subset, and a full run happens weekly.
 
 Also see: Time-Lock Encryption, added in v2.7.6. Read more in the [Time-lock blog post](https://powergr.github.io/privacy_toolkit/blog-timelock-encryption.html).
 
