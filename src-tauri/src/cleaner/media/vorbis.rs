@@ -476,6 +476,10 @@ mod tests {
 
         bytes.extend_from_slice(&[0u8; 16]); // MD5 signature (unused, all zero)
 
+        // Dummy audio bytes after the metadata. Real FLAC files always have them.
+        // lofty 0.25.4 truncates a file wrongly when shrunk metadata ends at EOF.
+        bytes.extend_from_slice(&[0xFF, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
         fs::write(path, bytes).unwrap();
     }
 

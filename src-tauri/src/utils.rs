@@ -549,7 +549,7 @@ mod tests {
             let mut found_secret = false;
             for i in 0..archive.len() {
                 let file = archive.by_index(i).unwrap();
-                if file.name().contains("secret") {
+                if file.name().unwrap().contains("secret") {
                     found_secret = true;
                 }
             }

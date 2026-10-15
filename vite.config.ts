@@ -11,29 +11,29 @@ export default defineConfig({
   resolve: {
     // FIX: Force resolution of Tauri packages to avoid "undefined" errors
     alias: {
-      "@tauri-apps/api": resolve(__dirname, "node_modules/@tauri-apps/api"),
+      "@tauri-apps/api": resolve(import.meta.dirname, "node_modules/@tauri-apps/api"),
       "@tauri-apps/plugin-shell": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-shell"
       ),
       "@tauri-apps/plugin-dialog": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-dialog"
       ),
       "@tauri-apps/plugin-fs": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-fs"
       ),
       "@tauri-apps/plugin-clipboard-manager": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-clipboard-manager"
       ),
       "@tauri-apps/plugin-global-shortcut": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-global-shortcut"
       ),
       "@tauri-apps/plugin-process": resolve(
-        __dirname,
+        import.meta.dirname,
         "node_modules/@tauri-apps/plugin-process"
       ),
     },

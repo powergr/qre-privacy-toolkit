@@ -701,7 +701,7 @@ pub(super) fn strip_office(input: &Path, output: &Path, options: &CleaningOption
     let mut entries: Vec<Entry> = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let compression = entry.compression();
         let unix_mode = entry.unix_mode();
         let mut content = Vec::new();
@@ -851,7 +851,7 @@ pub fn analyze_zip_reader<R: Read + std::io::Seek>(
     let sample_count = archive.len().min(20);
     for i in 0..sample_count {
         if let Ok(entry) = archive.by_index(i) {
-            let name = entry.name().to_string();
+            let name = String::from_utf8_lossy(entry.name_raw()).into_owned();
             // Malformed/unusual DOS timestamps can make this None — skip the
             // entry rather than crash on a file that isn't ours to control.
             let Some(dt) = entry.last_modified() else {
@@ -912,11 +912,11 @@ pub(super) fn clean_zip_metadata(input: &Path, output: &Path) -> Result<()> {
     let mut zip_writer = zip::ZipWriter::new(out_file);
 
     // Strip any global archive comments (often used by WinRAR/7z to tag the creator)
-    zip_writer.set_comment("");
+    zip_writer.set_comment("")?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let name = file.name().to_string();
+        let name = file.name()?.into_owned();
 
         let options = SimpleFileOptions::default()
             .compression_method(file.compression())
@@ -1330,7 +1330,7 @@ mod tests {
         {
             let zip_file = fs::File::create(&zip_path).unwrap();
             let mut writer = zip::ZipWriter::new(zip_file);
-            writer.set_comment("Created by TestApp v2.0");
+            writer.set_comment("Created by TestApp v2.0").unwrap();
             let opts = zip::write::SimpleFileOptions::default();
             writer.start_file("hello.txt", opts).unwrap();
             writer.write_all(b"hello world").unwrap();
