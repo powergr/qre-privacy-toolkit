@@ -298,6 +298,10 @@ jobs:
           }
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default is "tools platform-tools". Google removed the "tools"
+          # package from the current command-line tools, so installing it fails the job.
+          packages: platform-tools
       - name: Install dependencies
         run: npm install
 
