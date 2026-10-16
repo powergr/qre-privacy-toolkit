@@ -898,7 +898,7 @@ describe("ShredderView - TRIM", () => {
     await openDrive();
     await confirmTrim();
     await waitFor(() => expect(banner()).toBeInTheDocument());
-    expect(banner()!.querySelector("span")!.textContent).toBe("TRIM failed: access denied");
+    expect(banner()!.querySelector(".ui-banner__text")!.textContent).toBe("TRIM failed: access denied");
   });
 
   it("does not cut an error short at a dot inside a name or number", async () => {
@@ -1014,5 +1014,49 @@ describe("ShredderView - keyboard shortcuts", () => {
     fireEvent.click(screen.getByTestId("top-tab-drive"));
     ctrlO();
     expect(mockOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("ShredderView - shared parts", () => {
+  it("shows the start screen in the shared drop zone, with a button that opens the picker once", async () => {
+    mockOpen.mockResolvedValueOnce(null);
+    render(<ShredderView />);
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Select Files/ }));
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows the file list in its own box, not in the drop zone, once files are chosen", async () => {
+    render(<ShredderView />);
+    await addFiles(["/a.txt"]);
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    expect(document.querySelector(".shred-zone")).toBeInTheDocument();
+  });
+
+  it("shows the working state in the shared progress card, starting at 0%", async () => {
+    const gate = deferred<unknown>();
+    handlers.batch_shred_files = () => gate.promise;
+    render(<ShredderView />);
+    await startShred();
+    const card = await screen.findByTestId("progress-card");
+    expect(card).toHaveClass("ui-progress");
+    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
+    expect(within(card).getByTestId("progress-starting")).toBeInTheDocument();
+    await act(async () => {
+      gate.resolve(shredResult());
+    });
+  });
+
+  it("shows an error in the shared banner, which can be dismissed", async () => {
+    handlers.dry_run_shred = () => {
+      throw "boom";
+    };
+    render(<ShredderView />);
+    await addFiles(["/a.txt"]);
+    fireEvent.click(await screen.findByText("Preview"));
+    await waitFor(() => expect(banner()).toBeInTheDocument());
+    expect(banner()!.querySelector(".ui-banner")).toHaveClass("ui-banner--error");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss message" }));
+    expect(banner()).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "../../test-support/rtl";
 import "@testing-library/jest-dom";
 import { BookmarksView } from "./BookmarksView";
 import { BookmarkEntry } from "../../hooks/useBookmarks";

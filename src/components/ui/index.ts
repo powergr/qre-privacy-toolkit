@@ -6,6 +6,8 @@ export { Card, type CardProps } from "./Card";
 export { Badge, type BadgeProps, type BadgeTone } from "./Badge";
 export { Chip, type ChipProps } from "./Chip";
 export { EmptyState, type EmptyStateProps } from "./EmptyState";
+export { Banner, type BannerProps, type BannerTone } from "./Banner";
+export { DropZone, type DropZoneProps } from "./DropZone";
 export { ProgressCard, type ProgressCardProps } from "./ProgressCard";
 export { ActionBar, type ActionBarProps } from "./ActionBar";
 export { ShortcutHint, shortcutKeys, isMacPlatform, type ShortcutHintProps } from "./ShortcutHint";

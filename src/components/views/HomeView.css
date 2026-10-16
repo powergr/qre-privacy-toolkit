@@ -1,0 +1,372 @@
+/* The Home screen. Colours and sizes come from src/styles/tokens.css.
+
+   Three rules shape it:
+   1. Everything sits in one centred column, so a wide or full-screen window never
+      leaves the content pushed to one side.
+   2. Every tool tile is the same size (--tile-h), and that size grows with the height of
+      the window. A normal window shows all twelve tools without scrolling, and a tall
+      one gets roomier tiles. The whole block is centred vertically.
+   3. In a very small window the tiles shrink, and below that the page scrolls. */
+
+.home {
+  --tile-h: clamp(56px, 10vh, 104px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-5) var(--space-6);
+  box-sizing: border-box;
+}
+
+.home__inner {
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+  /* Auto margins centre the block vertically when there is room, and never cut off the
+     top when there is not. */
+  margin-block: auto;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ---------- Header: the name on the left, the jump button on the right ---------- */
+.home__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  flex-shrink: 0;
+}
+.home__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.home__logo {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  flex: none;
+}
+.home__title {
+  margin: 0;
+  font-size: var(--font-2xl);
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.home__subtitle {
+  margin: var(--space-1) 0 0;
+  color: var(--text-dim);
+  font-size: var(--font-lg);
+}
+
+/* ---------- Jump bar button ---------- */
+.home__jump {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 1 380px;
+  min-width: 240px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--font-md);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+.home__jump:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+.home__jump-label {
+  flex: 1;
+  text-align: left;
+}
+
+/* ---------- Three columns ----------
+   The columns are as tall as the tallest one. The last panel of a shorter column grows
+   to meet it, so all three end on the same line. */
+.home__columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-6);
+  align-items: stretch;
+}
+.home__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.home-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: none;
+}
+.home-group__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  flex-shrink: 0;
+}
+.home-group__dot {
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--tile-hue, var(--text-dim));
+}
+.home-group__title {
+  margin: 0;
+  font-size: var(--font-md);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-main);
+}
+.home-group__blurb {
+  font-size: var(--font-md);
+  color: var(--text-dim);
+}
+.home-group__tiles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---------- Tool tiles ----------
+   They keep the .home-card class, which App.css also styles, so the rules below are
+   written to win over it. Every tile has the same height. */
+.home-card.home-tile {
+  flex: none;
+  height: var(--tile-h);
+  /* App.css gives .home-card a 160 pixel minimum, so it has to be cleared. */
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.home-card.home-tile:hover {
+  transform: none;
+  border-color: var(--tile-hue, var(--accent));
+  box-shadow: var(--shadow-2);
+}
+.home-tile__icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-md);
+  color: var(--tile-hue, var(--accent-text));
+  flex: none;
+}
+.home-tile__icon--small {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+}
+.home-tile__icon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--tile-hue, var(--accent));
+  opacity: 0.16;
+}
+.home-tile__icon > svg {
+  position: relative;
+}
+.home-tile__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.home-tile__title {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.home-tile__desc {
+  font-size: var(--font-md);
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* ---------- Protection and recent panels ---------- */
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+/* The last panel in each column grows to the bottom of the column. */
+.home-protection,
+.home-recent-panel {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.home-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.home-panel__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--text-main);
+}
+.home-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.home-panel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 30px;
+}
+.home-panel__text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-md);
+  color: var(--text-main);
+}
+.home-panel__empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-md);
+  line-height: 1.55;
+}
+.home-recent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.home-recent:hover {
+  background: var(--highlight);
+}
+.home-recent__go {
+  color: var(--text-dim);
+  flex: none;
+}
+
+/* ---------- Short windows: compact, so it still fits without scrolling ----------
+   Under about 700 pixels high the tile descriptions are hidden (they remain as
+   tooltips) and the spacing is tighter. */
+@media (max-height: 700px) and (min-width: 601px) {
+  .home {
+    --tile-h: 46px;
+    padding: var(--space-3) var(--space-4);
+  }
+  .home__inner,
+  .home__columns {
+    gap: var(--space-3);
+  }
+  .home__col {
+    gap: var(--space-3);
+  }
+  .home__logo {
+    width: 44px;
+    height: 44px;
+  }
+  .home__title {
+    font-size: var(--font-xl);
+  }
+  .home-group {
+    gap: var(--space-2);
+  }
+  .home-group__tiles {
+    gap: var(--space-2);
+  }
+  .home-tile__desc {
+    display: none;
+  }
+  .home-tile__icon {
+    width: 34px;
+    height: 34px;
+  }
+  .home-panel {
+    gap: var(--space-2);
+  }
+}
+
+/* ---------- Narrower windows: two columns, then one ---------- */
+@media (max-width: 980px) {
+  .home__columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+  .home__col:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+  .home-protection,
+  .home-recent-panel {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 600px) {
+  .home {
+    --tile-h: 64px;
+    height: auto;
+    padding: var(--space-4) var(--space-3);
+    overflow-y: visible;
+  }
+  .home__columns {
+    grid-template-columns: 1fr;
+  }
+  .home__jump {
+    flex: 1 1 100%;
+  }
+  .home__title {
+    font-size: var(--font-xl);
+  }
+}

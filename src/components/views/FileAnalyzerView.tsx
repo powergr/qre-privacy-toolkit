@@ -12,12 +12,15 @@ import {
   CheckCircle,
   FolderSearch,
   Search,
-  X,
   Globe,
-  Upload,
   RefreshCw,
 } from "lucide-react";
 import { useDragDrop } from "../../hooks/useDragDrop";
+import { Banner } from "../ui/Banner";
+import { Badge } from "../ui/Badge";
+import { Chip } from "../ui/Chip";
+import { DropZone } from "../ui/DropZone";
+import { ProgressCard } from "../ui/ProgressCard";
 
 interface AnalysisResult {
   path: string;
@@ -36,6 +39,8 @@ export function FileAnalyzerView() {
   const [scanLog, setScanLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  // Which findings the list shows: everything, only dangers, or only warnings.
+  const [filter, setFilter] = useState<"all" | "DANGER" | "WARNING">("all");
 
   const isCancelled = useRef(false);
   // Identifies the scan that owns the screen. Starting or cancelling a scan bumps it,
@@ -77,6 +82,7 @@ export function FileAnalyzerView() {
     setError(null);
     setScanPath(path || "Smart Scan (Downloads, Documents, and Desktop)");
     setScanLog([]);
+    setFilter("all");
     isCancelled.current = false;
 
     try {
@@ -138,83 +144,41 @@ export function FileAnalyzerView() {
   // Ctrl+O picks a folder to scan, unless a scan is running.
   useShortcut("o", handleBrowse, { enabled: !loading });
 
+  const dangers = results.filter((r) => r.risk_level === "DANGER").length;
+  const warnings = results.filter((r) => r.risk_level === "WARNING").length;
+  const visible = filter === "all" ? results : results.filter((r) => r.risk_level === filter);
+  const columns = "100px 2fr 100px 100px 3fr 100px 50px";
+
   return (
     <ToolPage
       title="File Analyzer"
       subtitle="Deep scan files and folders for spoofed extensions, RTLO Unicode tricks, and hidden executables."
       centered={!hasScanned}
     >
-      {/* Global Error Banner */}
       {error && (
-        <div
-          style={{
-            maxWidth: 600,
-            margin: "0 auto 20px auto",
-            padding: 12,
-            background: "rgba(239, 68, 68, 0.1)",
-            border: "1px solid rgba(239, 68, 68, 0.3)",
-            borderRadius: 8,
-            color: "var(--btn-danger)",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-          <span style={{ flex: 1 }}>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "inherit",
-              padding: 4,
-            }}
-          >
-            <X size={16} />
-          </button>
+        <div style={{ width: "100%", maxWidth: 600, margin: "0 auto 20px auto" }}>
+          <Banner tone="error" onDismiss={() => setError(null)}>
+            {error}
+          </Banner>
         </div>
       )}
 
-      {/* DROP ZONE */}
+      {/* START AND WORKING STATES */}
       {!hasScanned && (
         <>
-          <div
-            // Only make the whole zone clickable on desktop
-            className={`shred-zone ${isDragging && !isMobile ? "active" : ""}`}
-            style={{
-              borderColor: loading ? "var(--text-dim)" : "var(--accent)",
-              width: "100%",
-              maxWidth: "600px",
-              margin: "0 auto",
-              minHeight: "300px",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              position: "relative",
-              cursor: !loading && !isMobile ? "pointer" : "default",
-            }}
-            onClick={!loading && !isMobile ? handleBrowse : undefined}
-          >
+          <div style={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
             {loading ? (
-              <div
-                style={{ textAlign: "center", width: "100%", padding: 20 }}
-              >
-                <Search
-                  size={48}
-                  color="var(--accent)"
-                  className="spinner"
-                  style={{ marginBottom: 15 }}
+              <>
+                <ProgressCard
+                  title="Deep Scanning..."
+                  detail={scanPath?.split(/[/\\]/).pop() || "Directory"}
+                  percent={null}
+                  onCancel={handleCancel}
+                  cancelLabel="Cancel Scan"
                 />
-                <h3>Deep Scanning...</h3>
-                <p style={{ color: "var(--text-dim)", marginBottom: 15 }}>
-                  {scanPath?.split(/[/\\]/).pop() || "Directory"}
-                </p>
-
-                {/* Terminal Log Box */}
+                {/* The newest files the scan has looked at */}
                 <div
+                  aria-label="Files being scanned"
                   style={{
                     background: "#0a0a0a",
                     padding: 15,
@@ -223,12 +187,12 @@ export function FileAnalyzerView() {
                     fontSize: "0.8rem",
                     color: "#4ade80",
                     width: "100%",
-                    maxWidth: "400px",
                     height: "80px",
-                    margin: "0 auto",
+                    marginTop: 16,
                     overflow: "hidden",
                     border: "1px solid #333",
                     textAlign: "left",
+                    boxSizing: "border-box",
                   }}
                 >
                   {scanLog.map((line, i) => (
@@ -245,76 +209,33 @@ export function FileAnalyzerView() {
                     </div>
                   ))}
                 </div>
-
-                <button
-                  className="secondary-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCancel();
-                  }}
-                  style={{ marginTop: 20 }}
-                >
-                  Cancel Scan
-                </button>
-              </div>
+              </>
+            ) : isMobile ? (
+              // Phones: no drag and drop and no folder picker, only the smart scan
+              <DropZone
+                icon={<FolderSearch size={42} />}
+                hue="var(--hue-inspect)"
+                title="Scan Your Device"
+                description="Scans Downloads, Documents, and common folders"
+                buttonLabel="Start Smart Scan"
+                buttonIcon={<Search size={16} aria-hidden="true" />}
+                onBrowse={() => runScan(null)}
+                clickable={false}
+              />
             ) : (
-              <div style={{ textAlign: "center", opacity: 0.8 }}>
-                <div
-                  style={{
-                    background: "rgba(0, 122, 204, 0.1)",
-                    padding: 20,
-                    borderRadius: "50%",
-                    marginBottom: 20,
-                    display: "inline-block",
-                  }}
-                >
-                  <FolderSearch size={48} color="var(--accent)" />
-                </div>
-
-                {isMobile ? (
-                  // --- MOBILE: no drag & drop, no folder picker ---
-                  <>
-                    <h3>Scan Your Device</h3>
-                    <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
-                      Scans Downloads, Documents, and common folders
-                    </p>
-                    <button
-                      className="secondary-btn"
-                      style={{ marginTop: 10 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runScan(null);
-                      }}
-                    >
-                      <Search size={16} style={{ marginRight: 8 }} /> Start
-                      Smart Scan
-                    </button>
-                  </>
-                ) : (
-                  // --- DESKTOP: drag & drop + folder picker ---
-                  <>
-                    <h3>Drag & Drop a File or Folder</h3>
-                    <p style={{ marginBottom: 10, color: "var(--text-dim)" }}>
-                      Supports single files and deep directory traversal
-                    </p>
-                    <button
-                      className="secondary-btn"
-                      style={{ marginTop: 10 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleBrowse();
-                      }}
-                    >
-                      <Upload size={16} style={{ marginRight: 8 }} /> Select
-                      Target
-                    </button>
-                  </>
-                )}
-              </div>
+              <DropZone
+                icon={<FolderSearch size={42} />}
+                hue="var(--hue-inspect)"
+                title="Drag & Drop a File or Folder"
+                description="Supports single files and deep directory traversal"
+                buttonLabel="Select Target"
+                onBrowse={handleBrowse}
+                active={isDragging}
+              />
             )}
           </div>
 
-          {/* Smart Scan link — desktop only, mobile already shows Smart Scan as primary */}
+          {/* Smart Scan link: desktop only, phones already show the smart scan as the main button */}
           {!loading && !isMobile && (
             <div style={{ textAlign: "center", marginTop: 25 }}>
               <button
@@ -326,36 +247,32 @@ export function FileAnalyzerView() {
                   fontSize: "0.9rem",
                 }}
               >
-                Or run a Smart System Scan (Downloads, Documents, Desktop)
+                Or run a Smart System Scan (Downloads, Documents, and Desktop)
               </button>
             </div>
           )}
         </>
       )}
 
-      {/* RESULTS GRID */}
+      {/* RESULTS */}
       {hasScanned && !loading && (
-        <div
-          style={{
-            maxWidth: 1000,
-            margin: "0 auto",
-            width: "100%",
-          }}
-        >
-          {/* Top Action Bar */}
+        <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%" }}>
+          {/* Summary, filters and a way to start again */}
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
               marginBottom: 20,
             }}
           >
-            <div style={{ display: "flex", gap: 20, fontSize: "0.9rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: "0.9rem" }}>
               {results.length === 0 ? (
                 <div
                   style={{
-                    color: "#4ade80",
+                    color: "var(--status-ok)",
                     fontWeight: "bold",
                     display: "flex",
                     alignItems: "center",
@@ -365,18 +282,17 @@ export function FileAnalyzerView() {
                   <CheckCircle size={18} /> No malicious files found
                 </div>
               ) : (
-                <>
-                  <div
-                    style={{ color: "var(--btn-danger)", fontWeight: "bold" }}
-                  >
-                    {results.filter((r) => r.risk_level === "DANGER").length}{" "}
-                    Dangers
-                  </div>
-                  <div style={{ color: "#f59e0b", fontWeight: "bold" }}>
-                    {results.filter((r) => r.risk_level === "WARNING").length}{" "}
-                    Warnings
-                  </div>
-                </>
+                <div role="group" aria-label="Show" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Chip selected={filter === "all"} onClick={() => setFilter("all")}>
+                    {`All ${results.length}`}
+                  </Chip>
+                  <Chip selected={filter === "DANGER"} onClick={() => setFilter("DANGER")}>
+                    {`${dangers} Dangers`}
+                  </Chip>
+                  <Chip selected={filter === "WARNING"} onClick={() => setFilter("WARNING")}>
+                    {`${warnings} Warnings`}
+                  </Chip>
+                </div>
               )}
             </div>
 
@@ -392,13 +308,19 @@ export function FileAnalyzerView() {
             </button>
           </div>
 
+          {results.length > 0 && visible.length === 0 && (
+            <Banner tone="info">
+              Nothing in this category. Choose All to see every finding.
+            </Banner>
+          )}
+
           {/* GRID HEADER */}
-          {results.length > 0 && (
+          {visible.length > 0 && (
             <>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "50px 2fr 100px 100px 3fr 100px 50px",
+                  gridTemplateColumns: columns,
                   padding: "12px 10px",
                   background: "var(--panel-bg)",
                   fontWeight: "bold",
@@ -418,28 +340,28 @@ export function FileAnalyzerView() {
               </div>
 
               {/* GRID ROWS */}
-              {results.map((item, i) => (
+              {visible.map((item, i) => (
                 <div
-                  key={i}
+                  key={item.path + i}
                   style={{
                     display: "grid",
-                    gridTemplateColumns:
-                      "50px 2fr 100px 100px 3fr 100px 50px",
+                    gridTemplateColumns: columns,
                     padding: "12px 10px",
                     alignItems: "center",
                     borderBottom: "1px solid var(--border)",
-                    background:
-                      item.risk_level === "DANGER"
-                        ? "rgba(239, 68, 68, 0.05)"
-                        : "transparent",
+                    background: item.risk_level === "DANGER" ? "var(--status-danger-soft)" : "transparent",
                     fontSize: "0.9rem",
                   }}
                 >
                   <div>
                     {item.risk_level === "DANGER" ? (
-                      <ShieldAlert size={20} color="var(--btn-danger)" />
+                      <Badge tone="danger">
+                        <ShieldAlert size={13} aria-hidden="true" /> Danger
+                      </Badge>
                     ) : (
-                      <AlertTriangle size={20} color="#f59e0b" />
+                      <Badge tone="warn">
+                        <AlertTriangle size={13} aria-hidden="true" /> Warning
+                      </Badge>
                     )}
                   </div>
                   <div
@@ -454,28 +376,11 @@ export function FileAnalyzerView() {
                   >
                     {item.filename}
                   </div>
+                  <div style={{ fontFamily: "monospace", color: "var(--text-dim)" }}>.{item.extension}</div>
+                  <div style={{ fontFamily: "monospace", color: "var(--accent-text)" }}>.{item.real_type}</div>
                   <div
                     style={{
-                      fontFamily: "monospace",
-                      color: "var(--text-dim)",
-                    }}
-                  >
-                    .{item.extension}
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "monospace",
-                      color: "var(--accent)",
-                    }}
-                  >
-                    .{item.real_type}
-                  </div>
-                  <div
-                    style={{
-                      color:
-                        item.risk_level === "DANGER"
-                          ? "var(--btn-danger)"
-                          : "#f59e0b",
+                      color: item.risk_level === "DANGER" ? "var(--status-danger)" : "var(--status-warn)",
                       fontSize: "0.85rem",
                       fontWeight: 500,
                     }}
@@ -495,9 +400,7 @@ export function FileAnalyzerView() {
                     <button
                       className="icon-btn-ghost"
                       title="Search this mismatch online"
-                      onClick={() =>
-                        searchMismatch(item.extension, item.real_type)
-                      }
+                      onClick={() => searchMismatch(item.extension, item.real_type)}
                       style={{ color: "var(--text-dim)" }}
                     >
                       <Globe size={16} />

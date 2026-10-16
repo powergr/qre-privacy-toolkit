@@ -13,12 +13,12 @@ import {
   Mail,
   Phone,
   Link as LinkIcon,
-  AlertTriangle,
-  Info,
-  X,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import { Banner } from "../ui/Banner";
+import { Segmented } from "../ui/Segmented";
+import { ShortcutHint } from "../ui/ShortcutHint";
 
 interface QrResult {
   svg: string;
@@ -262,69 +262,31 @@ export function QrView() {
       subtitle="Create offline QR codes for WiFi, contacts, links, and more."
     >
       <div style={{ width: "100%" }}>
-        {/* ERROR BANNER */}
-        {error && (
-          <div
-            style={{
-              maxWidth: 900,
-              margin: "0 auto 20px auto",
-              padding: 12,
-              background: "rgba(239, 68, 68, 0.1)",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              borderRadius: 8,
-              color: "var(--btn-danger)",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <AlertTriangle size={18} />
-            <span style={{ flex: 1 }}>{error}</span>
-            <button
-              onClick={() => setError(null)}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "inherit" }}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        )}
+        {/* MESSAGES */}
+        <div style={{ maxWidth: 900, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
+          {error && (
+            <Banner tone="error" onDismiss={() => setError(null)}>
+              {error}
+            </Banner>
+          )}
 
-        {/* VALIDATION FEEDBACK */}
-        {validation && !validation.valid && (
-          <div
-            style={{
-              maxWidth: 900,
-              margin: "0 auto 20px auto",
-              padding: 12,
-              background: "rgba(239, 68, 68, 0.1)",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              borderRadius: 8,
-              color: "var(--btn-danger)",
-            }}
-          >
-            {validation.errors.map((err, i) => (
-              <div key={i}>• {err}</div>
-            ))}
-          </div>
-        )}
+          {validation && !validation.valid && (
+            <Banner tone="error">
+              {validation.errors.map((err, i) => (
+                <div key={i}>• {err}</div>
+              ))}
+            </Banner>
+          )}
 
-        {validation && validation.warnings.length > 0 && (
-          <div
-            style={{
-              maxWidth: 900,
-              margin: "0 auto 20px auto",
-              padding: 12,
-              background: "rgba(245, 158, 11, 0.1)",
-              border: "1px solid rgba(245, 158, 11, 0.3)",
-              borderRadius: 8,
-              color: "#f59e0b",
-            }}
-          >
-            {validation.warnings.map((warn, i) => (
-              <div key={i}>⚠️ {warn}</div>
-            ))}
-          </div>
-        )}
+          {validation && validation.warnings.length > 0 && (
+            <Banner tone="warning">
+              {validation.warnings.map((warn, i) => (
+                <div key={i}>{warn}</div>
+              ))}
+            </Banner>
+          )}
+        </div>
+        <div style={{ height: 20 }} />
 
         <div
           style={{
@@ -339,42 +301,18 @@ export function QrView() {
           {/* LEFT: CONTROLS */}
           <div className="modern-card" style={{ flex: 1, minWidth: 320, maxWidth: 500, padding: 25 }}>
             {/* TABS */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(5, 1fr)",
-                gap: 5,
-                marginBottom: 20,
-                background: "var(--bg-color)",
-                padding: 4,
-                borderRadius: 8,
-              }}
-            >
-              {(Object.keys(TEMPLATES) as TabType[]).map((tab) => {
-                const Icon = TEMPLATES[tab].icon;
-                return (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    style={{
-                      padding: "8px 4px",
-                      border: "none",
-                      background: activeTab === tab ? "var(--highlight)" : "transparent",
-                      color: activeTab === tab ? "var(--accent)" : "var(--text-dim)",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      fontSize: "0.75rem",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    <Icon size={14} />
-                    {TEMPLATES[tab].name}
-                  </button>
-                );
-              })}
+            <div style={{ marginBottom: 20 }}>
+              <Segmented<TabType>
+                fill
+                variant="tabs"
+                label="Kind of QR code"
+                value={activeTab}
+                onChange={setActiveTab}
+                options={(Object.keys(TEMPLATES) as TabType[]).map((tab) => {
+                  const Icon = TEMPLATES[tab].icon;
+                  return { value: tab, label: TEMPLATES[tab].name, icon: <Icon size={14} /> };
+                })}
+              />
             </div>
 
             {/* INPUT FORM */}
@@ -646,23 +584,10 @@ export function QrView() {
 
             {/* QR INFO */}
             {qrResult && validation && validation.estimated_size && (
-              <div
-                style={{
-                  background: "rgba(59, 130, 246, 0.1)",
-                  border: "1px solid rgba(59, 130, 246, 0.3)",
-                  borderRadius: 8,
-                  padding: 12,
-                  fontSize: "0.85rem",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                  <Info size={14} />
-                  <strong>QR Code Info</strong>
-                </div>
-                <div style={{ color: "var(--text-dim)" }}>
-                  {validation.estimated_size}
-                </div>
-              </div>
+              <Banner tone="info">
+                <strong>QR Code Info</strong>
+                <div style={{ color: "var(--text-dim)" }}>{validation.estimated_size}</div>
+              </Banner>
             )}
           </div>
 
@@ -712,7 +637,7 @@ export function QrView() {
                 onClick={saveSvg}
                 disabled={!qrResult}
               >
-                <Download size={18} style={{ marginRight: 8 }} /> SVG
+                <Download size={18} style={{ marginRight: 8 }} /> SVG <ShortcutHint shortcut="Mod+Shift+S" />
               </button>
               <button
                 className="auth-btn"
@@ -720,7 +645,7 @@ export function QrView() {
                 onClick={savePng}
                 disabled={!qrResult}
               >
-                <ImageIcon size={18} style={{ marginRight: 8 }} /> PNG
+                <ImageIcon size={18} style={{ marginRight: 8 }} /> PNG <ShortcutHint shortcut="Mod+S" />
               </button>
             </div>
 

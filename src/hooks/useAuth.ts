@@ -27,6 +27,9 @@ export function useAuth() {
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
 
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the app will lock itself (Date.now() scale), or 0 when no countdown is running.
+  // A ref, so the status bar can tick every second without re-rendering the app.
+  const idleDeadlineRef = useRef(0);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
@@ -89,6 +92,8 @@ export function useAuth() {
     setShowTimeoutWarning(false);
     setCountdown(COUNTDOWN_SECONDS);
     if (view === "dashboard") {
+      idleDeadlineRef.current =
+        Date.now() + WARNING_DELAY_MS + COUNTDOWN_SECONDS * 1000;
       idleTimerRef.current = setTimeout(
         () => triggerWarning(),
         WARNING_DELAY_MS,
@@ -97,7 +102,11 @@ export function useAuth() {
   }, [view, triggerWarning]);
 
   useEffect(() => {
-    if (view !== "dashboard") return;
+    if (view !== "dashboard") {
+      // No countdown on the sign-in screens.
+      idleDeadlineRef.current = 0;
+      return;
+    }
     const events = ["mousemove", "keydown", "click", "touchstart"];
     const handler = () => resetIdleTimer();
     events.forEach((event) => window.addEventListener(event, handler));
@@ -282,6 +291,7 @@ export function useAuth() {
     showTimeoutWarning,
     countdown,
     stayLoggedIn: resetIdleTimer,
+    idleDeadlineRef,
     handleInit,
     handleRestoreBackup,
     handleLogin,

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "../../test-support/rtl";
 import "@testing-library/jest-dom";
 import { VaultView } from "./VaultView";
 import { VaultEntry } from "../../hooks/useVault";
@@ -678,12 +678,15 @@ describe("VaultView - copying", () => {
     }
   });
 
-  it("closes the copy confirmation", async () => {
+  it("confirms the copy with a toast that can be dismissed", async () => {
     await renderVault([makeEntry("a", "GitHub")]);
     await act(async () => {
       fireEvent.click(within(listRow("GitHub")).getByTitle("Copy Password"));
     });
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.getByText(/Password copied/).closest(".ui-toast")).toHaveClass("ui-toast--success");
+    // Success is no longer a dialog, so there is no OK button to press.
+    expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
     expect(screen.queryByText(/Password copied/)).not.toBeInTheDocument();
   });
 });

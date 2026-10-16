@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Card } from "./Card";
 import { Button } from "./Button";
 import "./ui.css";
@@ -16,6 +17,8 @@ export interface ProgressCardProps {
    */
   cancelling?: boolean;
   cancelLabel?: string;
+  /** Extra lines under the bar, for tools that report more than one detail. */
+  children?: ReactNode;
 }
 
 /**
@@ -29,6 +32,7 @@ export function ProgressCard({
   onCancel,
   cancelling = false,
   cancelLabel = "Cancel",
+  children,
 }: ProgressCardProps) {
   const known = typeof percent === "number" && Number.isFinite(percent);
   const value = known ? Math.min(100, Math.max(0, Math.round(percent as number))) : 0;
@@ -57,6 +61,7 @@ export function ProgressCard({
           style={known ? { width: `${value}%` } : undefined}
         />
       </div>
+      {children && <div className="ui-progress__extra">{children}</div>}
       {onCancel && (
         <div className="ui-progress__foot">
           <Button size="sm" onClick={onCancel} disabled={cancelling}>

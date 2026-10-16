@@ -139,9 +139,9 @@ describe("BreachView - local secret scanner", () => {
     expect(await screen.findByText("Scanning local files...")).toBeInTheDocument();
     const longPath = "C:\\" + "deep\\".repeat(20) + "file.txt";
     act(() => progress({ payload: longPath }));
-    expect(screen.getByText(`> ...${longPath.slice(-47)}`)).toBeInTheDocument();
+    expect(screen.getByText(`...${longPath.slice(-47)}`)).toBeInTheDocument();
     act(() => progress({ payload: "C:\\short.txt" }));
-    expect(screen.getByText("> C:\\short.txt")).toBeInTheDocument();
+    expect(screen.getByText("C:\\short.txt")).toBeInTheDocument();
 
     await act(async () => {
       pending.resolve([]);
@@ -494,5 +494,103 @@ describe("BreachView - keyboard shortcuts", () => {
     tab("Password Breach");
     fireEvent.keyDown(window, { key: "o", ctrlKey: true });
     expect(mockOpen).not.toHaveBeenCalled();
+  });
+});
+
+describe("BreachView - local scanner, shared parts", () => {
+  it("shows the start screen in the shared drop zone", () => {
+    render(<BreachView />);
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+  });
+
+  it("shows an indeterminate progress card with a Cancel Scan button while scanning", async () => {
+    const pending = deferred<Finding[]>();
+    scanImpl = () => pending.promise;
+    render(<BreachView />);
+    await startScan();
+    await screen.findByText("Scanning local files...");
+    expect(screen.getByRole("progressbar", { name: "Scanning local files..." })).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByRole("button", { name: "Cancel Scan" })).toBeInTheDocument();
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => pending.resolve([]));
+  });
+
+  it("shows a scan failure in an error banner you can dismiss, with the start screen still there", async () => {
+    scanImpl = () => Promise.reject("internal error");
+    render(<BreachView />);
+    await startScan();
+    const message = await screen.findByText(/Scan failed/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(screen.getByText("Scan for Exposed Secrets")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss message" }));
+    expect(screen.queryByText(/Scan failed/)).not.toBeInTheDocument();
+  });
+
+  it("shows only the Scan Cancelled message after a cancel, not the start screen too", async () => {
+    const pending = deferred<Finding[]>();
+    scanImpl = () => pending.promise;
+    render(<BreachView />);
+    await startScan();
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Scan" }));
+    await screen.findByText("Scan Cancelled");
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => pending.resolve([]));
+  });
+
+  it("reports a clean folder in a success banner", async () => {
+    render(<BreachView />);
+    await startScan();
+    const message = await screen.findByText("Your local files are clean.");
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--success");
+  });
+});
+
+describe("BreachView - local scanner, findings", () => {
+  const found = () => [
+    { filename: "a.txt", path: "C:\\docs\\a.txt", category: "Password" },
+    { filename: ".env", path: "C:\\docs\\.env", category: "API Key" },
+    { filename: "b.csv", path: "C:\\docs\\b.csv", category: "Password" },
+    { filename: "c.txt", path: "C:\\docs\\c.txt", category: "Password" },
+  ];
+  const summary = () =>
+    Array.from(screen.getByRole("group", { name: "Findings by category" }).querySelectorAll(".ui-badge")).map(
+      (b) => b.textContent?.trim(),
+    );
+
+  it("counts the findings per category, the most common first", async () => {
+    scanImpl = () => Promise.resolve(found());
+    render(<BreachView />);
+    await startScan();
+    await screen.findByText("4 Exposed Secrets Found");
+    expect(summary()).toEqual(["3 Password", "1 API Key"]);
+  });
+
+  it("shows no category summary when nothing was found", async () => {
+    render(<BreachView />);
+    await startScan();
+    await screen.findByText("No secrets exposed!");
+    expect(screen.queryByRole("group", { name: "Findings by category" })).not.toBeInTheDocument();
+  });
+
+  it("opens the folder of a finding with Locate", async () => {
+    scanImpl = () => Promise.resolve(found());
+    render(<BreachView />);
+    await startScan();
+    await screen.findByText("4 Exposed Secrets Found");
+    fireEvent.click(screen.getByRole("button", { name: "Locate .env" }));
+    expect(calls("show_in_folder")).toHaveLength(1);
+    expect(calls("show_in_folder")[0][1]).toEqual({ path: "C:\\docs\\.env" });
+  });
+
+  it("says so when the folder of a finding cannot be opened", async () => {
+    scanImpl = () => Promise.resolve(found());
+    render(<BreachView />);
+    await startScan();
+    await screen.findByText("4 Exposed Secrets Found");
+    mockInvoke.mockImplementation((cmd: string) => (cmd === "show_in_folder" ? Promise.reject("nope") : Promise.resolve(null)));
+    fireEvent.click(screen.getByRole("button", { name: "Locate a.txt" }));
+    const message = await screen.findByText("Could not open the folder for this file.");
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(screen.getByText("4 Exposed Secrets Found")).toBeInTheDocument();
   });
 });

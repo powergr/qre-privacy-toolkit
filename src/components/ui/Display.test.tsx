@@ -248,3 +248,28 @@ describe("ShortcutHint", () => {
     expect(container.firstChild).toHaveAttribute("title", "Ctrl + F");
   });
 });
+
+describe("ProgressCard - extra lines", () => {
+  it("shows what it is given under the bar, and nothing when given nothing", () => {
+    const { rerender } = render(
+      <ProgressCard title="Shredding" percent={10}>
+        <span>File 1 of 3</span>
+      </ProgressCard>,
+    );
+    expect(screen.getByText("File 1 of 3").closest(".ui-progress__extra")).toBeInTheDocument();
+    rerender(<ProgressCard title="Shredding" percent={10} />);
+    expect(document.querySelector(".ui-progress__extra")).toBeNull();
+  });
+
+  it("puts the extra lines between the bar and the Cancel button", () => {
+    render(
+      <ProgressCard title="Shredding" percent={10} onCancel={() => {}}>
+        <span>File 1 of 3</span>
+      </ProgressCard>,
+    );
+    const card = screen.getByTestId("progress-card");
+    const order = Array.from(card.children).map((c) => c.className);
+    expect(order.indexOf("ui-progress__track")).toBeLessThan(order.indexOf("ui-progress__extra"));
+    expect(order.indexOf("ui-progress__extra")).toBeLessThan(order.indexOf("ui-progress__foot"));
+  });
+});

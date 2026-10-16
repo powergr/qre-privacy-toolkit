@@ -1,3 +1,4 @@
+import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { useBookmarks, BookmarkEntry } from "../../hooks/useBookmarks";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
-import { EntryDeleteModal, InfoModal, ErrorModal } from "../modals/AppModals";
+import { EntryDeleteModal, ErrorModal } from "../modals/AppModals";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
@@ -60,7 +61,7 @@ export function BookmarksView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const toast = useToast();
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [downloadWarnUrl, setDownloadWarnUrl] = useState<string | null>(null);
   const [isAndroid, setIsAndroid] = useState(false);
@@ -175,7 +176,7 @@ export function BookmarksView() {
     try {
       const count = await invoke<number>("import_browser_bookmarks");
       setShowImportModal(false);
-      setMsg(`Successfully imported ${count} bookmarks.`);
+      toast.success(`Successfully imported ${count} bookmarks.`);
       refreshVault();
     } catch (e) {
       setShowImportModal(false);
@@ -876,8 +877,6 @@ export function BookmarksView() {
           onCancel={() => setItemToDelete(null)}
         />
       )}
-
-      {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
 
       {errMsg && (
         <ErrorModal message={errMsg} onClose={() => setErrMsg(null)} />

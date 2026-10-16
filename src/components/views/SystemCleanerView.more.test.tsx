@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "../../test-support/rtl";
 import "@testing-library/jest-dom";
 import { SystemCleanerView } from "./SystemCleanerView";
 
@@ -579,8 +579,9 @@ describe("SystemCleanerView - cleaning", () => {
         payload: { files_processed: 3, total_files: 12, bytes_freed: 3 * MB, current_file: "x", percentage: 25 },
       }),
     );
-    expect(screen.getByText("25% — 3 of 12 files")).toBeInTheDocument();
-    expect(screen.getByText("3 MB freed")).toBeInTheDocument();
+    expect(screen.getByText("3 of 12 files · 3 MB freed")).toBeInTheDocument();
+    expect(screen.getByText("25%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Cleaning in Progress..." })).toHaveAttribute("aria-valuenow", "25");
     expect(document.querySelector('div[style*="width: 25%"]')).not.toBeNull();
     await act(async () => {
       gate.resolve(cleanOk());
@@ -698,12 +699,13 @@ describe("SystemCleanerView - cleaning", () => {
     expect(screen.queryByText("Cleanup completed successfully!")).not.toBeInTheDocument();
   });
 
-  it("closes the success pop-up", async () => {
+  it("confirms the cleanup with a toast that can be dismissed", async () => {
     handlers.clean_system_junk = () => cleanOk();
     await ready();
     clean();
-    await screen.findByText("Cleanup completed successfully!");
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    const toast = (await screen.findByText("Cleanup completed successfully!")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
     expect(screen.queryByText("Cleanup completed successfully!")).not.toBeInTheDocument();
   });
 
@@ -723,7 +725,7 @@ describe("SystemCleanerView - cleaning", () => {
     await ready();
     clean();
     await screen.findByText("Cleanup Complete!");
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
     handlers.scan_system_junk = () => [junk("fresh")];
     fireEvent.click(screen.getByText("Scan Again"));
     expect(await screen.findByText("Item fresh")).toBeInTheDocument();
@@ -1040,7 +1042,7 @@ describe("SystemCleanerView - registry", () => {
     pick("Item a");
     fireEvent.click(cleanButton());
     await screen.findByText("Cleanup Complete!");
-    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
     fireEvent.click(tabButton("Registry"));
     handlers.scan_system_junk = () => [junk("fresh")];
     fireEvent.click(screen.getByText("Scan Again"));
@@ -1054,5 +1056,111 @@ describe("SystemCleanerView - registry", () => {
     await scanRegistry([reg("r1", { elevation_required: true, warning: "Careful" })]);
     expect(screen.getByText("Admin")).toBeInTheDocument();
     expect(screen.getByText("Entry r1")).toHaveStyle({ color: "#f59e0b" });
+  });
+});
+
+// ─── Shared parts ────────────────────────────────────────────────────────────
+
+describe("SystemCleanerView - shared parts", () => {
+  it("shows the start screen in the shared drop zone", async () => {
+    await renderView();
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+  });
+
+  it("shows an indeterminate progress card while scanning, and no drop zone", async () => {
+    const gate = deferred<unknown[]>();
+    handlers.scan_system_junk = () => gate.promise;
+    await renderView();
+    fireEvent.click(screen.getByText("Scan Now"));
+    await screen.findByText("Scanning System...");
+    expect(screen.getByRole("progressbar", { name: "Scanning System..." })).not.toHaveAttribute("aria-valuenow");
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => {
+      gate.resolve([]);
+    });
+  });
+
+  it("shows a failed scan in an error banner", async () => {
+    handlers.scan_system_junk = () => {
+      throw "access denied";
+    };
+    await renderView();
+    fireEvent.click(screen.getByText("Scan Now"));
+    const message = await screen.findByText("Scan failed: access denied");
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+  });
+
+  it("shows warnings about the selection in a warning banner", async () => {
+    await scanWith([junk("w", { warning: "Signs you out of sites", name: "Cookies" })]);
+    pick("Cookies");
+    const message = screen.getByText(/Selected items include warnings/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--warning");
+  });
+
+  it("offers the administrator relaunch as the action of its banner", async () => {
+    await scanWith([junk("e", { elevation_required: true, name: "Update cache" })]);
+    pick("Update cache");
+    const banner = screen.getByText(/require administrator privileges/).closest(".ui-banner") as HTMLElement;
+    expect(banner).toHaveClass("ui-banner--info");
+    expect(within(banner).getByRole("button", { name: "Relaunch as Administrator" })).toBeInTheDocument();
+  });
+
+  it("says in the action bar how much the selection will free, and keeps it up to date", async () => {
+    await scanWith([junk("a"), junk("b", { size: 3 * MB })]);
+    expect(screen.getByText("Will free 0 B")).toBeInTheDocument();
+    pick("Item a");
+    expect(screen.getByText("Will free 5 MB")).toBeInTheDocument();
+    pick("Item b");
+    expect(screen.getByText("Will free 8 MB")).toBeInTheDocument();
+    expect(document.querySelector(".ui-actionbar")).toContainElement(cleanButton());
+  });
+
+  it("lists the errors of a finished clean in a warning banner", async () => {
+    handlers.clean_system_junk = () => cleanOk({ errors: ["a locked", "b locked"] });
+    await scanWith([junk("a")]);
+    pick("Item a");
+    fireEvent.click(cleanButton());
+    const heading = await screen.findByText("Errors (2):");
+    expect(heading.closest(".ui-banner")).toHaveClass("ui-banner--warning");
+    expect(screen.getByText("• a locked")).toBeInTheDocument();
+  });
+
+  it("warns about developer caches and privacy traces in warning banners on their tabs", async () => {
+    await scanWith([
+      junk("d", { category: "Developer", name: "npm cache" }),
+      junk("p", { category: "Privacy", name: "Shell history" }),
+    ]);
+    fireEvent.click(tabButton("Developer"));
+    expect(screen.getByText(/Developer caches are excluded/).closest(".ui-banner")).toHaveClass("ui-banner--warning");
+    fireEvent.click(tabButton("Privacy"));
+    expect(screen.getByText(/Privacy items are excluded/).closest(".ui-banner")).toHaveClass("ui-banner--warning");
+  });
+
+  it("tells you in the action bar that a backup comes first, until it is made", async () => {
+    handlers.scan_registry = () => [reg("r1")];
+    handlers.backup_registry = () => ({ backup_path: "C:\backup\reg.reg", success: true, error: null });
+    await scanWith([junk("a")]);
+    fireEvent.click(tabButton("Registry"));
+    fireEvent.click(screen.getByText("Scan Registry", { selector: "button" }));
+    await screen.findByText("Entry r1");
+    expect(screen.getByText("Create a backup first, then clean.")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Create Backup"));
+    await screen.findByText("Backup saved");
+    expect(screen.queryByText("Create a backup first, then clean.")).not.toBeInTheDocument();
+  });
+
+  it("shows the registry start screen as a drop zone and its scanning as a progress card", async () => {
+    const gate = deferred<unknown[]>();
+    handlers.scan_registry = () => gate.promise;
+    await scanWith([junk("a")]);
+    fireEvent.click(tabButton("Registry"));
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Scan Registry", { selector: "button" }));
+    await screen.findByText("Scanning Registry...");
+    expect(screen.getByRole("progressbar", { name: "Scanning Registry..." })).not.toHaveAttribute("aria-valuenow");
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => {
+      gate.resolve([]);
+    });
   });
 });

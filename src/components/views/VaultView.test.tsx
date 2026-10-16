@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "../../test-support/rtl";
 import "@testing-library/jest-dom";
 import { VaultView } from "./VaultView";
 import { VaultEntry } from "../../hooks/useVault";

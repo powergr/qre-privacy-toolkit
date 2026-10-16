@@ -1,3 +1,4 @@
+import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useEffect, useRef } from "react";
 import {
@@ -22,7 +23,6 @@ import {
   PinOff, // <--- Icons
 } from "lucide-react";
 import { useClipboard, ClipboardEntry } from "../../hooks/useClipboard";
-import { InfoModal } from "../modals/AppModals";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
 import "./ClipboardView.css";
@@ -41,7 +41,7 @@ export function ClipboardView() {
     updateRetention,
   } = useClipboard();
 
-  const [msg, setMsg] = useState<string | null>(null);
+  const toast = useToast();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Ctrl+F jumps to the search box.
@@ -123,7 +123,7 @@ export function ClipboardView() {
     setActionError(null);
     try {
       await securePaste();
-      setMsg("Content securely pasted and system clipboard cleared.");
+      toast.success("Content securely pasted and system clipboard cleared.");
     } catch (e) {
       setActionError(String(e));
     }
@@ -133,7 +133,7 @@ export function ClipboardView() {
     setActionError(null);
     try {
       await copyToClipboard(text);
-      setMsg("Copied to clipboard — will auto-clear in 30 seconds.");
+      toast.success("Copied to clipboard — will auto-clear in 30 seconds.");
     } catch (e) {
       setActionError(String(e));
     }
@@ -162,7 +162,7 @@ export function ClipboardView() {
     try {
       await clearAll();
       setShowClearConfirm(false);
-      setMsg("All clipboard history cleared.");
+      toast.success("All clipboard history cleared.");
     } catch (e) {
       setActionError(String(e));
       setShowClearConfirm(false);
@@ -522,7 +522,6 @@ export function ClipboardView() {
         })}
       </div>
 
-      {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
 
       {showClearConfirm && (
         <div

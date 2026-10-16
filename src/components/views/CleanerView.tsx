@@ -1,3 +1,6 @@
+import { Banner } from "../ui/Banner";
+import { DropZone } from "../ui/DropZone";
+import { ProgressCard } from "../ui/ProgressCard";
 import { useShortcut } from "../../hooks/useShortcut";
 import { ToolScroll, ToolTabs } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
@@ -516,38 +519,14 @@ export function CleanerView() {
 
         {/* ERROR BANNER */}
         {error && (
-          <div
-            style={{
-              maxWidth: 700,
-              margin: "0 auto 20px auto",
-              padding: 12,
-              background: "rgba(239, 68, 68, 0.1)",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              borderRadius: 8,
-              color: "var(--btn-danger)",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-            <span style={{ flex: 1 }}>{error}</span>
-            <button
-              onClick={() => setError(null)}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: "inherit",
-                padding: 4,
-              }}
-            >
-              <X size={16} />
-            </button>
+          <div style={{ maxWidth: 700, margin: "0 auto 20px auto" }}>
+            <Banner tone="error" onDismiss={() => setError(null)}>
+              {error}
+            </Banner>
           </div>
         )}
 
-        {/* 
+        {/*
           FIX 2: Content Wrappers 
           We wrap the content in a flex:1 container. 
           If the tool is in its "Empty State" (Drag & Drop), we apply center alignment to this inner wrapper.
@@ -569,59 +548,25 @@ export function CleanerView() {
                   justifyContent: "center",
                 }}
               >
-                <div
-                  className={`shred-zone ${isDragging ? "active" : ""}`}
-                  style={{
-                    width: "100%",
-                    maxWidth: "500px",
-                    minHeight: "300px",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "40px",
-                    cursor: "pointer",
-                    borderColor: isDragging ? "var(--accent)" : "var(--border)",
-                  }}
-                  onClick={handleBrowse}
-                >
-                  <div
-                    style={{
-                      background: "rgba(234, 179, 8, 0.1)",
-                      padding: 20,
-                      borderRadius: "50%",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <ScanSearch size={48} color="#eab308" />
-                  </div>
-                  <h3>Drag & Drop Files</h3>
-                  <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-                    or click to select
-                  </p>
-                  <button className="secondary-btn">
-                    <Upload size={16} style={{ marginRight: 8 }} /> Select Files
-                  </button>
-                  <p
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "var(--text-dim)",
-                      marginTop: 20,
-                    }}
-                  >
-                    Supports: JPG, PNG, WebP, TIFF, PDF, DOCX, XLSX, PPTX, ZIP,
-                    MP3, FLAC, OGG, MP4, MOV, CR2, NEF, ARW, DNG
-                  </p>
-                  <p
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "var(--text-dim)",
-                      marginTop: 5,
-                    }}
-                  >
-                    Maximum file size: 100 MB (2 GB for MP3, FLAC, OGG, MP4,
-                    MOV, CR2, NEF, ARW, DNG)
-                  </p>
+                <div style={{ width: "100%", maxWidth: 500 }}>
+                  <DropZone
+                    icon={<ScanSearch size={48} />}
+                    hue="var(--hue-clean)"
+                    title="Drag & Drop Files"
+                    description="or click to select"
+                    hint={
+                      <>
+                        Supports: JPG, PNG, WebP, TIFF, PDF, DOCX, XLSX, PPTX, ZIP,
+                        MP3, FLAC, OGG, MP4, MOV, CR2, NEF, ARW, DNG
+                        <br />
+                        Maximum file size: 100 MB (2 GB for MP3, FLAC, OGG, MP4,
+                        MOV, CR2, NEF, ARW, DNG)
+                      </>
+                    }
+                    buttonLabel="Select Files"
+                    onBrowse={handleBrowse}
+                    active={isDragging}
+                  />
                 </div>
               </div>
             )}
@@ -636,65 +581,27 @@ export function CleanerView() {
                   justifyContent: "center",
                 }}
               >
-                <div
-                  className="modern-card"
-                  style={{
-                    width: "100%",
-                    maxWidth: 600,
-                    padding: 30,
-                    textAlign: "center",
-                  }}
-                >
-                  <Loader2
-                    size={48}
-                    className="spinner"
-                    style={{ marginBottom: 20 }}
+                <div style={{ width: "100%", maxWidth: 600 }}>
+                  <ProgressCard
+                    title="Cleaning Metadata..."
+                    percent={progress ? progress.percentage : 0}
+                    detail={progress ? `${progress.current} of ${progress.total} files` : "Preparing…"}
+                    onCancel={cancelClean}
+                    cancelling={cancelling}
                   />
-                  <h3>Cleaning Metadata...</h3>
-                  <div
-                    style={{
-                      width: "100%",
-                      background: "var(--border)",
-                      height: 8,
-                      borderRadius: 4,
-                      overflow: "hidden",
-                      margin: "20px 0",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${progress?.percentage ?? 0}%`,
-                        height: "100%",
-                        background: "var(--accent)",
-                        transition: "width 0.3s ease",
-                      }}
-                    />
-                  </div>
-                  <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                    {progress
-                      ? `${progress.percentage}% — ${progress.current} of ${progress.total} files`
-                      : "Preparing…"}
-                  </p>
                   {progress?.current_file && (
                     <p
                       style={{
                         color: "var(--text-dim)",
                         fontSize: "0.85rem",
                         marginTop: 10,
+                        textAlign: "center",
                         wordBreak: "break-all",
                       }}
                     >
                       {progress.current_file}
                     </p>
                   )}
-                  <button
-                    className="secondary-btn"
-                    onClick={cancelClean}
-                    disabled={cancelling}
-                    style={{ marginTop: 20 }}
-                  >
-                    {cancelling ? "Cancelling…" : "Cancel"}
-                  </button>
                 </div>
               </div>
             )}
@@ -1591,51 +1498,17 @@ export function CleanerView() {
                   justifyContent: "center",
                 }}
               >
-                <div
-                  className={`shred-zone ${isDragging ? "active" : ""}`}
-                  style={{
-                    width: "100%",
-                    maxWidth: "500px",
-                    minHeight: "300px",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: "40px",
-                    textAlign: "center",
-                    cursor: "pointer",
-                    borderColor: isDragging ? "var(--accent)" : "var(--border)",
-                  }}
-                  onClick={handleStegoBrowse}
-                >
-                  <div
-                    style={{
-                      background: "rgba(234, 179, 8, 0.1)",
-                      padding: 20,
-                      borderRadius: "50%",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <Fingerprint size={48} color="#eab308" />
-                  </div>
-                  <h3>Scan for Hidden Data (Steganography)</h3>
-                  <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-                    Analyze images for encrypted payloads hidden in their
-                    pixels.
-                  </p>
-                  <button className="auth-btn">
-                    <Upload size={16} style={{ marginRight: 8 }} /> Select
-                    Images
-                  </button>
-                  <p
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "var(--text-dim)",
-                      marginTop: 20,
-                    }}
-                  >
-                    Supports: JPG, PNG, BMP, WebP
-                  </p>
+                <div style={{ width: "100%", maxWidth: 500 }}>
+                  <DropZone
+                    icon={<Fingerprint size={48} />}
+                    hue="var(--hue-clean)"
+                    title="Scan for Hidden Data (Steganography)"
+                    description="Analyze images for encrypted payloads hidden in their pixels."
+                    hint="Supports: JPG, PNG, BMP, WebP"
+                    buttonLabel="Select Images"
+                    onBrowse={handleStegoBrowse}
+                    active={isDragging}
+                  />
                 </div>
               </div>
             )}
@@ -1649,26 +1522,12 @@ export function CleanerView() {
                   justifyContent: "center",
                 }}
               >
-                <div
-                  className="modern-card"
-                  style={{
-                    width: "100%",
-                    maxWidth: 600,
-                    padding: 30,
-                    textAlign: "center",
-                  }}
-                >
-                  <Loader2
-                    size={48}
-                    className="spinner"
-                    style={{ marginBottom: 20 }}
+                <div style={{ width: "100%", maxWidth: 600 }}>
+                  <ProgressCard
+                    title="Analyzing Pixel Entropy..."
+                    percent={stegoProgress ? stegoProgress.percentage : null}
+                    detail={stegoProgress?.current_file}
                   />
-                  <h3>Analyzing Pixel Entropy...</h3>
-                  {stegoProgress && (
-                    <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                      {stegoProgress.percentage}% — {stegoProgress.current_file}
-                    </p>
-                  )}
                 </div>
               </div>
             )}

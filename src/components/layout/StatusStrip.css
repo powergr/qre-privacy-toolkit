@@ -1,0 +1,58 @@
+/* The thin bar above every screen. Colours and sizes come from src/styles/tokens.css. */
+
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--font-sm);
+  flex-shrink: 0;
+}
+.status-strip__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.status-strip__timer b {
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+.status-strip__ok {
+  color: var(--status-ok);
+}
+.status-strip__spacer {
+  flex: 1;
+}
+.status-strip__backup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--status-warn-soft);
+  color: var(--status-warn);
+  font: inherit;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.status-strip__backup:hover {
+  border-color: var(--status-warn);
+}
+.status-strip__backup-action {
+  text-decoration: underline;
+}
+
+/* Phones get a bottom bar already, and the screen height is precious. */
+@media (max-width: 600px) {
+  .status-strip {
+    display: none;
+  }
+}

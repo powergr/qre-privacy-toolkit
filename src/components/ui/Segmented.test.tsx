@@ -150,3 +150,12 @@ describe("Segmented", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe("Segmented - fill", () => {
+  it("only stretches across its container when asked to", () => {
+    const { rerender } = render(<Segmented label="Kind" options={THEMES} value="system" onChange={() => {}} />);
+    expect(screen.getByRole("radiogroup")).not.toHaveClass("ui-seg--fill");
+    rerender(<Segmented label="Kind" options={THEMES} value="system" onChange={() => {}} fill />);
+    expect(screen.getByRole("radiogroup")).toHaveClass("ui-seg--fill");
+  });
+});

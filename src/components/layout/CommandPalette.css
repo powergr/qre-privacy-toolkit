@@ -1,0 +1,127 @@
+/* The jump bar. Colours and sizes come from src/styles/tokens.css. */
+
+.palette-overlay {
+  z-index: var(--layer-dialog);
+  align-items: flex-start;
+  padding-top: 14vh;
+  animation: ui-fade-in var(--motion-base) var(--ease-out);
+}
+
+.palette {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(520px, 72vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: ui-rise-in var(--motion-base) var(--ease-out);
+}
+.palette:focus {
+  outline: none;
+}
+
+.palette__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-main);
+  font: inherit;
+  font-size: var(--font-lg);
+  padding: var(--space-1) 0;
+  user-select: text;
+}
+.palette__input::placeholder {
+  color: var(--text-dim);
+}
+
+.palette__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  min-height: 0;
+}
+.palette__section {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.palette__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-lg);
+}
+.palette__row--active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.palette__icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  flex: none;
+  color: var(--text-dim);
+}
+.palette__row--active .palette__icon,
+.palette__row--active .palette__hint {
+  color: inherit;
+}
+.palette__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__hint {
+  color: var(--text-dim);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+.palette__empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--font-md);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.palette__foot {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  font-size: var(--font-xs);
+}
+
+@media (pointer: coarse) {
+  .palette__foot {
+    display: none;
+  }
+  .palette__row {
+    min-height: 44px;
+  }
+}

@@ -1,3 +1,4 @@
+import { useToast } from "../ui/Toast";
 import { ToolScroll } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -10,7 +11,10 @@ import {
   BookKey, Search, History,
 } from "lucide-react";
 import { formatSize } from "../../utils/formatting";
-import { InfoModal } from "../modals/AppModals";
+import { ActionBar } from "../ui/ActionBar";
+import { Banner } from "../ui/Banner";
+import { DropZone } from "../ui/DropZone";
+import { ProgressCard } from "../ui/ProgressCard";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERFACES
@@ -112,7 +116,7 @@ export function SystemCleanerView() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading]       = useState(false);
   const [scanned, setScanned]       = useState(false);
-  const [msg, setMsg]               = useState<string | null>(null);
+  const toast = useToast();
   const [error, setError]           = useState<string | null>(null);
 
   // ── Dry-run / preview ───────────────────────────────────────────────────
@@ -245,7 +249,7 @@ export function SystemCleanerView() {
       } else if (result.errors.length > 0) {
         setError(`Cleaned with ${result.errors.length} error(s). See details below.`);
       } else {
-        setMsg("Cleanup completed successfully!");
+        toast.success("Cleanup completed successfully!");
       }
     } catch (e) {
       setError(cancelRequested.current ? "Cleanup cancelled by user." : "Clean failed: " + e);
@@ -298,7 +302,8 @@ export function SystemCleanerView() {
       const result = await invoke<RegistryBackupResult>("backup_registry");
       if (result.success) {
         setRegistryBackupPath(result.backup_path);
-        setMsg(`Registry backup saved to: ${result.backup_path}`);
+        // The path matters, so this one stays up longer than a normal toast.
+        toast.success(`Registry backup saved to: ${result.backup_path}`, { duration: 12000 });
       } else {
         setRegistryError("Backup failed: " + (result.error ?? "Unknown error"));
       }
@@ -340,7 +345,7 @@ export function SystemCleanerView() {
               : ""),
         );
       } else {
-        setMsg(`Registry cleaned: ${result.items_cleaned} entries removed.`);
+        toast.success(`Registry cleaned: ${result.items_cleaned} entries removed.`);
       }
     } catch (e) {
       setRegistryError("Registry clean failed: " + e);
@@ -476,35 +481,24 @@ export function SystemCleanerView() {
         centered={!scanned && !cleanResult && !registryScanned}
       >
 
-        {/* Error banner — junk cleaner */}
+        {/* Errors — junk cleaner and registry */}
         {error && (
-          <div style={{ maxWidth: 700, margin: "0 auto 20px auto", padding: 12,
-            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 8, color: "var(--btn-danger)", display: "flex", alignItems: "center", gap: 10 }}>
-            <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-            <span style={{ flex: 1 }}>{error}</span>
-            <button onClick={() => setError(null)} style={{ background: "none", border: "none",
-              cursor: "pointer", color: "inherit", padding: 4 }}>
-              <X size={16} />
-            </button>
+          <div style={{ maxWidth: 700, margin: "0 auto 20px auto" }}>
+            <Banner tone="error" onDismiss={() => setError(null)}>
+              {error}
+            </Banner>
           </div>
         )}
 
-        {/* Error banner — registry */}
         {registryError && activeTab === "Registry" && (
-          <div style={{ maxWidth: 700, margin: "0 auto 20px auto", padding: 12,
-            background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 8, color: "var(--btn-danger)", display: "flex", alignItems: "center", gap: 10 }}>
-            <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-            <span style={{ flex: 1 }}>{registryError}</span>
-            <button onClick={() => setRegistryError(null)} style={{ background: "none", border: "none",
-              cursor: "pointer", color: "inherit", padding: 4 }}>
-              <X size={16} />
-            </button>
+          <div style={{ maxWidth: 700, margin: "0 auto 20px auto" }}>
+            <Banner tone="error" onDismiss={() => setRegistryError(null)}>
+              {registryError}
+            </Banner>
           </div>
         )}
 
-        {/* ── TAB BAR ─────────────────────────────────────────────────── */}
+        {/* ── TAB BAR        {/* ── TAB BAR ─────────────────────────────────────────────────── */}
         {(scanned || registryScanned) && !showPreview && !cleaning && (
           <div style={{ display: "flex", gap: 4, maxWidth: 700, width: "100%",
             margin: "0 auto 20px auto", background: "var(--panel-bg)",
@@ -545,35 +539,32 @@ export function SystemCleanerView() {
           </div>
         )}
 
-        {/* ── START STATE ─────────────────────────────────────────────── */}
+        {/* ── START STATE AND SCANNING ──────────────────────────────────── */}
         {!scanned && !cleanResult && !registryScanned && (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%" }}>
-            <div className="shred-zone" style={{ width: "100%", maxWidth: 400, display: "flex",
-              flexDirection: "column", alignItems: "center", justifyContent: "center",
-              padding: 40, cursor: loading ? "wait" : "pointer",
-              borderColor: loading ? "var(--text-dim)" : "var(--accent)" }}
-              onClick={!loading ? scan : undefined}>
-              <Brush size={64} color="var(--accent)" className={loading ? "spinner" : ""}
-                style={{ marginBottom: 20 }} />
+            <div style={{ width: "100%", maxWidth: 400 }}>
               {loading ? (
-                <>
-                  <h3>Scanning System...</h3>
-                  <p style={{ color: "var(--text-dim)" }}>Analyzing caches and temp files</p>
-                </>
+                <ProgressCard
+                  title="Scanning System..."
+                  detail="Analyzing caches and temp files"
+                  percent={null}
+                />
               ) : (
-                <>
-                  <h3>Start Scan</h3>
-                  <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-                    Click to analyze junk files across all categories
-                  </p>
-                  <button className="auth-btn" style={{ padding: "10px 30px" }}>Scan Now</button>
-                </>
+                <DropZone
+                  icon={<Brush size={64} />}
+                  hue="var(--hue-clean)"
+                  title="Start Scan"
+                  description="Click to analyze junk files across all categories"
+                  buttonLabel="Scan Now"
+                  buttonIcon={<Search size={16} aria-hidden="true" />}
+                  onBrowse={scan}
+                />
               )}
             </div>
           </div>
         )}
 
-        {/* ── CLEAN SUCCESS STATE ──────────────────────────────────────── */}
+                {/* ── CLEAN SUCCESS STATE ──────────────────────────────────────── */}
         {cleanResult && (
           <div style={{ textAlign: "center", display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center", marginTop: 40, maxWidth: 600, margin: "0 auto" }}>
@@ -586,22 +577,22 @@ export function SystemCleanerView() {
               Deleted {cleanResult.files_deleted.toLocaleString()} file(s)
             </p>
             {cleanResult.errors.length > 0 && (
-              <div style={{ width: "100%", maxWidth: 500, marginBottom: 20,
-                background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
-                borderRadius: 8, padding: 15, textAlign: "left" }}>
-                <h4 style={{ margin: "0 0 10px 0", fontSize: "0.9rem" }}>
-                  Errors ({cleanResult.errors.length}):
-                </h4>
-                <div style={{ maxHeight: 150, overflowY: "auto", fontSize: "0.8rem", color: "var(--text-dim)" }}>
-                  {cleanResult.errors.slice(0, 10).map((err, i) => (
-                    <div key={i} style={{ marginBottom: 5, fontFamily: "monospace" }}>• {err}</div>
-                  ))}
-                  {cleanResult.errors.length > 10 && (
-                    <div style={{ marginTop: 5, fontStyle: "italic" }}>
-                      …and {cleanResult.errors.length - 10} more
-                    </div>
-                  )}
-                </div>
+              <div style={{ width: "100%", maxWidth: 500, marginBottom: 20, textAlign: "left" }}>
+                <Banner tone="warning">
+                  <h4 style={{ margin: "0 0 10px 0", fontSize: "0.9rem" }}>
+                    Errors ({cleanResult.errors.length}):
+                  </h4>
+                  <div style={{ maxHeight: 150, overflowY: "auto", fontSize: "0.8rem", color: "var(--text-dim)" }}>
+                    {cleanResult.errors.slice(0, 10).map((err, i) => (
+                      <div key={i} style={{ marginBottom: 5, fontFamily: "monospace" }}>• {err}</div>
+                    ))}
+                    {cleanResult.errors.length > 10 && (
+                      <div style={{ marginTop: 5, fontStyle: "italic" }}>
+                        …and {cleanResult.errors.length - 10} more
+                      </div>
+                    )}
+                  </div>
+                </Banner>
               </div>
             )}
             <button className="secondary-btn" onClick={scan}
@@ -633,57 +624,44 @@ export function SystemCleanerView() {
               </button>
             </div>
 
-            {/* Warning banners */}
-            {hasWarnings && (
-              <div style={{ marginBottom: 12, padding: 12,
-                background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)",
-                borderRadius: 8, color: "#f59e0b", fontSize: "0.85rem",
-                display: "flex", alignItems: "center", gap: 10 }}>
-                <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                <span>Selected items include warnings. Review carefully before cleaning.</span>
-              </div>
-            )}
+            {/* Notices */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
+              {hasWarnings && (
+                <Banner tone="warning">
+                  Selected items include warnings. Review carefully before cleaning.
+                </Banner>
+              )}
 
-            {hasElevationRequired && (
-              <div style={{ marginBottom: 12, padding: 12,
-                background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.3)",
-                borderRadius: 8, color: "#8b5cf6", fontSize: "0.85rem",
-                display: "flex", alignItems: "center", gap: 10 }}>
-                <Lock size={16} style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>
+              {hasElevationRequired && (
+                <Banner
+                  tone="info"
+                  icon={<Lock size={16} />}
+                  action={isWindows ? (
+                    <button className="secondary-btn" onClick={() => setShowElevationConfirm(true)}
+                      style={{ fontSize: "0.8rem", padding: "5px 12px" }}>
+                      Relaunch as Administrator
+                    </button>
+                  ) : undefined}
+                >
                   Some selected items require administrator privileges.
                   Run as admin or those items will fail with a permissions error.
-                </span>
-                {isWindows && (
-                  <button className="secondary-btn" onClick={() => setShowElevationConfirm(true)}
-                    style={{ flexShrink: 0, fontSize: "0.8rem", padding: "5px 12px" }}>
-                    Relaunch as Administrator
-                  </button>
-                )}
-              </div>
-            )}
+                </Banner>
+              )}
 
-            {activeTab === "Developer" && (
-              <div style={{ marginBottom: 12, padding: 12,
-                background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)",
-                borderRadius: 8, color: "#ef4444", fontSize: "0.85rem",
-                display: "flex", alignItems: "center", gap: 10 }}>
-                <Code2 size={16} style={{ flexShrink: 0 }} />
-                <span>Developer caches are excluded from the default selection.
-                  Cleaning them will require re-downloading packages on next build.</span>
-              </div>
-            )}
+              {activeTab === "Developer" && (
+                <Banner tone="warning" icon={<Code2 size={16} />}>
+                  Developer caches are excluded from the default selection.
+                  Cleaning them will require re-downloading packages on next build.
+                </Banner>
+              )}
 
-            {activeTab === "Privacy" && (
-              <div style={{ marginBottom: 12, padding: 12,
-                background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.25)",
-                borderRadius: 8, color: "#a855f7", fontSize: "0.85rem",
-                display: "flex", alignItems: "center", gap: 10 }}>
-                <ShieldAlert size={16} style={{ flexShrink: 0 }} />
-                <span>Privacy items are excluded from the default selection.
-                  These remove activity traces — shell history deletion is irreversible.</span>
-              </div>
-            )}
+              {activeTab === "Privacy" && (
+                <Banner tone="warning" icon={<ShieldAlert size={16} />}>
+                  Privacy items are excluded from the default selection.
+                  These remove activity traces — shell history deletion is irreversible.
+                </Banner>
+              )}
+            </div>
 
             {/* Empty tab state */}
             {visibleItems.length === 0 && (
@@ -810,33 +788,21 @@ export function SystemCleanerView() {
         {/* ── CLEANING PROGRESS ────────────────────────────────────────── */}
         {cleaning && (
           <div style={{ maxWidth: 600, margin: "0 auto", width: "100%" }}>
-            <div className="modern-card" style={{ padding: 30, textAlign: "center" }}>
-              <Loader2 size={48} className="spinner" style={{ marginBottom: 20 }} />
-              <h3>Cleaning in Progress...</h3>
-              <div style={{ width: "100%", background: "var(--border)", height: 8, borderRadius: 4,
-                overflow: "hidden", margin: "20px 0" }}>
-                <div style={{ width: `${progress?.percentage ?? 0}%`, height: "100%",
-                  background: "var(--accent)", transition: "width 0.3s ease" }} />
-              </div>
-              <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                {progress
-                  ? `${progress.percentage}% — ${progress.files_processed} of ${progress.total_files} files`
-                  : "Preparing…"}
-              </p>
-              {progress && (
-                <p style={{ color: "var(--text-dim)", fontSize: "0.8rem", marginTop: 10, wordBreak: "break-all" }}>
-                  {formatSize(progress.bytes_freed)} freed
-                </p>
-              )}
-              <button className="secondary-btn" onClick={cancelClean} disabled={cancelling}
-                style={{ marginTop: 20 }}>
-                {cancelling ? "Cancelling…" : "Cancel"}
-              </button>
-            </div>
+            <ProgressCard
+              title="Cleaning in Progress..."
+              percent={progress ? progress.percentage : 0}
+              detail={
+                progress
+                  ? `${progress.files_processed} of ${progress.total_files} files · ${formatSize(progress.bytes_freed)} freed`
+                  : "Preparing…"
+              }
+              onCancel={cancelClean}
+              cancelling={cancelling}
+            />
           </div>
         )}
 
-        {/* ── EMPTY STATE ──────────────────────────────────────────────── */}
+        {/* ── EMPTY STATE ──        {/* ── EMPTY STATE ──────────────────────────────────────────────── */}
         {scanned && items.length === 0 && !isRegistryTab && (
           <div style={{ textAlign: "center", display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center", marginTop: 40 }}>
@@ -853,29 +819,26 @@ export function SystemCleanerView() {
         {isRegistryTab && (
           <div style={{ maxWidth: 700, margin: "0 auto", width: "100%" }}>
 
-            {/* Registry start state */}
+            {/* Registry start state and scanning */}
             {!registryScanned && !registryCleaning && (
               <div style={{ display: "flex", justifyContent: "center" }}>
-                <div className="shred-zone" style={{ width: "100%", maxWidth: 420, display: "flex",
-                  flexDirection: "column", alignItems: "center", padding: 40,
-                  cursor: registryLoading ? "wait" : "pointer",
-                  borderColor: registryLoading ? "var(--text-dim)" : "var(--accent)" }}
-                  onClick={!registryLoading ? scanRegistry : undefined}>
-                  <Database size={64} color="var(--accent)" className={registryLoading ? "spinner" : ""}
-                    style={{ marginBottom: 20 }} />
+                <div style={{ width: "100%", maxWidth: 420 }}>
                   {registryLoading ? (
-                    <>
-                      <h3>Scanning Registry...</h3>
-                      <p style={{ color: "var(--text-dim)" }}>Checking for orphaned entries</p>
-                    </>
+                    <ProgressCard
+                      title="Scanning Registry..."
+                      detail="Checking for orphaned entries"
+                      percent={null}
+                    />
                   ) : (
-                    <>
-                      <h3>Scan Registry</h3>
-                      <p style={{ color: "var(--text-dim)", marginBottom: 16, textAlign: "center" }}>
-                        Find orphaned installers, invalid app paths, MUI cache leftovers, and broken startup entries.
-                      </p>
-                      <button className="auth-btn" style={{ padding: "10px 30px" }}>Scan Registry</button>
-                    </>
+                    <DropZone
+                      icon={<Database size={64} />}
+                      hue="var(--hue-clean)"
+                      title="Scan Registry"
+                      description="Find orphaned installers, invalid app paths, MUI cache leftovers, and broken startup entries."
+                      buttonLabel="Scan Registry"
+                      buttonIcon={<Search size={16} aria-hidden="true" />}
+                      onBrowse={scanRegistry}
+                    />
                   )}
                 </div>
               </div>
@@ -1040,11 +1003,11 @@ export function SystemCleanerView() {
 
             {/* Registry cleaning progress */}
             {registryCleaning && (
-              <div className="modern-card" style={{ padding: 30, textAlign: "center" }}>
-                <Loader2 size={48} className="spinner" style={{ marginBottom: 20 }} />
-                <h3>Cleaning Registry...</h3>
-                <p style={{ color: "var(--text-dim)" }}>Removing selected entries</p>
-              </div>
+              <ProgressCard
+                title="Cleaning Registry..."
+                detail="Removing selected entries"
+                percent={null}
+              />
             )}
           </div>
         )}
@@ -1053,48 +1016,58 @@ export function SystemCleanerView() {
 
       {/* ── FOOTER ACTIONS — junk cleaner ────────────────────────────── */}
       {scanned && items.length > 0 && !showPreview && !cleaning && !isRegistryTab && (
-        <div style={{ padding: 20, borderTop: "1px solid var(--border)",
-          display: "flex", justifyContent: "center", gap: 10,
-          background: "var(--panel-bg)" }}>
-          <button className="secondary-btn"
-            onClick={previewClean} disabled={loading || selectedIds.size === 0}
-            style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Eye size={18} /> Preview ({selectedIds.size})
-          </button>
-          <button className="auth-btn danger-btn"
-            onClick={initiateClean} disabled={loading || selectedIds.size === 0}
-            style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Trash2 size={18} /> Clean Selected ({formatSize(totalSelectedSize)})
-          </button>
+        <div style={{ padding: "0 20px", background: "var(--panel-bg)" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <ActionBar
+              sticky={false}
+              summary={`Will free ${formatSize(totalSelectedSize)}`}
+            >
+              <button className="secondary-btn"
+                onClick={previewClean} disabled={loading || selectedIds.size === 0}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Eye size={18} /> Preview ({selectedIds.size})
+              </button>
+              <button className="auth-btn danger-btn"
+                onClick={initiateClean} disabled={loading || selectedIds.size === 0}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Trash2 size={18} /> Clean Selected ({formatSize(totalSelectedSize)})
+              </button>
+            </ActionBar>
+          </div>
         </div>
       )}
 
       {/* ── FOOTER ACTIONS — registry ─────────────────────────────────── */}
       {isRegistryTab && registryScanned && registryItems.length > 0 && !registryCleaning && (
-        <div style={{ padding: 20, borderTop: "1px solid var(--border)",
-          display: "flex", justifyContent: "center", gap: 10,
-          background: "var(--panel-bg)" }}>
-          <button className="secondary-btn" onClick={scanRegistry} disabled={registryLoading}
-            style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <RefreshCw size={18} /> Re-scan
-          </button>
-          <button
-            className="auth-btn danger-btn"
-            onClick={cleanRegistry}
-            disabled={!registryBackupPath || selectedRegistryIds.size === 0 || registryCleaning}
-            title={!registryBackupPath ? "Create a backup first before cleaning" : undefined}
-            style={{ display: "flex", alignItems: "center", gap: 8,
-              opacity: !registryBackupPath ? 0.5 : 1 }}>
-            <Trash2 size={18} />
-            {registryBackupPath
-              ? `Clean Selected (${selectedRegistryIds.size})`
-              : "Create Backup First"
-            }
-          </button>
+        <div style={{ padding: "0 20px", background: "var(--panel-bg)" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            <ActionBar
+              sticky={false}
+              summary={!registryBackupPath ? "Create a backup first, then clean." : undefined}
+            >
+              <button className="secondary-btn" onClick={scanRegistry} disabled={registryLoading}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <RefreshCw size={18} /> Re-scan
+              </button>
+              <button
+                className="auth-btn danger-btn"
+                onClick={cleanRegistry}
+                disabled={!registryBackupPath || selectedRegistryIds.size === 0 || registryCleaning}
+                title={!registryBackupPath ? "Create a backup first before cleaning" : undefined}
+                style={{ display: "flex", alignItems: "center", gap: 8,
+                  opacity: !registryBackupPath ? 0.5 : 1 }}>
+                <Trash2 size={18} />
+                {registryBackupPath
+                  ? `Clean Selected (${selectedRegistryIds.size})`
+                  : "Create Backup First"
+                }
+              </button>
+            </ActionBar>
+          </div>
         </div>
       )}
 
-      {/* ── CONFIRMATION MODAL ───────────────────────────────────────── */}
+      {/* ── CONFIRMATION MODAL      {/* ── CONFIRMATION MODAL ───────────────────────────────────────── */}
       {showConfirmation && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
           background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center",
@@ -1162,7 +1135,6 @@ export function SystemCleanerView() {
         </div>
       )}
 
-      {msg && <InfoModal message={msg} onClose={() => setMsg(null)} />}
     </div>
   );
 }

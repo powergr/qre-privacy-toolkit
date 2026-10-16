@@ -65,7 +65,7 @@ const preview = () => document.querySelector("svg[data-qr]") as SVGElement | nul
 const previewLabel = () => preview()?.getAttribute("data-qr") ?? null;
 const generateCalls = () => mockInvoke.mock.calls.filter(([c]) => c === "generate_qr");
 const lastGenerate = () => generateCalls().slice(-1)[0][1].options as Record<string, unknown>;
-const goTab = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+const goTab = (name: string) => fireEvent.click(screen.getByRole("tab", { name }));
 const typeInto = (placeholder: string, value: string) =>
   fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } });
 
@@ -411,7 +411,7 @@ describe("QrView - keyboard shortcuts", () => {
     goTab("Text");
     typeInto("Enter any text...", "save me");
     await waitFor(() => expect(previewLabel()).toBe("save me"));
-    mockSave.mockResolvedValue("C:\out\qrcode.svg");
+    mockSave.mockResolvedValue("C:\\out\\qrcode.svg");
     mockWriteFile.mockResolvedValue(undefined);
 
     fireEvent.keyDown(window, { key: "S", ctrlKey: true, shiftKey: true });
@@ -425,5 +425,65 @@ describe("QrView - keyboard shortcuts", () => {
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     fireEvent.keyDown(window, { key: "S", ctrlKey: true, shiftKey: true });
     expect(mockSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("QrView - shared parts", () => {
+  it("shows the kinds of code as one set of tabs, with the current kind selected", () => {
+    render(<QrView />);
+    expect(screen.getByRole("tablist", { name: "Kind of QR code" })).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Text", "Website", "Email", "Phone", "WiFi"]);
+    expect(screen.getByRole("tab", { name: "Website" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("moves to the next kind with the arrow keys, and shows its form", () => {
+    render(<QrView />);
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Email" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByPlaceholderText("your@email.com")).toBeInTheDocument();
+  });
+
+  it("makes the tabs fill the card, each an equal share", () => {
+    render(<QrView />);
+    expect(screen.getByRole("tablist")).toHaveClass("ui-seg--fill");
+  });
+
+  it("shows problems with the input in an error banner and warnings in a warning banner", async () => {
+    validation = { valid: false, errors: ["Content is too long"], warnings: ["Dense code"] };
+    generateOverride = () => Promise.reject("Content is too long");
+    render(<QrView />);
+    goTab("Text");
+    typeInto("Enter any text...", "x".repeat(50));
+    expect((await screen.findByText("• Content is too long")).closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(screen.getByText("Dense code").closest(".ui-banner")).toHaveClass("ui-banner--warning");
+  });
+
+  it("shows a failure to make the code as an error banner you can dismiss", async () => {
+    generateOverride = () => Promise.reject("encoder crashed");
+    render(<QrView />);
+    goTab("Text");
+    typeInto("Enter any text...", "boom");
+    const message = await screen.findByText(/encoder crashed/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss message" }));
+    expect(screen.queryByText(/encoder crashed/)).not.toBeInTheDocument();
+  });
+
+  it("shows the size of the code in an info banner", async () => {
+    validation = { valid: true, errors: [], warnings: [], estimated_size: "About 3 cm square" };
+    render(<QrView />);
+    goTab("Text");
+    typeInto("Enter any text...", "size");
+    await waitFor(() => expect(previewLabel()).toBe("size"));
+    expect(screen.getByText("QR Code Info").closest(".ui-banner")).toHaveClass("ui-banner--info");
+    expect(screen.getByText("About 3 cm square")).toBeInTheDocument();
+  });
+
+  it("shows the keys for saving next to the PNG and SVG buttons", () => {
+    render(<QrView />);
+    const png = screen.getByRole("button", { name: /PNG/ });
+    const svg = screen.getByRole("button", { name: /SVG/ });
+    expect(Array.from(png.querySelectorAll("kbd")).map((k) => k.textContent)).toEqual(["Ctrl", "S"]);
+    expect(Array.from(svg.querySelectorAll("kbd")).map((k) => k.textContent)).toEqual(["Ctrl", "Shift", "S"]);
   });
 });

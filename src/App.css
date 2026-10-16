@@ -111,6 +111,20 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
   color: var(--text-main);
 }
 
+/* Holds the status bar above the screen. The screen scrolls, the bar stays. */
+.main-column {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.main-column > .content-area {
+  flex: 1;
+  min-height: 0;
+}
+
 .content-area {
   flex: 1;
   min-width: 0; /* Prevents flex child from overflowing */
@@ -141,6 +155,14 @@ body[data-theme="light"] ::-webkit-scrollbar-thumb {
   /* App container stacks vertically; sidebar is position:fixed so out of flow */
   .app-container {
     flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    width: 100%;
+  }
+
+  /* On a phone the page itself scrolls, so the column grows with its content */
+  .main-column {
     height: auto;
     min-height: 100vh;
     overflow: visible;

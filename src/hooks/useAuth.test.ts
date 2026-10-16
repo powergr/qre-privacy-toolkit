@@ -113,3 +113,70 @@ describe("useAuth - idle timeout logout", () => {
     expect(result.current.view).toBe("dashboard");
   });
 });
+
+describe("useAuth - when the app will lock", () => {
+  const FIFTEEN_MINUTES = 15 * 60 * 1000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "check_auth_status" ? Promise.resolve("unlocked") : Promise.resolve(null),
+    );
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  });
+
+  async function signedIn() {
+    const { result } = renderHook(() => useAuth(), { wrapper: StrictMode });
+    await waitFor(() => expect(result.current.view).toBe("dashboard"));
+    return result;
+  }
+
+  it("is 15 minutes away, counting the 14 minute wait and the 1 minute warning", async () => {
+    const result = await signedIn();
+    const left = result.current.idleDeadlineRef.current - Date.now();
+    expect(left).toBeGreaterThan(FIFTEEN_MINUTES - 2000);
+    expect(left).toBeLessThanOrEqual(FIFTEEN_MINUTES);
+  });
+
+  it("moves back to 15 minutes whenever the user does something", async () => {
+    const result = await signedIn();
+    act(() => void jest.advanceTimersByTime(5 * 60 * 1000));
+    expect(result.current.idleDeadlineRef.current - Date.now()).toBeLessThan(FIFTEEN_MINUTES - 4 * 60 * 1000);
+
+    act(() => void window.dispatchEvent(new Event("mousemove")));
+    const left = result.current.idleDeadlineRef.current - Date.now();
+    expect(left).toBeGreaterThan(FIFTEEN_MINUTES - 2000);
+  });
+
+  it("is the same object on every render, so a ticking display never re-renders the app", async () => {
+    const result = await signedIn();
+    const first = result.current.idleDeadlineRef;
+    act(() => void window.dispatchEvent(new Event("keydown")));
+    expect(result.current.idleDeadlineRef).toBe(first);
+  });
+
+  it("is zero before sign-in", async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "check_auth_status" ? Promise.resolve("locked") : Promise.resolve(null),
+    );
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.view).toBe("login"));
+    expect(result.current.idleDeadlineRef.current).toBe(0);
+  });
+
+  it("goes back to zero after the session ends", async () => {
+    const result = await signedIn();
+    expect(result.current.idleDeadlineRef.current).toBeGreaterThan(0);
+    act(() => void jest.advanceTimersByTime(14 * 60 * 1000));
+    await waitFor(() => expect(result.current.showTimeoutWarning).toBe(true));
+    act(() => void jest.advanceTimersByTime(60 * 1000));
+    await waitFor(() => expect(result.current.view).toBe("login"));
+    expect(result.current.idleDeadlineRef.current).toBe(0);
+  });
+});

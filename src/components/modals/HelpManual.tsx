@@ -63,6 +63,8 @@ interface HelpManualProps {
 
 // [keys, where it works, what it does]
 const SHORTCUTS: [string, string, string][] = [
+  ["Ctrl+K", "Anywhere in the app", "Open the jump bar. Type a few letters to open a tool or run an action."],
+  ["Ctrl+B", "Computers", "Collapse the sidebar to icons, or expand it again."],
   ["Esc", "Any dialog or editor", "Close it. With stacked dialogs, the top one closes first."],
   ["Ctrl+N", "Vault, Bookmarks, Notes", "Add a new entry, bookmark, or note."],
   ["Ctrl+F", "Vault, Bookmarks, Notes, Clipboard", "Jump to the search box."],

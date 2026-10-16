@@ -25,6 +25,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { PasswordInput } from "../common/PasswordInput";
+import { Banner } from "../ui/Banner";
+import { Badge } from "../ui/Badge";
+import { DropZone } from "../ui/DropZone";
+import { ProgressCard } from "../ui/ProgressCard";
 
 async function sha1Hex(text: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -54,6 +58,13 @@ function getPasswordStrength(pwd: string) {
   if (score === 3 || score === 4)
     return { label: "Medium", color: "#eab308", score: 2 };
   return { label: "Strong", color: "#22c55e", score: 3 };
+}
+
+// Counts findings per category, most common first (ties keep the order they were found in).
+function categoryCounts(findings: { category: string }[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const f of findings) counts.set(f.category, (counts.get(f.category) ?? 0) + 1);
+  return Array.from(counts.entries()).sort((x, y) => y[1] - x[1]);
 }
 
 // Fix #2: Proper type instead of any[]
@@ -136,6 +147,12 @@ export function BreachView() {
     invoke("cancel_secret_scan").catch(() => {});
     setLocalLoading(false);
     setCurrentScanPath("Scan cancelled.");
+  }
+
+  function locateFinding(path: string) {
+    invoke("show_in_folder", { path }).catch(() => {
+      setScanError("Could not open the folder for this file.");
+    });
   }
 
   // --- LOCAL SCAN LOGIC ---
@@ -338,115 +355,42 @@ export function BreachView() {
             display: "flex",
             flexDirection: "column",
             justifyContent:
-              !localFindings && !localLoading ? "center" : "flex-start",
+              !localFindings && !localLoading && !scanCancelled ? "center" : "flex-start",
             flex: 1,
           }}
         >
-          {!localFindings && !localLoading && (
-            <div
-              className="shred-zone"
-              style={{
-                padding: 40,
-                textAlign: "center",
-                cursor: "pointer",
-                borderColor: "var(--accent)",
-                margin: "0 auto",
-                width: "100%",
-                maxWidth: 500,
-              }}
-              onClick={runLocalScan}
-            >
-              <FolderSearch
-                size={64}
-                color="var(--accent)"
-                style={{ marginBottom: 20 }}
-              />
-              <h3>Scan for Exposed Secrets</h3>
-              <p style={{ color: "var(--text-dim)", marginBottom: 20 }}>
-                Find plaintext passwords, API keys, and Crypto Wallets hiding in
-                your unencrypted folders (.txt, .csv, .env).
-              </p>
-              <button className="auth-btn">Select Folder to Scan</button>
+          {/* Problems with the scan or with opening a file's folder */}
+          {scanError && (
+            <div style={{ width: "100%", maxWidth: 500, margin: "0 auto 16px auto" }}>
+              <Banner tone="error" onDismiss={() => setScanError(null)}>
+                {scanError}
+              </Banner>
+            </div>
+          )}
 
-              {/* Fix #1: show scan error inline instead of alert() */}
-              {scanError && (
-                <div
-                  style={{
-                    marginTop: 15,
-                    padding: 10,
-                    borderRadius: 6,
-                    background: "rgba(239, 68, 68, 0.1)",
-                    border: "1px solid rgba(239, 68, 68, 0.3)",
-                    color: "var(--btn-danger)",
-                    fontSize: "0.9rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <AlertTriangle size={16} /> {scanError}
-                </div>
-              )}
+          {!localFindings && !localLoading && !scanCancelled && (
+            <div style={{ width: "100%", maxWidth: 500, margin: "0 auto" }}>
+              <DropZone
+                icon={<FolderSearch size={64} />}
+                hue="var(--hue-inspect)"
+                title="Scan for Exposed Secrets"
+                description="Find plaintext passwords, API keys, and Crypto Wallets hiding in your unencrypted folders (.txt, .csv, .env)."
+                buttonLabel="Select Folder to Scan"
+                buttonIcon={<Search size={16} aria-hidden="true" />}
+                onBrowse={runLocalScan}
+              />
             </div>
           )}
 
           {localLoading && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                flex: 1,
-              }}
-            >
-              <Search
-                size={48}
-                className="spinner"
-                color="var(--accent)"
-                style={{ marginBottom: 20 }}
+            <div style={{ width: "100%", maxWidth: 500, margin: "0 auto" }}>
+              <ProgressCard
+                title="Scanning local files..."
+                detail={currentScanPath}
+                percent={null}
+                onCancel={cancelScan}
+                cancelLabel="Cancel Scan"
               />
-              <h3>Scanning local files...</h3>
-              <div
-                style={{
-                  background: "#0a0a0a",
-                  padding: "8px 15px",
-                  borderRadius: 6,
-                  fontFamily: "monospace",
-                  fontSize: "0.8rem",
-                  color: "#4ade80",
-                  marginTop: 15,
-                  width: "100%",
-                  maxWidth: 500,
-                  textAlign: "left",
-                  border: "1px solid #333",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                }}
-              >
-                &gt; {currentScanPath}
-              </div>
-
-              {/* Cancel button */}
-              <button
-                onClick={cancelScan}
-                style={{
-                  marginTop: 20,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px 20px",
-                  borderRadius: 8,
-                  border: "1px solid var(--btn-danger)",
-                  background: "rgba(239, 68, 68, 0.08)",
-                  color: "var(--btn-danger)",
-                  cursor: "pointer",
-                  fontWeight: 500,
-                  fontSize: "0.9rem",
-                }}
-              >
-                <XCircle size={18} /> Cancel Scan
-              </button>
             </div>
           )}
 
@@ -478,7 +422,7 @@ export function BreachView() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  marginBottom: 20,
+                  marginBottom: 12,
                 }}
               >
                 <h3 style={{ margin: 0 }}>
@@ -497,34 +441,31 @@ export function BreachView() {
                 </button>
               </div>
 
-              {localFindings.length === 0 ? (
+              {localFindings.length > 0 && (
                 <div
-                  style={{
-                    textAlign: "center",
-                    padding: 40,
-                    background: "rgba(34, 197, 94, 0.05)",
-                    borderRadius: 12,
-                    border: "1px solid rgba(34, 197, 94, 0.3)",
-                  }}
+                  role="group"
+                  aria-label="Findings by category"
+                  style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}
                 >
-                  <ShieldCheck
-                    size={48}
-                    color="var(--btn-success)"
-                    style={{ marginBottom: 15 }}
-                  />
-                  <p style={{ color: "var(--text-main)", fontSize: "1.1rem" }}>
-                    Your local files are clean.
-                  </p>
-                  <p style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>
-                    No plaintext passwords or API keys detected.
-                  </p>
+                  {categoryCounts(localFindings).map(([category, count]) => (
+                    <Badge key={category} tone="danger">
+                      {`${count} ${category}`}
+                    </Badge>
+                  ))}
                 </div>
+              )}
+
+              {localFindings.length === 0 ? (
+                <Banner tone="success">
+                  <strong>Your local files are clean.</strong>
+                  <div>No plaintext passwords or API keys detected.</div>
+                </Banner>
               ) : (
                 <div
                   style={{
-                    background: "var(--bg-card)",
+                    background: "var(--surface-raised)",
                     borderRadius: 10,
-                    border: "1px solid var(--btn-danger)",
+                    border: "1px solid var(--status-danger)",
                     overflow: "hidden",
                   }}
                 >
@@ -535,13 +476,14 @@ export function BreachView() {
                         display: "flex",
                         alignItems: "center",
                         padding: 15,
+                        gap: 12,
                         borderBottom: "1px solid var(--border)",
                       }}
                     >
                       <FileText
                         size={20}
-                        color="#f59e0b"
-                        style={{ marginRight: 15, flexShrink: 0 }}
+                        color="var(--status-warn)"
+                        style={{ flexShrink: 0 }}
                       />
                       <div
                         style={{
@@ -563,19 +505,15 @@ export function BreachView() {
                           {f.path}
                         </div>
                       </div>
-                      <div
-                        style={{
-                          background: "rgba(239, 68, 68, 0.1)",
-                          color: "var(--btn-danger)",
-                          padding: "4px 10px",
-                          borderRadius: 4,
-                          fontSize: "0.8rem",
-                          fontWeight: "bold",
-                          whiteSpace: "nowrap",
-                        }}
+                      <Badge tone="danger">{f.category}</Badge>
+                      <button
+                        className="secondary-btn"
+                        style={{ padding: "4px 10px", fontSize: "0.75rem" }}
+                        onClick={() => locateFinding(f.path)}
+                        aria-label={`Locate ${f.filename}`}
                       >
-                        {f.category}
-                      </div>
+                        Locate
+                      </button>
                     </div>
                   ))}
                 </div>

@@ -1,3 +1,4 @@
+import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useEffect, useRef } from "react";
 import {
@@ -371,6 +372,7 @@ export function VaultView() {
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   // True while a Save is in flight, so a second click cannot store the entry twice.
   const [isSaving, setIsSaving] = useState(false);
+  const toast = useToast();
 
   // A password revealed in one editor must not stay revealed for the next entry.
   const editorOpen = editing !== null;
@@ -476,12 +478,18 @@ export function VaultView() {
     });
   }, [entries, searchQuery]);
 
+  // Success is a toast that closes itself. An error keeps its dialog, because it needs reading.
+  const showMessage = (m: { message: string; type: "success" | "error" }) => {
+    if (m.type === "success") toast.success(m.message);
+    else setCopyModalMsg(m);
+  };
+
   const handleCopy = async (text: string, isTotp = false) => {
     try {
       await writeText(text);
     } catch (e) {
       // Nothing was copied, so no wipe timer and no "copied" message.
-      setCopyModalMsg({
+      showMessage({
         message: "Could not copy to the clipboard: " + String(e),
         type: "error",
       });
@@ -495,7 +503,7 @@ export function VaultView() {
     }, CLIPBOARD_CLEAR_DELAY_MS);
 
     // FIX: Set the exact message string so InfoModal appears
-    setCopyModalMsg({
+    showMessage({
       message: `${isTotp ? "2FA Code" : "Password"} copied — clipboard will be cleared in 30 seconds.`,
       type: "success",
     });
@@ -518,7 +526,7 @@ export function VaultView() {
       const rows = parseCSV(contents);
 
       if (rows.length === 0) {
-        setCopyModalMsg({
+        showMessage({
           message: "No data found in the selected file.",
           type: "error",
         });
@@ -583,7 +591,7 @@ export function VaultView() {
       if (newEntries.length > 0) {
         const saved = await importEntries(newEntries);
         if (!saved) {
-          setCopyModalMsg({
+          showMessage({
             message: "Import failed: the passwords could not be saved.",
             type: "error",
           });
@@ -591,12 +599,12 @@ export function VaultView() {
         }
         const skippedMsg =
           skipped.length > 0 ? ` (${skipped.length} rows skipped)` : "";
-        setCopyModalMsg({
+        showMessage({
           message: `Successfully imported ${newEntries.length} passwords.${skippedMsg}`,
           type: "success",
         });
       } else {
-        setCopyModalMsg({
+        showMessage({
           message:
             "No valid entries found. CSV must have at least Service and Password.",
           type: "error",

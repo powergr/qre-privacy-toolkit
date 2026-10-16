@@ -22,6 +22,8 @@ interface SegmentedProps<T extends string> {
    * The look is the same; the roles tell assistive technology which one it is.
    */
   variant?: "options" | "tabs";
+  /** Stretches across its container, each option taking an equal share, icon above the label. */
+  fill?: boolean;
   className?: string;
 }
 
@@ -35,6 +37,7 @@ export function Segmented<T extends string>({
   onChange,
   label,
   variant = "options",
+  fill = false,
   className,
 }: SegmentedProps<T>) {
   const group = useRef<HTMLDivElement>(null);
@@ -81,7 +84,7 @@ export function Segmented<T extends string>({
   return (
     <div
       ref={group}
-      className={cx("ui-seg", className)}
+      className={cx("ui-seg", fill && "ui-seg--fill", className)}
       role={isTabs ? "tablist" : "radiogroup"}
       aria-label={label}
       onKeyDown={onKeyDown}

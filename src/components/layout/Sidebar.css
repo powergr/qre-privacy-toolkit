@@ -439,3 +439,218 @@
     display: none !important;
   }
 }
+
+/* =========================================
+   4. GROUPS, JUMP BUTTON AND COLLAPSE (Phase 1)
+   ========================================= */
+
+.sidebar {
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-shrink: 0;
+}
+
+
+.sidebar-collapse {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sidebar-collapse:hover {
+  background: var(--highlight);
+  color: var(--text-main);
+}
+
+/* Each tool group is named, and its icons share one colour. */
+.nav-group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--font-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.nav-group-label i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--nav-hue, var(--text-dim));
+}
+.nav-btn svg {
+  color: var(--nav-hue, currentColor);
+  flex-shrink: 0;
+}
+.nav-btn.active svg,
+.nav-btn.menu-open svg {
+  color: currentColor;
+}
+.sidebar:not(.collapsed) .sidebar-group-divider {
+  display: none;
+}
+
+/* ---- Collapsed: icons only (computers only) ---- */
+.sidebar.collapsed {
+  width: 68px;
+  padding-inline: 10px;
+}
+.sidebar.collapsed .sidebar-top {
+  justify-content: center;
+}
+.sidebar.collapsed .nav-btn span,
+.sidebar.collapsed .nav-btn .chevron,
+.sidebar.collapsed .nav-group-label {
+  display: none;
+}
+.sidebar.collapsed .nav-btn {
+  justify-content: center;
+  padding-inline: 0;
+}
+.sidebar.collapsed .btn-inner {
+  justify-content: center;
+  gap: 0;
+}
+/* Tighter, so all the icons fit in a window of about 700 pixels without scrolling. */
+.sidebar.collapsed .nav-btn {
+  padding-block: 5px;
+}
+.sidebar.collapsed .sidebar-group-divider {
+  margin: 3px 0;
+}
+.sidebar.collapsed .sidebar-top {
+  gap: 4px;
+  margin-bottom: var(--space-2);
+}
+.sidebar.collapsed .sidebar-collapse {
+  height: 28px;
+  width: 100%;
+}
+.sidebar.collapsed .sidebar-scroll-area {
+  margin-bottom: var(--space-2);
+}
+.sidebar.collapsed .btn-split {
+  justify-content: center;
+}
+
+/* The phone layout is a bottom bar of icons, so none of this applies there. */
+@media (max-width: 600px) {
+  .sidebar-top,
+  .nav-group-label {
+    display: none !important;
+  }
+}
+
+/* =========================================
+   5. THE WHOLE MENU FITS WITHOUT SCROLLING
+   The tool buttons share the height of the sidebar equally. Each one asks for 44 pixels
+   and all of them shrink together, down to 30 pixels, when the window is short. Names
+   stay on one line. Home sits next to the collapse button at the top.
+   ========================================= */
+
+.sidebar {
+  padding: 14px;
+}
+.sidebar-scroll-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: var(--space-2);
+}
+/* A group may shrink, but never below its buttons at 30 pixels each plus its label, so
+   groups cannot overlap. Below that the list scrolls. */
+.nav-group-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: calc(var(--count, 1) * (var(--nav-min, 30px) + 2px) + 30px);
+}
+.nav-group {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.nav-group-label {
+  flex-shrink: 0;
+}
+.nav-btn {
+  flex: 0 1 44px;
+  min-height: var(--nav-min, 30px);
+  padding: 6px 10px;
+  gap: 10px;
+}
+.nav-btn span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Home and the collapse button share the top row. */
+.sidebar-top {
+  justify-content: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.sidebar-top .nav-btn {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  min-height: 38px;
+}
+.sidebar.collapsed .sidebar-top {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+.sidebar.collapsed .sidebar-top .nav-btn {
+  flex: none;
+  width: 100%;
+  min-height: 34px;
+}
+
+/* The phone layout is a bottom bar with fixed-size buttons. */
+@media (max-width: 600px) {
+  .nav-btn,
+  .nav-group {
+    flex: none !important;
+  }
+}
+
+/* Short windows: smaller minimums and tighter spacing, so the list still fits. */
+@media (max-height: 700px) and (min-width: 601px) {
+  .sidebar {
+    --nav-min: 25px;
+    padding-block: 10px;
+  }
+  .nav-group-label {
+    padding-top: 6px;
+    padding-bottom: 0;
+  }
+  .sidebar-top {
+    margin-bottom: 6px;
+  }
+  .sidebar-top .nav-btn {
+    min-height: 32px;
+  }
+  .sidebar-bottom {
+    gap: 4px;
+  }
+  .sidebar-bottom .nav-btn {
+    flex-basis: 36px;
+  }
+}

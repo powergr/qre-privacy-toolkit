@@ -10,7 +10,7 @@
  * with zero native dependencies.
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "../test-support/rtl";
 import "@testing-library/jest-dom";
 import { SystemCleanerView } from "../components/views/SystemCleanerView";
 
@@ -641,11 +641,11 @@ describe("Registry tab (Windows only)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. InfoModal integration
+// 10. Success toast
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("InfoModal", () => {
-  it("shows the InfoModal after a successful clean", async () => {
+describe("Success toast", () => {
+  it("shows a toast after a successful clean", async () => {
     const item = makeJunkItem();
     mockInvoke.mockResolvedValueOnce([item]);
     mockInvoke.mockResolvedValueOnce({
@@ -662,15 +662,13 @@ describe("InfoModal", () => {
     await waitFor(() => screen.getByRole("button", { name: /Clean Selected/ }));
     fireEvent.click(screen.getByRole("button", { name: /Clean Selected/ }));
 
-    await waitFor(() =>
-      expect(screen.getByTestId("info-modal")).toBeInTheDocument(),
-    );
-    expect(
-      screen.getByText("Cleanup completed successfully!"),
-    ).toBeInTheDocument();
+    const message = await screen.findByText("Cleanup completed successfully!");
+    expect(message.closest(".ui-toast")).toBeInTheDocument();
+    // It is a toast, not the old pop-up that needed a click.
+    expect(screen.queryByTestId("info-modal")).not.toBeInTheDocument();
   });
 
-  it("closes the InfoModal when its Close button is clicked", async () => {
+  it("closes the toast when it is dismissed", async () => {
     const item = makeJunkItem();
     mockInvoke.mockResolvedValueOnce([item]);
     mockInvoke.mockResolvedValueOnce({
@@ -685,11 +683,9 @@ describe("InfoModal", () => {
 
     await waitFor(() => screen.getByRole("button", { name: /Clean Selected/ }));
     fireEvent.click(screen.getByRole("button", { name: /Clean Selected/ }));
-    await waitFor(() => screen.getByTestId("info-modal"));
+    await screen.findByText("Cleanup completed successfully!");
 
-    fireEvent.click(screen.getByText("Close"));
-    await waitFor(() =>
-      expect(screen.queryByTestId("info-modal")).not.toBeInTheDocument(),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
+    expect(screen.queryByText("Cleanup completed successfully!")).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { Sidebar } from "./Sidebar";
 
@@ -64,19 +64,25 @@ const NAV_LABELS = [
   "Secure Clipboard",
   "Privacy Check",
   "Integrity Check",
+  "File Analyzer",
   "System Clean",
   "Metadata Cleaner",
   "Shredder",
-  "File Analyzer",
   "QR Generator",
 ];
 
-beforeEach(() => setNarrowScreen(false));
+beforeEach(() => {
+  setNarrowScreen(false);
+  localStorage.clear();
+});
 
 describe("Sidebar - navigation", () => {
   it("lists every tool in order", () => {
     renderSidebar();
-    const labels = Array.from(document.querySelectorAll(".nav-group .nav-btn")).map((b) => b.textContent);
+    // Home sits in the top row, then the four groups.
+    const labels = Array.from(document.querySelectorAll(".sidebar-top .nav-btn, .nav-group .nav-btn")).map(
+      (b) => b.textContent,
+    );
     expect(labels).toEqual(NAV_LABELS);
   });
 
@@ -94,10 +100,10 @@ describe("Sidebar - navigation", () => {
       "clipboard",
       "breach",
       "hash",
+      "analyzer",
       "sysclean",
       "cleaner",
       "shred",
-      "analyzer",
       "qr",
     ]);
     for (const id of sent) expect(APP_TAB_IDS).toContain(id);
@@ -205,5 +211,207 @@ describe("Sidebar - narrow screens", () => {
     expect(props.setTab.mock.calls.map(([id]) => id)).toEqual(["help", "settings"]);
     expect(screen.queryByText("Log Out")).not.toBeInTheDocument();
     expect(screen.queryByText("Help Topics")).not.toBeInTheDocument();
+  });
+});
+
+describe("Sidebar - groups", () => {
+  const labels = () => Array.from(document.querySelectorAll(".nav-group-label")).map((l) => l.textContent);
+  const namesIn = (group: string) =>
+    Array.from(screen.getByRole("group", { name: group }).querySelectorAll(".nav-btn")).map((b) => b.textContent);
+
+  it("names the four groups in order, and leaves Home on its own", () => {
+    renderSidebar();
+    expect(labels()).toEqual(["Protect", "Inspect", "Clean up", "Create"]);
+    expect(screen.getByRole("button", { name: "Home" }).closest("[role=group]")).toBeNull();
+  });
+
+  it("puts each tool in the group it belongs to", () => {
+    renderSidebar();
+    expect(namesIn("Protect")).toEqual(["Encrypt Files", "Secure Notes", "Passwords Vault", "Bookmarks Vault", "Secure Clipboard"]);
+    expect(namesIn("Inspect")).toEqual(["Privacy Check", "Integrity Check", "File Analyzer"]);
+    expect(namesIn("Clean up")).toEqual(["System Clean", "Metadata Cleaner", "Shredder"]);
+    expect(namesIn("Create")).toEqual(["QR Generator"]);
+  });
+
+  it("gives the tools of a group that group's colour", () => {
+    renderSidebar();
+    const button = (name: string) => screen.getByRole("button", { name });
+    expect(button("Shredder").style.getPropertyValue("--nav-hue")).toBe("var(--hue-clean)");
+    expect(button("Privacy Check").style.getPropertyValue("--nav-hue")).toBe("var(--hue-inspect)");
+    expect(button("Home").style.getPropertyValue("--nav-hue")).toBe("");
+  });
+
+  it("keeps the group names out of the way of screen readers, since the group itself is named", () => {
+    renderSidebar();
+    for (const label of document.querySelectorAll(".nav-group-label")) {
+      expect(label).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+});
+
+describe("Sidebar - no search button", () => {
+  it("leaves the jump bar to Home and to Ctrl K, so there is only one button for it", () => {
+    renderSidebar();
+    expect(screen.queryByRole("button", { name: /Jump to/ })).not.toBeInTheDocument();
+    expect(document.querySelector(".sidebar-jump")).toBeNull();
+  });
+
+  it("starts with Home and the collapse button side by side, then the tools", () => {
+    renderSidebar();
+    const top = document.querySelector(".sidebar-top") as HTMLElement;
+    const buttons = Array.from(top.querySelectorAll("button"));
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveAccessibleName("Home");
+    expect(buttons[1]).toHaveAccessibleName("Collapse sidebar");
+  });
+});
+
+describe("Sidebar - collapsing", () => {
+  const sidebar = () => document.querySelector(".sidebar") as HTMLElement;
+  const toggle = () => screen.getByRole("button", { name: /(Collapse|Expand) sidebar/ });
+
+  it("starts expanded", () => {
+    renderSidebar();
+    expect(sidebar()).not.toHaveClass("collapsed");
+    expect(toggle()).toHaveAccessibleName("Collapse sidebar");
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("collapses to icons and expands again", () => {
+    renderSidebar();
+    fireEvent.click(toggle());
+    expect(sidebar()).toHaveClass("collapsed");
+    expect(toggle()).toHaveAccessibleName("Expand sidebar");
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle());
+    expect(sidebar()).not.toHaveClass("collapsed");
+  });
+
+  it("still lets every tool be reached and named while collapsed", () => {
+    const { props } = renderSidebar();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole("button", { name: "Shredder" }));
+    expect(props.setTab).toHaveBeenCalledWith("shred");
+    expect(screen.getByRole("button", { name: "Shredder" })).toHaveAttribute("title", "Permanently destroy files");
+  });
+
+  it("remembers the choice for next time", () => {
+    const first = renderSidebar();
+    fireEvent.click(toggle());
+    expect(localStorage.getItem("qre_sidebar_collapsed")).toBe("1");
+    first.unmount();
+
+    renderSidebar();
+    expect(sidebar()).toHaveClass("collapsed");
+    fireEvent.click(toggle());
+    expect(localStorage.getItem("qre_sidebar_collapsed")).toBe("0");
+  });
+
+  it("collapses and expands with Ctrl+B", () => {
+    renderSidebar();
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(sidebar()).toHaveClass("collapsed");
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(sidebar()).not.toHaveClass("collapsed");
+  });
+
+  it("works when the browser will not store anything", () => {
+    const get = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const set = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    renderSidebar();
+    expect(sidebar()).not.toHaveClass("collapsed");
+    fireEvent.click(toggle());
+    expect(sidebar()).toHaveClass("collapsed");
+    get.mockRestore();
+    set.mockRestore();
+  });
+});
+
+describe("Sidebar - Home in the top row", () => {
+  const top = () => document.querySelector(".sidebar-top") as HTMLElement;
+
+  it("puts the collapse button above Home once the sidebar is collapsed, in the page order as well", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    const buttons = Array.from(top().querySelectorAll("button"));
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveAccessibleName("Expand sidebar");
+    expect(buttons[1]).toHaveAccessibleName("Home");
+  });
+
+  it("keeps keyboard focus on the collapse button when it moves, in both directions", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveFocus();
+  });
+
+  it("does not steal focus when the sidebar is collapsed with the keyboard shortcut", () => {
+    renderSidebar();
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
+
+  it("puts Home back first when the sidebar is opened again", () => {
+    renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    const buttons = Array.from(top().querySelectorAll("button"));
+    expect(buttons[0]).toHaveAccessibleName("Home");
+    expect(buttons[1]).toHaveAccessibleName("Collapse sidebar");
+  });
+
+  it("keeps Home out of the scrolling list of tools", () => {
+    renderSidebar();
+    const list = document.querySelector(".sidebar-scroll-area") as HTMLElement;
+    expect(within(list).queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
+    expect(within(top()).getByRole("button", { name: "Home" })).toBeInTheDocument();
+  });
+
+  it("opens Home when it is pressed", () => {
+    const { props } = renderSidebar({ activeTab: "vault" });
+    fireEvent.click(within(top()).getByRole("button", { name: "Home" }));
+    expect(props.setTab).toHaveBeenCalledWith("home");
+  });
+
+  it("highlights Home only while Home is open", () => {
+    const { rerender, props } = renderSidebar({ activeTab: "home" });
+    expect(within(top()).getByRole("button", { name: "Home" })).toHaveClass("active");
+    rerender(<Sidebar {...props} activeTab="notes" />);
+    expect(within(top()).getByRole("button", { name: "Home" })).not.toHaveClass("active");
+  });
+
+  it("keeps Home reachable and named when the sidebar is collapsed", () => {
+    const { props } = renderSidebar();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    const home = within(top()).getByRole("button", { name: "Home" });
+    expect(home).toHaveAttribute("title", "Dashboard");
+    fireEvent.click(home);
+    expect(props.setTab).toHaveBeenCalledWith("home");
+  });
+
+  it("tells each group how many buttons it holds, so the stylesheet knows the least height it needs", () => {
+    renderSidebar();
+    const counts = Array.from(document.querySelectorAll(".nav-group-wrapper")).map((w) =>
+      (w as HTMLElement).style.getPropertyValue("--count"),
+    );
+    expect(counts).toEqual(["5", "3", "3", "1"]);
+  });
+
+  it("puts no tool name on a second line in a list that has no group labels to wrap", () => {
+    renderSidebar();
+    // Every label is plain text in one span, so it can be kept on one line by the stylesheet.
+    for (const span of document.querySelectorAll(".nav-group .nav-btn span")) {
+      expect(span.children).toHaveLength(0);
+    }
   });
 });

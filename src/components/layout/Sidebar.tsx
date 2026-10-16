@@ -1,9 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  Lock,
-  Trash2,
   Key,
-  Home,
   CircleHelp,
   BookOpen,
   Info,
@@ -13,17 +10,12 @@ import {
   Download,
   RotateCcw,
   RefreshCw,
-  StickyNote,
-  Radar,
-  Eraser,
-  ClipboardList,
-  QrCode,
-  Bookmark,
-  FileCheck,
   ChevronRight,
-  Brush,
-  FileSearch,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
+import { useShortcut } from "../../hooks/useShortcut";
+import { HOME_TOOL, TOOL_GROUPS, toolsInGroup, groupHue, type Tool } from "./tools";
 
 interface SidebarProps {
   activeTab: string;
@@ -38,6 +30,16 @@ interface SidebarProps {
   onUpdate: () => void;
 }
 
+const COLLAPSED_KEY = "qre_sidebar_collapsed";
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function Sidebar({
   activeTab,
   setTab,
@@ -50,6 +52,30 @@ export function Sidebar({
   onReset2FA,
   onUpdate,
 }: SidebarProps) {
+  // On a computer the sidebar can shrink to icons. The choice is remembered.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  // The collapse button changes place when the sidebar collapses. If it was the button that
+  // was pressed, it gets focus back in its new place, so keyboard use is not interrupted.
+  const collapseRef = useRef<HTMLButtonElement>(null);
+  const refocusCollapse = useRef(false);
+  useEffect(() => {
+    if (refocusCollapse.current) {
+      refocusCollapse.current = false;
+      collapseRef.current?.focus();
+    }
+  }, [collapsed]);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      // The choice just will not be remembered.
+    }
+  }
+  useShortcut("b", toggleCollapsed);
+
   const [menuState, setMenuState] = useState<"none" | "help" | "settings">(
     "none",
   );
@@ -81,121 +107,69 @@ export function Sidebar({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuState]);
 
-  const groups = [
-    {
-      items: [
-        {
-          id: "home",
-          label: "Home",
-          icon: <Home size={20} strokeWidth={2.5} />,
-          desc: "Dashboard",
-        },
-        {
-          id: "files",
-          label: "Encrypt Files",
-          icon: <Lock size={20} strokeWidth={2.5} />,
-          desc: "Encrypt files",
-        },
-      ],
-    },
-    {
-      items: [
-        {
-          id: "notes",
-          label: "Secure Notes",
-          icon: <StickyNote size={20} strokeWidth={2.5} />,
-          desc: "Secure notepad",
-        },
-        {
-          id: "vault",
-          label: "Passwords Vault",
-          icon: <Key size={20} strokeWidth={2.5} />,
-          desc: "Offline credential vault",
-        },
-        {
-          id: "bookmarks",
-          label: "Bookmarks Vault",
-          icon: <Bookmark size={20} strokeWidth={2.5} />,
-          desc: "Private encrypted links",
-        },
-        {
-          id: "clipboard",
-          label: "Secure Clipboard",
-          icon: <ClipboardList size={20} strokeWidth={2.5} />,
-          desc: "Secure copy and history",
-        },
-      ],
-    },
-    {
-      items: [
-        {
-          id: "breach",
-          label: "Privacy Check",
-          icon: <Radar size={20} strokeWidth={2.5} />,
-          desc: "Check leaks and IP exposure",
-        },
-        {
-          id: "hash",
-          label: "Integrity Check",
-          icon: <FileCheck size={20} strokeWidth={2.5} />,
-          desc: "Verify file hashes",
-        },
-        {
-          id: "sysclean",
-          label: "System Clean",
-          icon: <Brush size={20} strokeWidth={2.5} />,
-          desc: "Clear temp and cache",
-        },
-        {
-          id: "cleaner",
-          label: "Metadata Cleaner",
-          icon: <Eraser size={20} strokeWidth={2.5} />,
-          desc: "Strip hidden metadata from any file",
-        },
-        {
-          id: "shred",
-          label: "Shredder",
-          icon: <Trash2 size={20} strokeWidth={2.5} />,
-          desc: "Permanently destroy files",
-        },
-        {
-          id: "analyzer",
-          label: "File Analyzer",
-          icon: <FileSearch size={20} strokeWidth={2.5} />,
-          desc: "Detect fake extensions",
-        },
-        {
-          id: "qr",
-          label: "QR Generator",
-          icon: <QrCode size={20} strokeWidth={2.5} />,
-          desc: "Offline QR creation",
-        },
-      ],
-    },
-  ];
+  const navButton = (t: Tool) => (
+    <button
+      key={t.id}
+      className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
+      onClick={() => setTab(t.id)}
+      title={t.desc}
+      style={{ ["--nav-hue" as string]: groupHue(t.group) }}
+    >
+      <t.Icon size={20} strokeWidth={2.5} />
+      <span>{t.label}</span>
+    </button>
+  );
+
+  const collapseButton = (
+    <button
+      key="collapse"
+      ref={collapseRef}
+      className="sidebar-collapse"
+      onClick={() => {
+        refocusCollapse.current = true;
+        toggleCollapsed();
+      }}
+      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      aria-expanded={!collapsed}
+      title={collapsed ? "Expand sidebar (Ctrl B)" : "Collapse sidebar (Ctrl B)"}
+    >
+      {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+    </button>
+  );
 
   return (
-    <div className="sidebar">
-      <div className="nav-links sidebar-scroll-area">
-        {groups.map((group, index) => (
-          <div key={index} className="nav-group-wrapper">
-            {index > 0 && <div className="sidebar-group-divider" />}
-            <div className="nav-group">
-              {group.items.map((t) => (
-                <button
-                  key={t.id}
-                  className={`nav-btn ${activeTab === t.id ? "active" : ""}`}
-                  onClick={() => setTab(t.id)}
-                  title={t.desc}
-                >
-                  {t.icon}
-                  <span>{t.label}</span>
-                </button>
-              ))}
+    <div className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      {/* Open: Home on the left, the collapse button on the right. Collapsed, the buttons
+          stack and the collapse button comes first, so it is always at the very top. The
+          order in the page follows the order on screen. */}
+      <div className="sidebar-top">
+        {collapsed && collapseButton}
+        {navButton(HOME_TOOL)}
+        {!collapsed && collapseButton}
+      </div>
+
+      <nav className="nav-links sidebar-scroll-area" aria-label="Tools">
+        {TOOL_GROUPS.map((group) => (
+          <div
+            key={group.id}
+            className="nav-group-wrapper"
+            style={{ ["--count" as string]: toolsInGroup(group.id).length }}
+          >
+            <div className="sidebar-group-divider" />
+            <div className="nav-group" role="group" aria-label={group.label}>
+              <div
+                className="nav-group-label"
+                style={{ ["--nav-hue" as string]: groupHue(group.id) }}
+                aria-hidden="true"
+              >
+                <i />
+                {group.label}
+              </div>
+              {toolsInGroup(group.id).map(navButton)}
             </div>
           </div>
         ))}
-      </div>
+      </nav>
 
       <div className="sidebar-bottom">
         <div style={{ position: "relative" }} ref={helpRef}>

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "../../test-support/rtl";
 import "@testing-library/jest-dom";
 import { HashView } from "./HashView";
 
@@ -61,7 +61,7 @@ async function hashFile(path = "C:\\files\\setup.iso") {
   mockOpen.mockResolvedValue(path);
   fireEvent.click(screen.getByRole("button", { name: /Select File/ }));
   await screen.findByText("Hashing completed successfully");
-  fireEvent.click(screen.getByRole("button", { name: "OK" }));
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss notification" }));
 }
 
 const compareInput = () => screen.getByPlaceholderText("Paste SHA256 / SHA1 / MD5 here...") as HTMLInputElement;
@@ -95,13 +95,16 @@ describe("HashView - choosing a file", () => {
     expect(screen.getByText("Maximum file size: 10 GB")).toBeInTheDocument();
   });
 
-  it("hashes the chosen file and shows all three digests", async () => {
+  it("hashes the chosen file and shows SHA-256, with the older digests one click away", async () => {
     await renderHash();
     await hashFile("C:\\files\\setup.iso");
 
     expect(screen.getByText("setup.iso")).toBeInTheDocument();
     expect(screen.getByText("1.5 MB")).toBeInTheDocument();
     expect(screen.getByText(SHA256)).toBeInTheDocument();
+    expect(screen.queryByText(SHA1)).not.toBeInTheDocument();
+    expect(screen.queryByText(MD5)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show older hashes (SHA-1, MD5)" }));
     expect(screen.getByText(SHA1)).toBeInTheDocument();
     expect(screen.getByText(MD5)).toBeInTheDocument();
     const metaCall = mockInvoke.mock.calls.find(([c]) => c === "get_file_metadata")!;
@@ -316,6 +319,7 @@ describe("HashView - copying a hash", () => {
     try {
       await renderHash();
       await hashFile();
+      fireEvent.click(screen.getByRole("button", { name: /Show older hashes/ }));
       await copyFirstHash();
       await act(async () => {
         jest.advanceTimersByTime(20_000);
@@ -450,7 +454,7 @@ describe("HashView - exporting a report", () => {
 describe("HashView - keyboard shortcuts", () => {
   it("Ctrl+O opens the file picker and hashes the chosen file", async () => {
     await renderHash();
-    mockOpen.mockResolvedValue("C:\files\setup.iso");
+    mockOpen.mockResolvedValue("C:\\files\\setup.iso");
     fireEvent.keyDown(window, { key: "o", ctrlKey: true });
     expect(await screen.findByText("Hashing completed successfully")).toBeInTheDocument();
     expect(mockOpen).toHaveBeenCalledTimes(1);
@@ -458,11 +462,111 @@ describe("HashView - keyboard shortcuts", () => {
 
   it("Ctrl+O does nothing while a dialog is open", async () => {
     await renderHash();
-    mockOpen.mockResolvedValue("C:\files\setup.iso");
-    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
-    await screen.findByText("Hashing completed successfully");
-    mockOpen.mockClear();
+    const dialog = document.createElement("div");
+    dialog.className = "modal-overlay";
+    document.body.appendChild(dialog);
     fireEvent.keyDown(window, { key: "o", ctrlKey: true });
     expect(mockOpen).not.toHaveBeenCalled();
+    dialog.remove();
+  });
+
+  it("confirms a finished hash with a toast that needs no click", async () => {
+    await renderHash();
+    mockOpen.mockResolvedValue("C:\\files\\setup.iso");
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    const toast = (await screen.findByText("Hashing completed successfully")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
+    expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
+  });
+});
+
+describe("HashView - older hashes", () => {
+  const toggle = () => screen.getByRole("button", { name: /older hashes/ });
+
+  it("keeps SHA-1 and MD5 hidden at first, and says so on the toggle", async () => {
+    await renderHash();
+    await hashFile();
+    expect(toggle()).toHaveTextContent("Show older hashes (SHA-1, MD5)");
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByTitle(/Copy to clipboard/)).toHaveLength(1);
+  });
+
+  it("opens and closes them", async () => {
+    await renderHash();
+    await hashFile();
+    fireEvent.click(toggle());
+    expect(toggle()).toHaveTextContent("Hide older hashes");
+    expect(toggle()).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getAllByTitle(/Copy to clipboard/)).toHaveLength(3);
+    fireEvent.click(toggle());
+    expect(screen.getAllByTitle(/Copy to clipboard/)).toHaveLength(1);
+  });
+
+  it("shows them by itself when the pasted hash matches one, and cannot be closed on it", async () => {
+    await renderHash();
+    await hashFile();
+    typeCompare(SHA1);
+    expect(screen.getByText(SHA1)).toBeInTheDocument();
+    expect(toggle()).toBeDisabled();
+    expect(toggle()).toHaveAttribute("title", expect.stringMatching(/matches one of them/));
+  });
+
+  it("goes back to hiding them once the pasted hash no longer matches", async () => {
+    await renderHash();
+    await hashFile();
+    typeCompare(MD5);
+    expect(screen.getByText(MD5)).toBeInTheDocument();
+    typeCompare("d".repeat(32));
+    expect(screen.queryByText(MD5)).not.toBeInTheDocument();
+    expect(toggle()).toBeEnabled();
+  });
+
+  it("does not open them for a SHA-256 match", async () => {
+    await renderHash();
+    await hashFile();
+    typeCompare(SHA256);
+    expect(screen.queryByText(SHA1)).not.toBeInTheDocument();
+    expect(toggle()).toBeEnabled();
+  });
+
+  it("closes them again when another file is checked", async () => {
+    await renderHash();
+    await hashFile();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole("button", { name: "Check Another File" }));
+    await hashFile("/other/file.bin");
+    expect(screen.queryByText(SHA1)).not.toBeInTheDocument();
+  });
+});
+
+describe("HashView - shared parts", () => {
+  it("shows a match as a success banner and a mismatch as an error banner", async () => {
+    await renderHash();
+    await hashFile();
+    typeCompare(SHA256);
+    expect(screen.getByText(/MATCH CONFIRMED/).closest(".ui-banner")).toHaveClass("ui-banner--success");
+    typeCompare("d".repeat(64));
+    expect(screen.getByText(/HASH MISMATCH/).closest(".ui-banner")).toHaveClass("ui-banner--error");
+  });
+
+  it("shows the start screen in the shared drop zone", async () => {
+    await renderHash();
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+  });
+
+  it("shows the working state in the shared progress card, indeterminate until the first update", async () => {
+    let finish!: (v: unknown) => void;
+    hashResult = new Promise((r) => {
+      finish = r;
+    });
+    await renderHash();
+    mockOpen.mockResolvedValue("C:\\files\\big.iso");
+    fireEvent.click(screen.getByRole("button", { name: /Select File/ }));
+    expect(await screen.findByText("Calculating Hashes...")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    act(() => progressHandler({ payload: { bytes_processed: 5 * 1024 ** 2, total_bytes: 10 * 1024 ** 2, percentage: 50 } }));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.queryByText(/drag & drop/i)).not.toBeInTheDocument();
+    await act(async () => finish({ sha256: SHA256, sha1: SHA1, md5: MD5 }));
   });
 });

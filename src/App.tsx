@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, type ReactElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -35,6 +35,23 @@ import { FileAnalyzerView } from "./components/views/FileAnalyzerView";
 import { HelpView } from "./components/views/HelpView";
 import { SettingsView } from "./components/views/SettingsView";
 import { UniversalUpdateModal } from "./components/modals/UniversalUpdateModal";
+import { CommandPalette } from "./components/layout/CommandPalette";
+import { StatusStrip } from "./components/layout/StatusStrip";
+import { HOME_TOOL, TOOLS, TOOL_GROUPS } from "./components/layout/tools";
+import type { PaletteCommand } from "./components/layout/paletteCommands";
+import { useToast } from "./components/ui/Toast";
+import { useShortcut } from "./hooks/useShortcut";
+import {
+  Lock,
+  Monitor,
+  Download,
+  Key,
+  RefreshCw,
+  CircleHelp,
+  Info,
+  Settings,
+  RotateCcw,
+} from "lucide-react";
 
 // Auth & Modals
 import { AuthOverlay } from "./components/auth/AuthOverlay";
@@ -60,6 +77,16 @@ function App() {
 
   // --- GLOBAL STATE ---
   const [activeTab, setActiveTab] = useState("home");
+  // Tools opened since the app was unlocked, newest first. Kept in memory only, so it is
+  // gone when the app locks or closes. It holds tool names, never anything from inside them.
+  const [recentTools, setRecentTools] = useState<string[]>([]);
+
+  function openTab(id: string) {
+    setActiveTab(id);
+    if (TOOLS.some((t) => t.id === id)) {
+      setRecentTools((list) => [id, ...list.filter((x) => x !== id)].slice(0, 4));
+    }
+  }
 
   // Modals
   const [showAbout, setShowAbout] = useState(false);
@@ -70,6 +97,8 @@ function App() {
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
+  const toast = useToast();
 
   // --- PORTABLE VAULT MODAL STATE ---
   const [portableTargetPath, setPortableTargetPath] = useState<string | null>(
@@ -121,6 +150,8 @@ function App() {
     setShowBackupModal(false);
     setShowUpdateModal(false);
     setShowBackupReminder(false);
+    setShowPalette(false);
+    setRecentTools([]);
     setChangePassError(null);
     setPortableModal(null);
     setPortableTargetPath(null);
@@ -136,6 +167,44 @@ function App() {
       .then((done) => setBackupDone(done))
       .catch(() => setBackupDone(false));
   }, [auth.view]);
+
+  // --- JUMP BAR (Ctrl K) ---
+  // Only on the dashboard. Hooks must run on every render, so the checks live inside them.
+  useShortcut("k", () => setShowPalette(true), {
+    enabled: auth.view === "dashboard" && !showPalette,
+  });
+
+  const paletteCommands = useMemo<PaletteCommand[]>(() => {
+    const groupName = (id: string | null) => TOOL_GROUPS.find((g) => g.id === id)?.label;
+    const tools: PaletteCommand[] = [HOME_TOOL, ...TOOLS].map((t) => ({
+      id: `tool-${t.id}`,
+      label: t.label,
+      section: "Tools",
+      hint: groupName(t.group),
+      keywords: t.keywords,
+      icon: <t.Icon size={16} />,
+      run: () => openTab(t.id),
+    }));
+    const action = (
+      id: string,
+      label: string,
+      icon: ReactElement,
+      run: () => void,
+      keywords: string[] = [],
+    ): PaletteCommand => ({ id: `action-${id}`, label, section: "Actions", icon, keywords, run });
+    return [
+      ...tools,
+      action("lock", "Lock now", <Lock size={16} />, () => auth.logout(), ["logout", "log out", "sign out", "secure"]),
+      action("settings", "Open Settings", <Settings size={16} />, () => setActiveTab("settings"), ["preferences", "options"]),
+      action("theme", "Change theme", <Monitor size={16} />, () => setShowThemeModal(true), ["dark", "light", "appearance"]),
+      action("backup", "Back up keychain", <Download size={16} />, () => setShowBackupModal(true), ["backup", "keychain", "export", "save"]),
+      action("password", "Change master password", <Key size={16} />, () => setShowChangePass(true), ["password", "security"]),
+      action("reset2fa", "Reset recovery code", <RotateCcw size={16} />, () => setShowResetConfirm(true), ["2fa", "regenerate", "new code"]),
+      action("update", "Check for updates", <RefreshCw size={16} />, () => setShowUpdateModal(true), ["updates", "upgrade", "version"]),
+      action("help", "Help topics", <CircleHelp size={16} />, () => setShowHelpModal(true), ["manual", "guide", "shortcuts", "keyboard"]),
+      action("about", "About QRE", <Info size={16} />, () => setShowAbout(true), ["version"]),
+    ];
+  }, [auth.logout]);
 
   // --- GLOBAL HELPERS ---
   async function performBackup() {
@@ -153,10 +222,7 @@ function App() {
         await writeFile(path, Uint8Array.from(bytes));
         await invoke("set_backup_done");
         setBackupDone(true);
-        setInfoMsg({
-          message: "Backup saved successfully.\nKeep it safe!",
-          type: "success",
-        });
+        toast.success("Backup saved successfully.\nKeep it safe!");
       }
     } catch (e) {
       setInfoMsg({ message: "Backup failed: " + String(e), type: "error" });
@@ -208,7 +274,7 @@ function App() {
               });
             } else if (res.msg) {
               // No msg means the user just cancelled the file picker - nothing to show.
-              setInfoMsg({ message: res.msg, type: "success" });
+              toast.success(res.msg);
             }
           }}
           onRecovery={async () => {
@@ -218,11 +284,7 @@ function App() {
                 message: res.msg || "Recovery failed",
                 type: "error",
               });
-            else
-              setInfoMsg({
-                message: "Vault recovered successfully.",
-                type: "success",
-              });
+            else toast.success("Vault recovered successfully.");
           }}
           onAckRecoveryCode={() => auth.setView("dashboard")}
           onSwitchToRecovery={() => auth.setView("recovery_entry")}
@@ -244,7 +306,7 @@ function App() {
     <div className="app-container">
       <Sidebar
         activeTab={activeTab}
-        setTab={setActiveTab}
+        setTab={openTab}
         onOpenHelpModal={() => setShowHelpModal(true)}
         onOpenAboutModal={() => setShowAbout(true)}
         onLogout={auth.logout}
@@ -255,8 +317,24 @@ function App() {
         onUpdate={() => setShowUpdateModal(true)}
       />
 
+      <div className="main-column">
+      <StatusStrip
+        idleDeadlineRef={auth.idleDeadlineRef}
+        backupDone={backupDone}
+        onBackup={() => setShowBackupModal(true)}
+        onLock={auth.logout}
+      />
+
       <div className="content-area">
-        {activeTab === "home" && <HomeView setTab={setActiveTab} />}
+        {activeTab === "home" && (
+          <HomeView
+            setTab={openTab}
+            onOpenPalette={() => setShowPalette(true)}
+            backupDone={backupDone}
+            onBackup={() => setShowBackupModal(true)}
+            recent={recentTools}
+          />
+        )}
 
         {activeTab === "files" && (
           <FilesView
@@ -303,8 +381,12 @@ function App() {
           />
         )}
       </div>
+      </div>
 
       {/* --- GLOBAL MODALS --- */}
+      {showPalette && (
+        <CommandPalette commands={paletteCommands} onClose={() => setShowPalette(false)} />
+      )}
       {showThemeModal && (
         <ThemeModal
           currentTheme={theme}
@@ -375,10 +457,7 @@ function App() {
             else {
               setChangePassError(null);
               setBackupDone(false);
-              setInfoMsg({
-                message: "Password updated successfully.",
-                type: "success",
-              });
+              toast.success("Password updated successfully.");
               setShowChangePass(false);
             }
           }}

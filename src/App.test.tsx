@@ -1,6 +1,6 @@
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "./test-support/rtl";
 import "@testing-library/jest-dom";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import App from "./App";
 
 // ─── Backend and plugins ─────────────────────────────────────────────────────
@@ -45,6 +45,7 @@ function mockUseAuth() {
   const [confirmPass, setConfirmPass] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
+  const idleDeadlineRef = useRef(0);
   const api = {
     view,
     setView,
@@ -62,6 +63,7 @@ function mockUseAuth() {
     setShowTimeoutWarning,
     countdown: 42,
     stayLoggedIn: () => mockAuthFns.stayLoggedIn(),
+    idleDeadlineRef,
     handleLogin: () => mockAuthFns.handleLogin(),
     handleInit: () => mockAuthFns.handleInit(),
     handleRestoreBackup: () => mockAuthFns.handleRestoreBackup(),
@@ -155,8 +157,15 @@ jest.mock("./components/layout/Sidebar", () => ({
 jest.mock("./components/views/HomeView", () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   HomeView: (p: any) => (
-    <div data-testid="view-home">
+    <div
+      data-testid="view-home"
+      data-recent={(p.recent ?? []).join(",")}
+      data-backup={String(p.backupDone)}
+    >
       <button onClick={() => p.setTab("files")}>home: go files</button>
+      <button onClick={() => p.setTab("settings")}>home: go settings</button>
+      <button onClick={() => p.onBackup()}>home: backup</button>
+      <button onClick={() => p.onOpenPalette()}>home: jump</button>
     </div>
   ),
 }));
@@ -369,8 +378,10 @@ describe("App - sign-in screens", () => {
   it("confirms a successful recovery", async () => {
     renderApp("recovery_entry");
     click("auth: recovery");
-    expect(await screen.findByText("Vault recovered successfully.")).toBeInTheDocument();
-    expect(screen.getByText("Success")).toBeInTheDocument();
+    const toast = (await screen.findByText("Vault recovered successfully.")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
+    // A toast, not a dialog: nothing needs a click.
+    expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
   });
 
   it("confirms a restored backup, but stays quiet when the file picker was cancelled", async () => {
@@ -379,15 +390,15 @@ describe("App - sign-in screens", () => {
     click("auth: restore");
     await waitFor(() => expect(mockAuthFns.handleRestoreBackup).toHaveBeenCalled());
     await act(async () => {}); // let the result be handled before looking
-    expect(screen.queryByText("Success")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     mockAuthFns.handleRestoreBackup.mockResolvedValueOnce({
       success: true,
       msg: "Backup restored. Log in with your password.",
     });
     click("auth: restore");
-    expect(await screen.findByText("Backup restored. Log in with your password.")).toBeInTheDocument();
-    expect(screen.getByText("Success")).toBeInTheDocument();
+    const toast = (await screen.findByText("Backup restored. Log in with your password.")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
   });
 
   it("tells the user when the session timed out, and lets them dismiss it", () => {
@@ -553,7 +564,7 @@ describe("App - keychain backup", () => {
     await waitFor(() => expect(mockSave).toHaveBeenCalled());
     expect(mockWriteFile).not.toHaveBeenCalled();
     expect(mockInvoke).not.toHaveBeenCalledWith("set_backup_done");
-    expect(screen.queryByText("Success")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText("Error")).not.toBeInTheDocument();
   });
 
@@ -639,7 +650,6 @@ describe("App - backup reminder", () => {
     fireEvent.click(screen.getByRole("button", { name: "Backup Now" }));
     expect(await screen.findByText(/Backup saved successfully/)).toBeInTheDocument();
     expect(screen.queryByText("Security Reminder")).not.toBeInTheDocument();
-    click("OK");
     click("files: reminder");
     expect(screen.queryByText("Security Reminder")).not.toBeInTheDocument();
   });
@@ -754,9 +764,9 @@ describe("App - change password", () => {
     await act(async () => {});
     open();
     update();
-    expect(await screen.findByText("Password updated successfully.")).toBeInTheDocument();
+    const toast = (await screen.findByText("Password updated successfully.")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
     expect(screen.queryByText("Change Password")).not.toBeInTheDocument();
-    click("OK");
     click("files: reminder");
     expect(screen.getByText("Security Reminder")).toBeInTheDocument();
   });
@@ -1094,5 +1104,270 @@ describe("App - when the session ends", () => {
     mockAuthFns.handleLogin.mockResolvedValueOnce({ success: false, msg: "Wrong password" });
     click("auth: login");
     expect(await screen.findByText("Wrong password")).toBeInTheDocument();
+  });
+});
+
+describe("App - jump bar", () => {
+  const ctrlK = () => fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const palette = () => screen.queryByRole("dialog", { name: "Jump to a tool or action" });
+  const search = () => screen.getByRole("combobox", { name: "Jump to a tool or action" });
+  const type = (text: string) => fireEvent.change(search(), { target: { value: text } });
+
+  it("opens with Ctrl K on the dashboard", () => {
+    renderApp();
+    expect(palette()).not.toBeInTheDocument();
+    ctrlK();
+    expect(palette()).toBeInTheDocument();
+    expect(search()).toHaveFocus();
+  });
+
+  it("does not open on the sign-in screens", () => {
+    renderApp("login");
+    ctrlK();
+    expect(palette()).not.toBeInTheDocument();
+  });
+
+  it("does not wait there and pop up after the next sign-in", () => {
+    renderApp("login");
+    ctrlK();
+    act(() => mockLatest.setView("dashboard"));
+    expect(screen.getByRole("region", { name: "Vault status" })).toBeInTheDocument();
+    expect(palette()).not.toBeInTheDocument();
+  });
+
+  it("closes with Ctrl K, with Escape, and after a choice", () => {
+    renderApp();
+    ctrlK();
+    ctrlK();
+    expect(palette()).not.toBeInTheDocument();
+
+    ctrlK();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(palette()).not.toBeInTheDocument();
+
+    ctrlK();
+    type("notes");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(palette()).not.toBeInTheDocument();
+  });
+
+  it("opens the tool that is chosen", () => {
+    renderApp();
+    ctrlK();
+    type("shred");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(activeTab()).toBe("shred");
+  });
+
+  it("finds a tool by a word that is not in its name", () => {
+    renderApp();
+    ctrlK();
+    type("wifi");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(activeTab()).toBe("qr");
+  });
+
+  it("lists every tool and Home", () => {
+    renderApp();
+    ctrlK();
+    const tools = screen.getAllByRole("option").map((o) => o.textContent ?? "");
+    for (const name of ["Home", "Encrypt Files", "Secure Notes", "Passwords Vault", "Bookmarks Vault", "Secure Clipboard", "Privacy Check", "Integrity Check", "File Analyzer", "System Clean", "Metadata Cleaner", "Shredder", "QR Generator"]) {
+      expect(tools.some((t) => t.startsWith(name))).toBe(true);
+    }
+  });
+
+  it("locks the app from the jump bar", () => {
+    renderApp();
+    ctrlK();
+    type("lock");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(mockAuthFns.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the dialog an action needs, without closing it along with the bar", () => {
+    renderApp();
+    ctrlK();
+    type("theme");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(palette()).not.toBeInTheDocument();
+    expect(screen.getByText("App Theme")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["backup", "Backup Keychain"],
+    ["master password", "Change Password"],
+    ["recovery code", "Reset Recovery Code?"],
+  ])("runs the %s action", (text, heading) => {
+    renderApp();
+    ctrlK();
+    type(text);
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(screen.getByText(heading)).toBeInTheDocument();
+  });
+
+  it("opens Settings, Help and the other pages and dialogs", () => {
+    renderApp();
+    ctrlK();
+    type("settings");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(activeTab()).toBe("settings");
+
+    ctrlK();
+    type("updates");
+    fireEvent.keyDown(search(), { key: "Enter" });
+    expect(screen.getByTestId("update-modal")).toBeInTheDocument();
+  });
+
+  it("does not open over another dialog", () => {
+    renderApp();
+    click("sb: theme");
+    expect(screen.getByText("App Theme")).toBeInTheDocument();
+    ctrlK();
+    expect(palette()).not.toBeInTheDocument();
+  });
+
+  it("goes away when the session ends", () => {
+    renderApp();
+    ctrlK();
+    expect(palette()).toBeInTheDocument();
+    act(() => mockLatest.setView("login"));
+    expect(palette()).not.toBeInTheDocument();
+    act(() => mockLatest.setView("dashboard"));
+    expect(palette()).not.toBeInTheDocument();
+  });
+});
+
+describe("App - status bar", () => {
+  const strip = () => screen.queryByRole("region", { name: "Vault status" });
+
+  it("shows on the dashboard and not on the sign-in screens", () => {
+    const { unmount } = renderApp();
+    expect(strip()).toBeInTheDocument();
+    unmount();
+    renderApp("login");
+    expect(strip()).not.toBeInTheDocument();
+  });
+
+  it("warns that the keychain is not backed up, and opens the backup dialog", async () => {
+    backupDone = false;
+    renderApp();
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
+    fireEvent.click(screen.getByRole("button", { name: /Keychain not backed up/ }));
+    expect(screen.getByText("Backup Keychain")).toBeInTheDocument();
+  });
+
+  it("confirms a backup once there is one", async () => {
+    backupDone = true;
+    renderApp();
+    expect(await screen.findByText("Keychain backed up")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Keychain not backed up/ })).not.toBeInTheDocument();
+  });
+
+  it("flips to backed up after a backup is made from the bar", async () => {
+    backupDone = false;
+    mockSave.mockResolvedValue("C:\\out\\QRE_Backup.json");
+    renderApp();
+    await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
+    fireEvent.click(screen.getByRole("button", { name: /Keychain not backed up/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Backup..." }));
+    expect(await screen.findByText("Keychain backed up")).toBeInTheDocument();
+  });
+
+  it("locks from its Lock button", () => {
+    renderApp();
+    fireEvent.click(within(strip()!).getByRole("button", { name: "Lock" }));
+    expect(mockAuthFns.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows no countdown until the sign-in hook reports a lock time", () => {
+    renderApp();
+    expect(within(strip()!).queryByRole("timer")).not.toBeInTheDocument();
+  });
+
+  it("shows the time left before the app locks itself", () => {
+    jest.useFakeTimers();
+    try {
+      renderApp();
+      mockLatest.idleDeadlineRef.current = Date.now() + 90_000;
+      act(() => void jest.advanceTimersByTime(1000));
+      expect(within(strip()!).getByRole("timer")).toHaveTextContent("Auto-lock in 1:29");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe("App - Home screen", () => {
+  const recent = () => screen.getByTestId("view-home").getAttribute("data-recent");
+
+  it("knows whether the keychain is backed up", async () => {
+    backupDone = true;
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId("view-home")).toHaveAttribute("data-backup", "true"));
+  });
+
+  it("opens the backup dialog and the jump bar from Home", () => {
+    renderApp();
+    click("home: backup");
+    expect(screen.getByText("Backup Keychain")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    click("home: jump");
+    expect(screen.getByRole("dialog", { name: "Jump to a tool or action" })).toBeInTheDocument();
+  });
+
+  it("starts with no recent tools", () => {
+    renderApp();
+    expect(recent()).toBe("");
+  });
+
+  it("remembers the tools opened, newest first", () => {
+    renderApp();
+    tab("vault");
+    tab("notes");
+    tab("home");
+    expect(recent()).toBe("notes,vault");
+  });
+
+  it("moves a tool that is opened again to the front instead of listing it twice", () => {
+    renderApp();
+    tab("vault");
+    tab("notes");
+    tab("vault");
+    tab("home");
+    expect(recent()).toBe("vault,notes");
+  });
+
+  it("keeps only the last four", () => {
+    renderApp();
+    for (const id of ["vault", "notes", "qr", "hash", "shred"]) tab(id);
+    tab("home");
+    expect(recent()).toBe("shred,hash,qr,notes");
+  });
+
+  it("does not list Home, Settings or Help, which are not tools", () => {
+    renderApp();
+    tab("settings");
+    tab("help");
+    tab("home");
+    expect(recent()).toBe("");
+  });
+
+  it("counts a tool opened from the jump bar too", () => {
+    renderApp();
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.change(screen.getByRole("combobox", { name: "Jump to a tool or action" }), { target: { value: "shred" } });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Jump to a tool or action" }), { key: "Enter" });
+    tab("home");
+    expect(recent()).toBe("shred");
+  });
+
+  it("forgets them when the session ends", () => {
+    renderApp();
+    tab("vault");
+    tab("home");
+    expect(recent()).toBe("vault");
+    act(() => mockLatest.setView("login"));
+    act(() => mockLatest.setView("dashboard"));
+    expect(recent()).toBe("");
   });
 });

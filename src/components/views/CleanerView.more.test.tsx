@@ -164,6 +164,13 @@ describe("CleanerView - adding files", () => {
     expect(calls("analyze_file_metadata")).toEqual([{ path: "/dropped.jpg" }]);
   });
 
+  it("highlights the scanner drop area while dragging", () => {
+    mockIsDragging = true;
+    render(<CleanerView />);
+    goStego();
+    expect(document.querySelector(".shred-zone")).toHaveClass("active");
+  });
+
   it("highlights the drop area while dragging", () => {
     mockIsDragging = true;
     render(<CleanerView />);
@@ -581,7 +588,9 @@ describe("CleanerView - while cleaning", () => {
         payload: { current: 1, total: 2, current_file: "/photos/a.jpg", percentage: 50 },
       }),
     );
-    expect(screen.getByText(/50% — 1 of 2 files/)).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 files")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Cleaning Metadata..." })).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByText("/photos/a.jpg")).toBeInTheDocument();
     expect(document.querySelector('div[style*="width: 50%"]')).not.toBeNull();
     await act(async () => {
@@ -914,13 +923,14 @@ describe("CleanerView - steganography scan", () => {
     render(<CleanerView />);
     await scanStego();
     expect(await screen.findByText("Analyzing Pixel Entropy...")).toBeInTheDocument();
-    expect(screen.queryByText(/% —/)).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Analyzing Pixel Entropy..." })).not.toHaveAttribute("aria-valuenow");
     act(() =>
       listeners["stego-progress"]({
         payload: { current: 1, total: 2, current_file: "pic.png", percentage: 45 },
       }),
     );
-    expect(screen.getByText("45% — pic.png")).toBeInTheDocument();
+    expect(screen.getByText("pic.png")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Analyzing Pixel Entropy..." })).toHaveAttribute("aria-valuenow", "45");
     await act(async () => {
       gate.resolve([stego()]);
     });
@@ -1102,5 +1112,73 @@ describe("CleanerView - keyboard shortcuts", () => {
     ctrlO();
     await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
     expect(mockOpen.mock.calls[0][0].filters[0].name).toBe("Images");
+  });
+});
+
+// ─── Shared parts ────────────────────────────────────────────────────────────
+
+describe("CleanerView - shared parts", () => {
+  it("shows the start screen of both tabs in the shared drop zone", () => {
+    render(<CleanerView />);
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+    expect(screen.getByText("or click to select")).toBeInTheDocument();
+    expect(screen.getByText(/Maximum file size: 100 MB/)).toBeInTheDocument();
+    goStego();
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+    expect(screen.getByText("Supports: JPG, PNG, BMP, WebP")).toBeInTheDocument();
+  });
+
+  it("opens the file picker from the drop zone button, once", async () => {
+    mockOpen.mockResolvedValueOnce(null);
+    render(<CleanerView />);
+    fireEvent.click(screen.getByRole("button", { name: /Select Files/ }));
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens the image picker from the drop zone button on the scanner tab", async () => {
+    mockOpen.mockResolvedValueOnce(null);
+    render(<CleanerView />);
+    goStego();
+    fireEvent.click(screen.getByRole("button", { name: /Select Images/ }));
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a failure in an error banner you can dismiss", async () => {
+    handlers.analyze_file_metadata = () => {
+      throw "unreadable";
+    };
+    render(<CleanerView />);
+    mockOpen.mockResolvedValueOnce(["/a.jpg"]);
+    fireEvent.click(screen.getByText("Select Files"));
+    const message = await screen.findByText(/Analysis failed: unreadable/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss message" }));
+    expect(screen.queryByText(/Analysis failed/)).not.toBeInTheDocument();
+  });
+
+  it("starts the cleaning progress card at 0% and hides the drop zone", async () => {
+    const gate = deferred<unknown>();
+    handlers.batch_clean_metadata = () => gate.promise;
+    render(<CleanerView />);
+    await startClean();
+    await screen.findByText("Cleaning Metadata...");
+    expect(screen.getByText("0%")).toBeInTheDocument();
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => {
+      gate.resolve(cleanResult());
+    });
+  });
+
+  it("shows the scanner as a card that cannot be cancelled and has no drop zone", async () => {
+    const gate = deferred<unknown>();
+    handlers.detect_steganography = () => gate.promise;
+    render(<CleanerView />);
+    await scanStego();
+    await screen.findByText("Analyzing Pixel Entropy...");
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    await act(async () => {
+      gate.resolve([stego()]);
+    });
   });
 });

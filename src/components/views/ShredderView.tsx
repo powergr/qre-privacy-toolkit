@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   File,
   X,
-  Upload,
   Loader2,
   FileX,
   Eye,
@@ -24,6 +23,9 @@ import { useDragDrop } from "../../hooks/useDragDrop";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { platform } from "@tauri-apps/plugin-os";
+import { Banner } from "../ui/Banner";
+import { DropZone } from "../ui/DropZone";
+import { ProgressCard } from "../ui/ProgressCard";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -129,35 +131,10 @@ function ErrorBanner({
   onDismiss: () => void;
 }) {
   return (
-    <div
-      data-testid="error-banner"
-      style={{
-        padding: "10px 14px",
-        background: "rgba(239, 68, 68, 0.1)",
-        border: "1px solid rgba(239, 68, 68, 0.3)",
-        borderRadius: 8,
-        color: "var(--btn-danger)",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        marginBottom: 20,
-        fontSize: "0.875rem",
-      }}
-    >
-      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-      <span style={{ flex: 1 }}>{message}</span>
-      <button
-        onClick={onDismiss}
-        style={{
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          color: "inherit",
-          padding: 2,
-        }}
-      >
-        <X size={15} />
-      </button>
+    <div data-testid="error-banner" style={{ marginBottom: 20 }}>
+      <Banner tone="error" onDismiss={onDismiss}>
+        {message}
+      </Banner>
     </div>
   );
 }
@@ -572,97 +549,23 @@ export function ShredderView() {
           <>
             {/* Active shred progress */}
             {shredding && (
-              <div
-                data-testid="progress-card"
-                style={{
-                  maxWidth: 560,
-                  margin: "40px auto 0 auto",
-                  width: "100%",
-                }}
-              >
-                <div
-                  className="modern-card"
-                  style={{ padding: 30, textAlign: "center" }}
+              <div style={{ maxWidth: 560, margin: "40px auto 0 auto", width: "100%" }}>
+                <ProgressCard
+                  title="Shredding Files…"
+                  percent={shredProgress ? shredProgress.percentage : 0}
+                  onCancel={cancelShred}
+                  cancelling={shredCancelling}
                 >
-                  <Loader2
-                    size={44}
-                    className="spinner"
-                    style={{ marginBottom: 18, color: "var(--accent)" }}
-                  />
-                  <h3 style={{ margin: "0 0 20px 0" }}>Shredding Files…</h3>
-                  <div
-                    style={{
-                      width: "100%",
-                      background: "var(--border)",
-                      height: 6,
-                      borderRadius: 3,
-                      overflow: "hidden",
-                      marginBottom: 14,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${shredProgress?.percentage ?? 0}%`,
-                        height: "100%",
-                        background: "var(--accent)",
-                        transition: "width 0.3s ease",
-                        borderRadius: 3,
-                      }}
-                    />
-                  </div>
                   {shredProgress ? (
                     <>
-                      <p
-                        style={{
-                          color: "var(--text-dim)",
-                          fontSize: "0.875rem",
-                          margin: "0 0 4px 0",
-                        }}
-                      >
-                        <span data-testid="progress-counter">{`File ${shredProgress.current_file} of ${shredProgress.total_files} · Pass ${shredProgress.current_pass} of ${shredProgress.total_passes}`}</span>
-                      </p>
-                      <p
-                        style={{
-                          color: "var(--text-dim)",
-                          fontSize: "0.82rem",
-                          marginTop: 6,
-                          marginBottom: 0,
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {shredProgress.current_file_name}
-                      </p>
-                      <p
-                        style={{
-                          color: "var(--text-dim)",
-                          fontSize: "0.78rem",
-                          marginTop: 4,
-                        }}
-                      >
-                        <span data-testid="progress-bytes">{`${formatSize(shredProgress.bytes_processed)} of ${formatSize(shredProgress.total_bytes)} processed`}</span>
-                      </p>
+                      <span data-testid="progress-counter">{`File ${shredProgress.current_file} of ${shredProgress.total_files} · Pass ${shredProgress.current_pass} of ${shredProgress.total_passes}`}</span>
+                      <span>{shredProgress.current_file_name}</span>
+                      <span data-testid="progress-bytes">{`${formatSize(shredProgress.bytes_processed)} of ${formatSize(shredProgress.total_bytes)} processed`}</span>
                     </>
                   ) : (
-                    <p
-                      data-testid="progress-starting"
-                      style={{
-                        color: "var(--text-dim)",
-                        fontSize: "0.875rem",
-                        margin: "0 0 4px 0",
-                      }}
-                    >
-                      Preparing…
-                    </p>
+                    <span data-testid="progress-starting">Preparing…</span>
                   )}
-                  <button
-                    className="secondary-btn"
-                    onClick={cancelShred}
-                    disabled={shredCancelling}
-                    style={{ marginTop: 18 }}
-                  >
-                    {shredCancelling ? "Cancelling…" : "Cancel"}
-                  </button>
-                </div>
+                </ProgressCard>
               </div>
             )}
 
@@ -1042,45 +945,32 @@ export function ShredderView() {
                 }}
               >
                 {/* Drop zone */}
+                {droppedFiles.length === 0 ? (
+                  <div style={{ width: "100%", maxWidth: 580, margin: "0 auto 20px auto" }}>
+                    <DropZone
+                      icon={<FileX size={48} />}
+                      hue="var(--hue-clean)"
+                      title="Drop files here or click to browse."
+                      description="Shredded files are overwritten and cannot be recovered."
+                      buttonLabel="Select Files"
+                      onBrowse={handleBrowse}
+                      active={isDragging}
+                    />
+                  </div>
+                ) : (
                 <div
                   className={`shred-zone ${isDragging ? "active" : ""}`}
-                  onClick={droppedFiles.length === 0 ? handleBrowse : undefined}
                   style={{
                     borderColor: "var(--accent)",
                     width: "100%",
                     maxWidth: 580,
                     margin: "0 auto 20px auto",
-                    minHeight: droppedFiles.length === 0 ? 220 : "auto",
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
-                    cursor: droppedFiles.length === 0 ? "pointer" : "default",
                   }}
                 >
-                  {droppedFiles.length === 0 ? (
-                    <div style={{ textAlign: "center", opacity: 0.9 }}>
-                      <p
-                        style={{
-                          margin: "0 0 14px 0",
-                          color: "var(--text-dim)",
-                          fontSize: "0.9rem",
-                        }}
-                      >
-                        Drop files here or click to browse.
-                      </p>
-                      <button
-                        className="secondary-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleBrowse();
-                        }}
-                      >
-                        <Upload size={15} style={{ marginRight: 7 }} /> Select
-                        Files
-                      </button>
-                    </div>
-                  ) : (
                     <div style={{ width: "100%", textAlign: "left" }}>
                       <div
                         style={{
@@ -1188,8 +1078,8 @@ export function ShredderView() {
                         </button>
                       </div>
                     </div>
-                  )}
                 </div>
+                )}
 
                 {/* Method selector — visible once files are loaded */}
                 {droppedFiles.length > 0 && (

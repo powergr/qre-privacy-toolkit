@@ -345,3 +345,117 @@ describe("FileAnalyzerView - keyboard shortcuts", () => {
     expect(mockOpen.mock.calls[0][0]).toMatchObject({ directory: true });
   });
 });
+
+describe("FileAnalyzerView - filtering the findings", () => {
+  const mixed = () => [
+    result("zeta.pdf", "WARNING"),
+    result("beta.doc", "DANGER"),
+    result("alpha.png", "WARNING"),
+    result("omega.txt", "DANGER"),
+    result("gamma.zip", "WARNING"),
+  ];
+  const names = () =>
+    Array.from(document.querySelectorAll("[title]"))
+      .map((n) => n.getAttribute("title"))
+      .filter((t) => t && /\.(pdf|doc|png|txt|zip)$/.test(t));
+
+  async function scanWith(results: ReturnType<typeof mixed>) {
+    scanImpl = () => Promise.resolve(results);
+    await renderAnalyzer();
+    clickSmart();
+    await screen.findByText("New Scan");
+  }
+
+  it("offers All, Dangers and Warnings with their counts, starting on All", async () => {
+    await scanWith(mixed());
+    const all = screen.getByRole("button", { name: "All 5" });
+    expect(all).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "2 Dangers" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "3 Warnings" })).toHaveAttribute("aria-pressed", "false");
+    expect(names()).toHaveLength(5);
+  });
+
+  it("shows only the dangers when asked", async () => {
+    await scanWith(mixed());
+    fireEvent.click(screen.getByRole("button", { name: "2 Dangers" }));
+    expect(names()).toEqual(["beta.doc", "omega.txt"]);
+    expect(screen.getByRole("button", { name: "2 Dangers" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "All 5" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows only the warnings when asked, and everything again on All", async () => {
+    await scanWith(mixed());
+    fireEvent.click(screen.getByRole("button", { name: "3 Warnings" }));
+    expect(names()).toEqual(["alpha.png", "gamma.zip", "zeta.pdf"]);
+    fireEvent.click(screen.getByRole("button", { name: "All 5" }));
+    expect(names()).toHaveLength(5);
+  });
+
+  it("says so, and does not show an empty table, when a category has nothing in it", async () => {
+    await scanWith([result("beta.doc", "DANGER")]);
+    fireEvent.click(screen.getByRole("button", { name: "0 Warnings" }));
+    expect(screen.getByText(/Nothing in this category/)).toBeInTheDocument();
+    expect(screen.queryByText("FILENAME")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "All 1" }));
+    expect(screen.getByText("FILENAME")).toBeInTheDocument();
+  });
+
+  it("goes back to All when a new scan is run", async () => {
+    await scanWith(mixed());
+    fireEvent.click(screen.getByRole("button", { name: "2 Dangers" }));
+    fireEvent.click(screen.getByRole("button", { name: /New Scan/ }));
+    clickSmart();
+    await screen.findByText("New Scan");
+    expect(screen.getByRole("button", { name: "All 5" })).toHaveAttribute("aria-pressed", "true");
+    expect(names()).toHaveLength(5);
+  });
+
+  it("shows no filters when nothing was found", async () => {
+    await scanWith([]);
+    expect(screen.queryByRole("button", { name: /^All / })).not.toBeInTheDocument();
+  });
+});
+
+describe("FileAnalyzerView - status in words", () => {
+  async function scanWith(results: ReturnType<typeof result>[]) {
+    scanImpl = () => Promise.resolve(results);
+    await renderAnalyzer();
+    clickSmart();
+    await screen.findByText("New Scan");
+  }
+
+  it("writes Danger or Warning on each row, so the state is not shown by an icon alone", async () => {
+    await scanWith([result("beta.doc", "DANGER"), result("alpha.png", "WARNING")]);
+    const badges = Array.from(document.querySelectorAll(".ui-badge")).map((b) => b.textContent?.trim());
+    expect(badges).toEqual(["Danger", "Warning"]);
+    expect(document.querySelector(".ui-badge--danger")).toBeInTheDocument();
+    expect(document.querySelector(".ui-badge--warn")).toBeInTheDocument();
+  });
+});
+
+describe("FileAnalyzerView - shared parts", () => {
+  it("shows the start screen in the shared drop zone", async () => {
+    await renderAnalyzer();
+    expect(document.querySelector(".ui-drop")).toBeInTheDocument();
+  });
+
+  it("shows an indeterminate progress card with a Cancel Scan button while scanning", async () => {
+    const pending = deferred<ReturnType<typeof result>[]>();
+    scanImpl = () => pending.promise;
+    await renderAnalyzer();
+    clickSmart();
+    expect(await screen.findByText("Deep Scanning...")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Deep Scanning..." })).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByRole("button", { name: "Cancel Scan" })).toBeInTheDocument();
+    expect(document.querySelector(".ui-drop")).toBeNull();
+    await act(async () => pending.resolve([]));
+  });
+
+  it("shows a scan error in the shared banner", async () => {
+    scanImpl = () => Promise.reject("disk unreadable");
+    await renderAnalyzer();
+    clickSmart();
+    const message = await screen.findByText(/Scan Error: .*disk unreadable/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+  });
+});
