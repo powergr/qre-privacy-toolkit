@@ -1,3 +1,5 @@
+import { useShortcut } from "../../hooks/useShortcut";
+import { ToolPage, ToolTabs } from "../common/ToolPage";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -294,37 +296,15 @@ export function BreachView() {
     if (activeTab === "network" && !publicIp) checkIp();
   }, [activeTab, publicIp, checkIp]);
 
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        padding: "30px",
-        overflowY: "auto",
-      }}
-    >
-      {/* HEADER */}
-      <div style={{ textAlign: "center", marginBottom: 30 }}>
-        <h2 style={{ margin: 0, fontSize: "1.8rem" }}>Privacy Check</h2>
-        <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
-          Detect sensitive data leaks locally and online.
-        </p>
-      </div>
+  // Ctrl+O picks the folder for the local secret scan.
+  useShortcut("o", runLocalScan, { enabled: activeTab === "local" && !localLoading });
 
-      {/* TABS */}
-      <div
-        style={{ display: "flex", justifyContent: "center", marginBottom: 30 }}
-      >
-        <div
-          style={{
-            display: "flex",
-            background: "var(--bg-card)",
-            border: "1px solid var(--border)",
-            borderRadius: "8px",
-            padding: "4px",
-          }}
-        >
+  return (
+    <ToolPage
+      title="Privacy Check"
+      subtitle="Detect sensitive data leaks locally and online."
+      tabs={
+        <ToolTabs>
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -343,8 +323,9 @@ export function BreachView() {
               {tab.label}
             </button>
           ))}
-        </div>
-      </div>
+        </ToolTabs>
+      }
+    >
 
       {/* --- TAB 1: LOCAL SECRET SCANNER --- */}
       {activeTab === "local" && (
@@ -1191,6 +1172,6 @@ export function BreachView() {
           </p>
         </div>
       )}
-    </div>
+    </ToolPage>
   );
 }

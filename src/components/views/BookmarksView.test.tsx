@@ -406,3 +406,87 @@ describe("BookmarksView - import from browser", () => {
     expect(screen.queryByTitle("Import from Browser")).not.toBeInTheDocument();
   });
 });
+
+// ─── Escape key ──────────────────────────────────────────────────────────────
+
+describe("BookmarksView - Escape key", () => {
+  const escape = () => fireEvent.keyDown(window, { key: "Escape" });
+
+  it("closes the add/edit dialog without saving", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    fill("Title (e.g. My Bank)", "Draft");
+    expect(screen.getByText("Add Bookmark")).toBeInTheDocument();
+
+    escape();
+
+    expect(screen.queryByText("Add Bookmark")).not.toBeInTheDocument();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("closes the import dialog", async () => {
+    await renderBookmarks([]);
+    fireEvent.click(screen.getByTitle("Import from Browser"));
+    escape();
+    expect(screen.queryByText("Import Bookmarks")).not.toBeInTheDocument();
+    expect(mockInvoke).not.toHaveBeenCalledWith("import_browser_bookmarks", expect.anything());
+  });
+
+  it("does nothing when no dialog is open", async () => {
+    await renderBookmarks([makeBookmark("a", "Alpha")]);
+    escape();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+});
+
+// ─── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+describe("BookmarksView - keyboard shortcuts", () => {
+  const ctrl = (key: string) => fireEvent.keyDown(window, { key, ctrlKey: true });
+
+  it("Ctrl+N opens an empty editor", async () => {
+    await renderBookmarks([]);
+    ctrl("n");
+    expect(screen.getByText("Add Bookmark")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Title (e.g. My Bank)")).toHaveValue("");
+  });
+
+  it("Ctrl+F puts the cursor in the search box", async () => {
+    await renderBookmarks([makeBookmark("a", "Alpha")]);
+    ctrl("f");
+    expect(screen.getByPlaceholderText("Search...")).toHaveFocus();
+  });
+
+  it("Ctrl+S saves the open bookmark", async () => {
+    await renderBookmarks([]);
+    ctrl("n");
+    fill("Title (e.g. My Bank)", "Shortcut");
+    fireEvent.change(screen.getByPlaceholderText(/https?:\/\//i), { target: { value: "https://example.org" } });
+    ctrl("s");
+
+    await waitFor(() => expect(savedVaults()).toHaveLength(1));
+    expect(lastSaved()[0]).toMatchObject({ title: "Shortcut", url: "https://example.org" });
+    expect(screen.queryByText("Add Bookmark")).not.toBeInTheDocument();
+  });
+
+  it("Ctrl+S with an empty title shows the same error as the button", async () => {
+    await renderBookmarks([]);
+    ctrl("n");
+    ctrl("s");
+    expect(await screen.findByText("Bookmark title cannot be empty.")).toBeInTheDocument();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("Ctrl+S does nothing when no editor is open", async () => {
+    await renderBookmarks([makeBookmark("a", "Alpha")]);
+    ctrl("s");
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("Ctrl+N does not open an editor behind the import dialog", async () => {
+    await renderBookmarks([]);
+    fireEvent.click(screen.getByTitle("Import from Browser"));
+    ctrl("n");
+    expect(screen.queryByText("Add Bookmark")).not.toBeInTheDocument();
+  });
+});

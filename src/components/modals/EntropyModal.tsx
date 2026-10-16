@@ -5,7 +5,10 @@ interface EntropyModalProps {
   onCancel: () => void;
 }
 
+import { useEscapeKey } from "../../hooks/useEscapeKey";
+
 export function EntropyModal({ onComplete, onCancel }: EntropyModalProps) {
+  useEscapeKey(onCancel);
   const [progress, setProgress] = useState(0);
   const [hashView, setHashView] = useState("Waiting for input...");
 

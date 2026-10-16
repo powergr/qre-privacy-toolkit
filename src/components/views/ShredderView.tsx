@@ -1,3 +1,5 @@
+import { useShortcut } from "../../hooks/useShortcut";
+import { ToolScroll, ToolTabs } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -177,54 +179,37 @@ function TabBar({ active, locked, onChange }: TabBarProps) {
   ];
 
   return (
-    // Outer wrapper: just centers the pill horizontally, no background/border of its own
-    <div
-      style={{ display: "flex", justifyContent: "center", paddingBottom: 0 }}
-    >
-      {/* The bordered pill container */}
-      <div
-        style={{
-          display: "inline-flex",
-          border: "1px solid var(--border)",
-          borderRadius: 10,
-          overflow: "hidden",
-          background: "var(--bg-card)",
-        }}
-      >
-        {tabs.map((tab) => {
-          const isActive = active === tab.id;
-          const isDisabled = locked && !isActive;
-          return (
-            <button
-              key={tab.id}
-              data-testid={`top-tab-${tab.id}`}
-              onClick={() => !isDisabled && onChange(tab.id)}
-              title={isDisabled ? "An operation is in progress" : undefined}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 7,
-                padding: "8px 22px",
-                border: "none",
-                borderRadius: 8,
-                margin: 3,
-                background: isActive ? "var(--accent)" : "transparent",
-                cursor: isDisabled ? "not-allowed" : "pointer",
-                color: isActive ? "#fff" : "var(--text-dim)",
-                fontWeight: isActive ? 600 : 400,
-                fontSize: "0.875rem",
-                opacity: isDisabled ? 0.4 : 1,
-                transition: "background 0.15s, color 0.15s, opacity 0.15s",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {isDisabled ? <Lock size={13} /> : tab.icon}
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <ToolTabs>
+      {tabs.map((tab) => {
+        const isActive = active === tab.id;
+        const isDisabled = locked && !isActive;
+        return (
+          <button
+            key={tab.id}
+            data-testid={`top-tab-${tab.id}`}
+            onClick={() => !isDisabled && onChange(tab.id)}
+            title={isDisabled ? "An operation is in progress" : undefined}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "8px 20px",
+              borderRadius: "6px",
+              border: "none",
+              background: isActive ? "var(--accent)" : "transparent",
+              color: isActive ? "white" : "var(--text-dim)",
+              cursor: isDisabled ? "not-allowed" : "pointer",
+              fontWeight: 500,
+              opacity: isDisabled ? 0.4 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {isDisabled ? <Lock size={13} /> : tab.icon}
+            {tab.label}
+          </button>
+        );
+      })}
+    </ToolTabs>
   );
 }
 
@@ -516,6 +501,11 @@ export function ShredderView() {
     },
   };
 
+  // Ctrl+O adds files to shred, only on the idle shred screen.
+  useShortcut("o", handleBrowse, {
+    enabled: topTab === "shred" && !shredding && !result && !showPreview && !isAndroid,
+  });
+
   // ── Android guard ─────────────────────────────────────────────────────
 
   if (isAndroid) {
@@ -564,22 +554,16 @@ export function ShredderView() {
         overflow: "hidden",
       }}
     >
-      {/* ── SCROLLABLE CONTENT AREA ───────────────────────────────────────
-          Always flex-start. The tab bar sits at the top of this container,
-          so it stays in the same position on every tab. Content below it
-          uses its own flex layout for vertical centering where needed.
-          ─────────────────────────────────────────────────────────────── */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-          padding: "20px 30px 28px 30px",
-        }}
+      {/* ── SCROLLABLE CONTENT AREA: shared tool layout, header on top, tabs below it ── */}
+      <ToolScroll
+        title="Secure Shredder"
+        subtitle={
+          topTab === "shred"
+            ? "Permanently overwrite and destroy sensitive files beyond recovery."
+            : "Wipe leftover data from free space, or issue a TRIM command to your SSD."
+        }
+        tabs={<TabBar active={topTab} locked={tabLocked} onChange={setTopTab} />}
       >
-        {/* ── FLOATING PILL TAB BAR — always first, always same position ── */}
-        <TabBar active={topTab} locked={tabLocked} onChange={setTopTab} />
 
         {/* ══════════════════════════════════════════════════════════════
             TAB A — SHRED FILES
@@ -1057,28 +1041,6 @@ export function ShredderView() {
                   paddingTop: droppedFiles.length === 0 ? 0 : 30,
                 }}
               >
-                {/* Hero — only when no files queued */}
-                {droppedFiles.length === 0 && (
-                  <div style={{ textAlign: "center", marginBottom: 32 }}>
-                    <div
-                      style={{
-                        background: "rgba(0, 122, 204, 0.08)",
-                        padding: 20,
-                        borderRadius: "50%",
-                        display: "inline-block",
-                        marginBottom: 16,
-                      }}
-                    >
-                      <Trash2 size={40} color="var(--accent)" />
-                    </div>
-                    <h2 style={{ margin: "0 0 8px 0" }}>Secure Shredder</h2>
-                    <p style={{ color: "var(--text-dim)", margin: 0 }}>
-                      Permanently overwrite and destroy sensitive files beyond
-                      recovery.
-                    </p>
-                  </div>
-                )}
-
                 {/* Drop zone */}
                 <div
                   className={`shred-zone ${isDragging ? "active" : ""}`}
@@ -1324,33 +1286,6 @@ export function ShredderView() {
             ════════════════════════════════════════════════════════════ */}
         {topTab === "drive" && (
           <>
-            <div
-              style={{ textAlign: "center", marginBottom: 28, marginTop: 40 }}
-            >
-              <div
-                style={{
-                  background: "rgba(0, 122, 204, 0.08)",
-                  padding: 20,
-                  borderRadius: "50%",
-                  display: "inline-block",
-                  marginBottom: 14,
-                }}
-              >
-                <HardDrive size={38} color="var(--accent)" />
-              </div>
-              <h2 style={{ margin: "0 0 6px 0" }}>Drive Maintenance</h2>
-              <p
-                style={{
-                  color: "var(--text-dim)",
-                  margin: 0,
-                  fontSize: "0.9rem",
-                }}
-              >
-                Wipe leftover data from free space, or issue a TRIM command to
-                your SSD.
-              </p>
-            </div>
-
             {driveError && (
               <ErrorBanner
                 message={driveError}
@@ -1730,7 +1665,7 @@ export function ShredderView() {
             </div>
           </>
         )}
-      </div>
+      </ToolScroll>
 
       {/* ── SHRED FOOTER ─────────────────────────────────────────────────── */}
       {topTab === "shred" &&

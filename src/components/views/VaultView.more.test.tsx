@@ -983,3 +983,87 @@ describe("VaultView - generated passwords", () => {
     expect(savedVaults()).toHaveLength(0);
   });
 });
+
+// ─── Escape key ──────────────────────────────────────────────────────────────
+
+describe("VaultView - Escape key", () => {
+  const escape = () => fireEvent.keyDown(window, { key: "Escape" });
+
+  it("closes the add/edit dialog without saving", async () => {
+    await renderVault([]);
+    openNew();
+    fill(SERVICE, "Draft");
+
+    escape();
+
+    expect(screen.queryByPlaceholderText(SERVICE)).not.toBeInTheDocument();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("closes the delete confirmation first and leaves the editor open", async () => {
+    await renderVault([makeEntry("a", "GitHub")]);
+    fireEvent.click(screen.getByText("GitHub"));
+    expect(screen.getByPlaceholderText(SERVICE)).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Delete"));
+    expect(screen.getByText("Delete Item")).toBeInTheDocument();
+
+    escape();
+    expect(screen.queryByText("Delete Item")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText(SERVICE)).toBeInTheDocument();
+
+    escape();
+    expect(screen.queryByPlaceholderText(SERVICE)).not.toBeInTheDocument();
+  });
+});
+
+// ─── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+describe("VaultView - keyboard shortcuts", () => {
+  const ctrl = (key: string) => fireEvent.keyDown(window, { key, ctrlKey: true });
+
+  it("Ctrl+N opens an empty editor", async () => {
+    await renderVault([]);
+    ctrl("n");
+    expect(screen.getByPlaceholderText(SERVICE)).toHaveValue("");
+  });
+
+  it("Ctrl+F puts the cursor in the search box", async () => {
+    await renderVault([makeEntry("a", "GitHub")]);
+    ctrl("f");
+    expect(screen.getByPlaceholderText("Search Logins...")).toHaveFocus();
+  });
+
+  it("Ctrl+S saves the open entry and closes the editor", async () => {
+    await renderVault([]);
+    ctrl("n");
+    fill(SERVICE, "Shortcut Site");
+    fill("Password", "s3cret-pass");
+    ctrl("s");
+
+    await waitFor(() => expect(savedVaults()).toHaveLength(1));
+    expect(lastSaved()[0].service).toBe("Shortcut Site");
+    expect(screen.queryByPlaceholderText(SERVICE)).not.toBeInTheDocument();
+  });
+
+  it("Ctrl+S with a missing service name shows the same error as the button", async () => {
+    await renderVault([]);
+    ctrl("n");
+    ctrl("s");
+    expect(await screen.findByText("Service name is required.")).toBeInTheDocument();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("Ctrl+S does nothing when no editor is open", async () => {
+    await renderVault([makeEntry("a", "GitHub")]);
+    ctrl("s");
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("Ctrl+N does not open a second editor over a dialog", async () => {
+    await renderVault([makeEntry("a", "GitHub")]);
+    fireEvent.click(screen.getByTitle("Delete"));
+    expect(screen.getByText("Delete Item")).toBeInTheDocument();
+    ctrl("n");
+    expect(screen.queryByPlaceholderText(SERVICE)).not.toBeInTheDocument();
+  });
+});

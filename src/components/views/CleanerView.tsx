@@ -1,3 +1,5 @@
+import { useShortcut } from "../../hooks/useShortcut";
+import { ToolScroll, ToolTabs } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -464,6 +466,14 @@ export function CleanerView() {
       t.value.toLowerCase().includes(rawFilter.toLowerCase()),
   );
 
+  // Ctrl+O adds files to whichever tab is showing, unless it is busy or showing results.
+  useShortcut("o", handleBrowse, {
+    enabled: activeTab === "meta" && !cleaning && !analyzingPreview && !result,
+  });
+  useShortcut("o", handleStegoBrowse, {
+    enabled: activeTab === "stego" && !stegoLoading && !stegoResults,
+  });
+
   return (
     <div
       style={{
@@ -473,45 +483,11 @@ export function CleanerView() {
         overflow: "hidden",
       }}
     >
-      {/* 
-        FIX 1: Top Container always uses flex-start.
-        This stops the header and tabs from jumping around when content changes.
-      */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "30px",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "flex-start",
-        }}
-      >
-        {/* HEADER (Fixed Height/Margin) */}
-        <div style={{ textAlign: "center", marginBottom: 30 }}>
-          <h2 style={{ margin: 0 }}>Metadata Cleaner</h2>
-          <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
-            Remove metadata or detect hidden steganography payloads.
-          </p>
-        </div>
-
-        {/* TABS (Fixed Margin) */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: 30,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              background: "var(--bg-card)",
-              border: "1px solid var(--border)",
-              borderRadius: "8px",
-              padding: "4px",
-            }}
-          >
+      <ToolScroll
+        title="Metadata Cleaner"
+        subtitle="Remove metadata or detect hidden steganography payloads."
+        tabs={
+          <ToolTabs>
             {[
               { id: "meta", label: "Metadata Cleaner" },
               { id: "stego", label: "Steganography Scan" },
@@ -534,8 +510,9 @@ export function CleanerView() {
                 {tab.label}
               </button>
             ))}
-          </div>
-        </div>
+          </ToolTabs>
+        }
+      >
 
         {/* ERROR BANNER */}
         {error && (
@@ -1846,7 +1823,7 @@ export function CleanerView() {
             )}
           </div>
         )}
-      </div>
+      </ToolScroll>
 
       {/* FOOTER: Cleaning Options & Actions */}
       {files.length > 0 && !cleaning && !result && activeTab === "meta" && (

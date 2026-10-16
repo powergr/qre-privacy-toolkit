@@ -45,14 +45,16 @@ jobs:
         run: npm test -- --ci
 
   # --- Rust: fast tests ---
-  # Nearly all of the 459 Rust tests finish in well under a second each. The cost
+  # Nearly all of the 504 Rust tests finish in well under a second each. The cost
   # on a CI machine is compiling the dependency tree, which the cache removes.
   # Two tests are left for full-tests.yml: they scan the real file system of the
   # machine they run on, which makes them slow (tens of seconds) and dependent on
   # whatever happens to be on that machine.
   #
-  # Runs on Windows because that is where these tests are developed and known to
-  # pass; a Linux job can be added once they have been checked there.
+  # This job runs on Windows, where the tests are developed. The next two jobs run the
+  # same tests on Linux and on macOS, which also compile the code paths that only exist
+  # there. Android cannot run Rust tests on a build machine. Its logic is kept in plain
+  # functions that these jobs test, and its screens are covered by the frontend tests.
   rust:
     name: Rust (fast tests)
     runs-on: windows-latest
@@ -71,6 +73,63 @@ jobs:
       - name: run Rust tests
         working-directory: src-tauri
         shell: bash
+        run: >
+          cargo test --lib --locked --
+          --skip test_scan_targets_virtual_commands_have_zero_size
+          --skip test_scan_targets_filters_empty_filesystem_items
+
+  # --- Rust: fast tests on Linux ---
+  # Same tests as above on Ubuntu. Tauri needs the system libraries the release build
+  # installs, so they are installed here too. Linux-only tests (the shredder's protected
+  # folders, for example) run only on this job.
+  rust-linux:
+    name: Rust (fast tests, Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev javascriptcoregtk-4.1-dev
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: run Rust tests
+        working-directory: src-tauri
+        run: >
+          cargo test --lib --locked --
+          --skip test_scan_targets_virtual_commands_have_zero_size
+          --skip test_scan_targets_filters_empty_filesystem_items
+
+  # --- Rust: fast tests on macOS ---
+  # Same tests on a Mac. No extra system libraries are needed. macOS keeps its temporary
+  # folder under /private/var, so these tests also prove that files there are not
+  # mistaken for protected system files.
+  rust-macos:
+    name: Rust (fast tests, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: run Rust tests
+        working-directory: src-tauri
         run: >
           cargo test --lib --locked --
           --skip test_scan_targets_virtual_commands_have_zero_size

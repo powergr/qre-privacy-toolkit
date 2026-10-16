@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { X, FolderPlus, Edit } from "lucide-react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 interface InputModalProps {
   mode: "rename" | "create";
@@ -15,6 +16,7 @@ export function InputModal({
   onCancel,
 }: InputModalProps) {
   const [val, setVal] = useState(initialValue);
+  useEscapeKey(onCancel);
 
   return (
     <div className="modal-overlay" onClick={onCancel}>

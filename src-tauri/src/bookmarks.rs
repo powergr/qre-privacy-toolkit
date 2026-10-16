@@ -150,44 +150,14 @@ pub fn import_chrome_bookmarks() -> Result<Vec<BookmarkEntry>, String> {
 
         #[cfg(target_os = "macos")]
         {
-            let config_dir = base_dirs.config_dir(); // Usually ~/Library/Application Support
-            candidates.push(
-                config_dir
-                    .join("Google")
-                    .join("Chrome")
-                    .join("Default")
-                    .join("Bookmarks"),
-            );
-            candidates.push(
-                config_dir
-                    .join("Microsoft Edge")
-                    .join("Default")
-                    .join("Bookmarks"),
-            );
-            candidates.push(
-                config_dir
-                    .join("BraveSoftware")
-                    .join("Brave-Browser")
-                    .join("Default")
-                    .join("Bookmarks"),
-            );
+            // Usually ~/Library/Application Support
+            candidates.extend(macos_bookmark_files(base_dirs.config_dir()));
         }
 
         #[cfg(target_os = "linux")]
         {
-            let config_dir = base_dirs.config_dir(); // Usually ~/.config
-            candidates.push(
-                config_dir
-                    .join("google-chrome")
-                    .join("Default")
-                    .join("Bookmarks"),
-            );
-            candidates.push(
-                config_dir
-                    .join("chromium")
-                    .join("Default")
-                    .join("Bookmarks"),
-            );
+            // Usually ~/.config
+            candidates.extend(linux_bookmark_files(base_dirs.config_dir()));
         }
 
         // Find the first path that actually exists on the user's computer
@@ -217,6 +187,37 @@ pub fn import_chrome_bookmarks() -> Result<Vec<BookmarkEntry>, String> {
 
         Ok(results)
     }
+}
+
+/// Where Chromium based browsers keep their bookmarks under the macOS Application
+/// Support folder.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_bookmark_files(app_support: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [
+        "Google/Chrome",
+        "Chromium",
+        "Microsoft Edge",
+        "BraveSoftware/Brave-Browser",
+    ]
+    .iter()
+    .map(|browser| app_support.join(browser).join("Default").join("Bookmarks"))
+    .collect()
+}
+
+/// Where Chromium based browsers keep their bookmarks under a Linux config folder.
+/// Chrome and Chromium come first, then Brave and Edge, so the import works for every
+/// browser the app says it supports.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn linux_bookmark_files(config_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    [
+        "google-chrome",
+        "chromium",
+        "BraveSoftware/Brave-Browser",
+        "microsoft-edge",
+    ]
+    .iter()
+    .map(|browser| config_dir.join(browser).join("Default").join("Bookmarks"))
+    .collect()
 }
 
 /// Recursively traverses a Chromium bookmark JSON node.
@@ -420,6 +421,55 @@ mod tests {
         // Out of 4 links, only 1 should survive the security filter
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Safe Link");
+    }
+
+    // ── Linux browser bookmark locations ──────────────────────────────────
+    // Plain path building, so it is checked on every platform.
+
+    #[test]
+    fn test_linux_bookmark_files_cover_every_supported_browser() {
+        let config = std::path::Path::new("/home/alice/.config");
+        let files = linux_bookmark_files(config);
+        let expected = |browser: &str| {
+            config
+                .join(browser)
+                .join("Default")
+                .join("Bookmarks")
+        };
+        assert_eq!(
+            files,
+            vec![
+                expected("google-chrome"),
+                expected("chromium"),
+                expected("BraveSoftware/Brave-Browser"),
+                expected("microsoft-edge"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_linux_bookmark_files_all_point_at_a_bookmarks_file() {
+        for p in linux_bookmark_files(std::path::Path::new("/c")) {
+            assert_eq!(p.file_name().unwrap(), "Bookmarks");
+            assert_eq!(p.parent().unwrap().file_name().unwrap(), "Default");
+        }
+    }
+
+    // ── macOS browser bookmark locations ──────────────────────────────────
+
+    #[test]
+    fn test_macos_bookmark_files_cover_every_supported_browser() {
+        let support = std::path::Path::new("/Users/alice/Library/Application Support");
+        let expected = |browser: &str| support.join(browser).join("Default").join("Bookmarks");
+        assert_eq!(
+            macos_bookmark_files(support),
+            vec![
+                expected("Google/Chrome"),
+                expected("Chromium"),
+                expected("Microsoft Edge"),
+                expected("BraveSoftware/Brave-Browser"),
+            ]
+        );
     }
 }
 

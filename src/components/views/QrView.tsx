@@ -1,3 +1,5 @@
+import { useShortcut } from "../../hooks/useShortcut";
+import { ToolPage } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -232,6 +234,10 @@ export function QrView() {
     img.src = url;
   }
 
+  // Ctrl+S saves the code as a PNG, Ctrl+Shift+S as an SVG.
+  useShortcut("s", savePng, { enabled: qrResult !== null });
+  useShortcut("s", saveSvg, { enabled: qrResult !== null, shift: true });
+
   const labelStyle = {
     fontSize: "0.85rem",
     color: "var(--text-dim)",
@@ -251,16 +257,11 @@ export function QrView() {
   };
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{ flex: 1, overflowY: "auto", padding: "40px" }}>
-        {/* HEADER */}
-        <div style={{ textAlign: "center", marginBottom: 30 }}>
-          <h2 style={{ margin: "0 0 10px 0" }}>Secure QR Generator</h2>
-          <p style={{ color: "var(--text-dim)" }}>
-            Create offline QR codes for WiFi, contacts, links, and more.
-          </p>
-        </div>
-
+    <ToolPage
+      title="Secure QR Generator"
+      subtitle="Create offline QR codes for WiFi, contacts, links, and more."
+    >
+      <div style={{ width: "100%" }}>
         {/* ERROR BANNER */}
         {error && (
           <div
@@ -727,6 +728,6 @@ export function QrView() {
           </div>
         </div>
       </div>
-    </div>
+    </ToolPage>
   );
 }

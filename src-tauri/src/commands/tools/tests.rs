@@ -165,3 +165,99 @@ fn test_a_cancel_sent_before_a_scan_does_not_stop_it() {
     assert_eq!(found.len(), 3);
     let _ = fs::remove_dir_all(dir);
 }
+
+// ── Linux and macOS folders the secret scan must not enter ───────────────
+// These test the path text only, so they run on every platform.
+
+#[test]
+fn test_unix_system_folders_are_blocked() {
+    for p in [
+        "/etc",
+        "/etc/passwd",
+        "/dev/null",
+        "/var/log/syslog",
+        "/bin/sh",
+        "/sbin/init",
+        "/usr/bin/env",
+        "/usr/sbin/cron",
+        "/usr/lib/python3",
+        "/proc/1/environ",
+        "/sys/class",
+        "/boot/grub/grub.cfg",
+    ] {
+        assert!(is_blocked_unix_path(p), "{p} must be blocked");
+    }
+}
+
+#[test]
+fn test_unix_credential_folders_are_blocked_anywhere() {
+    for p in [
+        "/home/alice/.ssh",
+        "/home/alice/.ssh/id_ed25519",
+        "/home/alice/.aws/credentials",
+        "/home/alice/.gnupg/private-keys-v1.d",
+        "/home/alice/.mozilla/firefox/profile",
+        "/home/alice/.config/google-chrome/Default",
+        "/Users/bob/Library/Keychains/login.keychain-db",
+        "/mnt/backup/alice/.ssh/config",
+    ] {
+        assert!(is_blocked_unix_path(p), "{p} must be blocked");
+    }
+}
+
+#[test]
+fn test_unix_blocking_ignores_letter_case() {
+    assert!(is_blocked_unix_path("/ETC/passwd"));
+    assert!(is_blocked_unix_path("/Users/bob/library/KEYCHAINS"));
+}
+
+#[test]
+fn test_unix_user_folders_that_only_look_like_system_names_are_allowed() {
+    // A developer's own `dev` folder, or a name that merely starts like a system folder.
+    for p in [
+        "/home/alice/dev",
+        "/home/alice/dev/project/notes.txt",
+        "/home/alice/variables",
+        "/home/alice/etc-notes",
+        "/home/alice/system",
+        "/home/alice/boot",
+        "/home/alice/binaries",
+        "/home/alice/ssh-notes",
+        "/home/alice/Documents/.sshnotes",
+        "/devices/inventory",
+        "/variable-data",
+        "/binary",
+    ] {
+        assert!(!is_blocked_unix_path(p), "{p} must be scannable");
+    }
+}
+
+#[test]
+fn test_unix_system_names_deeper_in_the_tree_are_allowed() {
+    // System folders only count at the root. Backups keep copies of them elsewhere.
+    assert!(!is_blocked_unix_path("/mnt/backup/etc/hosts.txt"));
+    assert!(!is_blocked_unix_path("/home/alice/projects/var/notes.txt"));
+}
+
+#[test]
+fn test_unix_ordinary_locations_are_allowed() {
+    for p in [
+        "/home/alice",
+        "/home/alice/Documents",
+        "/home/alice/.config/other-app",
+        "/tmp/work",
+        "/mnt/data",
+        "/usr/local/share/docs",
+        "/Users/bob/Documents",
+        "/",
+        "",
+    ] {
+        assert!(!is_blocked_unix_path(p), "{p:?} must be scannable");
+    }
+}
+
+#[test]
+fn test_unix_paths_with_repeated_slashes_are_still_checked() {
+    assert!(is_blocked_unix_path("//etc//passwd"));
+    assert!(is_blocked_unix_path("/home//alice//.ssh"));
+}

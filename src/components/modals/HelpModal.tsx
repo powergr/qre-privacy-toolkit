@@ -1,8 +1,10 @@
 import { useRef } from "react";
 import { X, BookOpen } from "lucide-react";
 import { HelpManual } from "./HelpManual"; // Import new component
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 export function HelpModal({ onClose }: { onClose: () => void }) {
+  useEscapeKey(onClose);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Simple scroll handler

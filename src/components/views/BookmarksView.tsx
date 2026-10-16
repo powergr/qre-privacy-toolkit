@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useShortcut } from "../../hooks/useShortcut";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Trash2,
   Bookmark,
@@ -14,6 +15,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useBookmarks, BookmarkEntry } from "../../hooks/useBookmarks";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { EntryDeleteModal, InfoModal, ErrorModal } from "../modals/AppModals";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -66,6 +68,66 @@ export function BookmarksView() {
 
   // NEW: View Mode
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const closeEditor = () => {
+    setSaveError(null);
+    setEditing(null);
+  };
+  useEscapeKey(() => setShowImportModal(false), showImportModal);
+  useEscapeKey(() => setDownloadWarnUrl(null), downloadWarnUrl !== null);
+  useEscapeKey(closeEditor, editing !== null);
+
+  const openNewBookmark = () => {
+    setSaveError(null);
+    setEditing({
+      title: "",
+      url: "",
+      category: "General",
+      color: BRAND_COLORS[0],
+      is_pinned: false,
+    });
+  };
+
+  const saveEditor = async () => {
+    if (!editing) return;
+    setSaveError(null);
+
+    const trimmedTitle = (editing.title || "").trim();
+    const trimmedUrl = (editing.url || "").trim();
+
+    if (!trimmedTitle) {
+      setSaveError("Bookmark title cannot be empty.");
+      return;
+    }
+    if (!trimmedUrl) {
+      setSaveError("Bookmark URL cannot be empty.");
+      return;
+    }
+
+    try {
+      const finalId = editing.id || generateUUID();
+      const now = Math.floor(Date.now() / 1000);
+
+      await saveBookmark({
+        id: finalId,
+        title: trimmedTitle,
+        url: trimmedUrl,
+        category: (editing.category || "General").trim(),
+        is_pinned: editing.is_pinned || false,
+        color: editing.color || BRAND_COLORS[0],
+        created_at: editing.created_at || now,
+      } as BookmarkEntry);
+
+      setEditing(null);
+    } catch (e) {
+      setSaveError(String(e));
+    }
+  };
+
+  // Ctrl+N adds a bookmark, Ctrl+F jumps to the search box, Ctrl+S saves the open editor.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useShortcut("n", openNewBookmark);
+  useShortcut("f", () => searchRef.current?.focus());
+  useShortcut("s", saveEditor, { enabled: editing !== null, allowInDialog: true });
 
   useEffect(() => {
     try {
@@ -288,6 +350,7 @@ export function BookmarksView() {
             <Search size={18} className="search-icon" />
             <input
               className="search-input"
+              ref={searchRef}
               placeholder="Search..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -326,16 +389,8 @@ export function BookmarksView() {
 
             <button
               className="header-action-btn"
-              onClick={() => {
-                setSaveError(null);
-                setEditing({
-                  title: "",
-                  url: "",
-                  category: "General",
-                  color: BRAND_COLORS[0],
-                  is_pinned: false,
-                });
-              }}
+              onClick={openNewBookmark}
+              title="Add New (Ctrl+N)"
               style={{
                 ...commonButtonStyle,
                 border: "1px solid transparent",
@@ -789,40 +844,7 @@ export function BookmarksView() {
                 <button
                   className="auth-btn"
                   style={{ flex: 1 }}
-                  onClick={async () => {
-                    setSaveError(null);
-
-                    const trimmedTitle = (editing.title || "").trim();
-                    const trimmedUrl = (editing.url || "").trim();
-
-                    if (!trimmedTitle) {
-                      setSaveError("Bookmark title cannot be empty.");
-                      return;
-                    }
-                    if (!trimmedUrl) {
-                      setSaveError("Bookmark URL cannot be empty.");
-                      return;
-                    }
-
-                    try {
-                      const finalId = editing.id || generateUUID();
-                      const now = Math.floor(Date.now() / 1000);
-
-                      await saveBookmark({
-                        id: finalId,
-                        title: trimmedTitle,
-                        url: trimmedUrl,
-                        category: (editing.category || "General").trim(),
-                        is_pinned: editing.is_pinned || false,
-                        color: editing.color || BRAND_COLORS[0],
-                        created_at: editing.created_at || now,
-                      } as BookmarkEntry);
-
-                      setEditing(null);
-                    } catch (e) {
-                      setSaveError(String(e));
-                    }
-                  }}
+                  onClick={saveEditor}
                 >
                   Save
                 </button>

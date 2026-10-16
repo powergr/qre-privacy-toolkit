@@ -398,3 +398,27 @@ describe("ClipboardView - links", () => {
     expect(mockOpenUrl).toHaveBeenCalledWith("https://example.com/x");
   });
 });
+
+describe("ClipboardView - keyboard shortcuts", () => {
+  it("Ctrl+F puts the cursor in the search box", async () => {
+    await renderClipboard([]);
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    expect(screen.getByPlaceholderText("Search history...")).toHaveFocus();
+  });
+});
+
+describe("ClipboardView - on Android", () => {
+  const header = () => document.querySelector(".clipboard-header") as HTMLElement;
+
+  it("stacks the header controls in a column", async () => {
+    mockPlatform.mockReturnValue("android");
+    await renderClipboard([]);
+    await waitFor(() => expect(header().style.flexDirection).toBe("column"));
+  });
+
+  it("lays the header out in a row on a computer", async () => {
+    mockPlatform.mockReturnValue("macos");
+    await renderClipboard([]);
+    expect(header().style.flexDirection).toBe("row");
+  });
+});

@@ -131,11 +131,13 @@ afterEach(() => jest.restoreAllMocks());
 // ─── Choosing files ──────────────────────────────────────────────────────────
 
 describe("ShredderView - choosing files", () => {
-  it("shows the welcome text only while nothing is chosen", async () => {
+  it("keeps the page header while files are chosen, and shows the drop prompt only before", async () => {
     render(<ShredderView />);
     expect(screen.getByText("Secure Shredder")).toBeInTheDocument();
+    expect(screen.getByText(/Select Files/i)).toBeInTheDocument();
     await addFiles(["/a.txt"]);
-    expect(screen.queryByText("Secure Shredder")).not.toBeInTheDocument();
+    expect(screen.getByText("Secure Shredder")).toBeInTheDocument();
+    expect(screen.queryByText(/Select Files/i)).not.toBeInTheDocument();
   });
 
   it("accepts a single path from the picker as well as a list", async () => {
@@ -951,7 +953,7 @@ describe("ShredderView - one operation at a time", () => {
       mockDropCallback!(["/late.txt"]);
     });
     // Still on the drive tab, still running.
-    expect(screen.getByText("Drive Maintenance", { selector: "h2" })).toBeInTheDocument();
+    expect(screen.getByText(/Wipe leftover data from free space/)).toBeInTheDocument();
     expect(screen.queryByText("late.txt")).not.toBeInTheDocument();
 
     await act(async () => {
@@ -994,5 +996,23 @@ describe("ShredderView - progress listeners", () => {
       await Promise.resolve();
     });
     expect(unlisten).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ShredderView - keyboard shortcuts", () => {
+  const ctrlO = () => fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+
+  it("Ctrl+O adds files on the shred tab", async () => {
+    mockOpen.mockResolvedValueOnce(["/a.txt"]);
+    render(<ShredderView />);
+    ctrlO();
+    expect(await screen.findByText("a.txt")).toBeInTheDocument();
+  });
+
+  it("Ctrl+O does nothing on the drive tab", async () => {
+    render(<ShredderView />);
+    fireEvent.click(screen.getByTestId("top-tab-drive"));
+    ctrlO();
+    expect(mockOpen).not.toHaveBeenCalled();
   });
 });

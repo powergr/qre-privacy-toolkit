@@ -452,3 +452,46 @@ describe("useFileSystem - folder watcher", () => {
     expect(result.current.entries).toHaveLength(1);
   });
 });
+
+describe("useFileSystem - macOS", () => {
+  it("opens the home folder under /Users", async () => {
+    mockPlatform.mockReturnValue("macos");
+    mockHomeDir.mockResolvedValue("/Users/alice");
+    mockListing({ "/Users/alice": [] });
+    const { result } = renderHook(() => useFileSystem("dashboard"));
+    await waitFor(() => expect(result.current.currentPath).toBe("/Users/alice"));
+  });
+
+  it("goes up one folder at a time and stops at the root, like Linux", async () => {
+    mockPlatform.mockReturnValue("macos");
+    const { result } = await renderLoaded("/Users/alice/Documents", []);
+    mockListing({ "/Users/alice": [] });
+    mockInvoke.mockClear();
+    await act(async () => {
+      result.current.goUp();
+    });
+    expect(listedPaths()).toEqual(["/Users/alice"]);
+
+    const volume = await renderLoaded("/Volumes", []);
+    mockInvoke.mockClear();
+    await act(async () => {
+      volume.result.current.goUp();
+    });
+    expect(listedPaths()).toEqual(["/"]);
+
+    const root = await renderLoaded("/", []);
+    mockInvoke.mockClear();
+    await act(async () => {
+      root.result.current.goUp();
+    });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("watches the open folder, unlike Android", async () => {
+    mockPlatform.mockReturnValue("macos");
+    await renderLoaded("/Users/alice", []);
+    await waitFor(() =>
+      expect(mockWatch).toHaveBeenCalledWith("/Users/alice", expect.any(Function), { recursive: false }),
+    );
+  });
+});

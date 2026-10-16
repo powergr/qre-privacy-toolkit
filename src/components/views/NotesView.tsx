@@ -1,3 +1,4 @@
+import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   Trash2,
@@ -32,6 +33,7 @@ import {
   Save,
 } from "lucide-react";
 import { useNotes, NoteEntry } from "../../hooks/useNotes";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
   EntryDeleteModal,
   ExportSuccessModal,
@@ -667,14 +669,27 @@ export function NotesView() {
         setShowFindReplace(true);
         setTimeout(() => findInputRef.current?.focus(), 50);
       }
-      if (e.key === "Escape" && showFindReplace) {
-        setShowFindReplace(false);
-        textareaRef.current?.focus();
-      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [editing, saveCurrentNote, showFindReplace]);
+  }, [editing, saveCurrentNote]);
+
+  // Escape closes the find bar first, then the note itself.
+  useEscapeKey(() => {
+    setShowFindReplace(false);
+    textareaRef.current?.focus();
+  }, editing !== null && showFindReplace);
+  useEscapeKey(closeEditor, editing !== null);
+
+  // On the note list: Ctrl+N starts a note and Ctrl+F jumps to the search box. Inside a
+  // note, Ctrl+S saves and Ctrl+F opens find and replace (handled above).
+  const searchRef = useRef<HTMLInputElement>(null);
+  useShortcut(
+    "n",
+    () => openEditor({ title: "", content: "", is_pinned: false, tags: [] }),
+    { enabled: editing === null },
+  );
+  useShortcut("f", () => searchRef.current?.focus(), { enabled: editing === null });
 
   // ── Format insertion ──
   // `block` formats (headings, lists, code blocks) only work at the start of a line, so
@@ -921,6 +936,7 @@ export function NotesView() {
           <Search size={18} className="search-icon" />
           <input
             className="search-input"
+            ref={searchRef}
             placeholder="Search notes…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -975,6 +991,7 @@ export function NotesView() {
             onClick={() =>
               openEditor({ title: "", content: "", is_pinned: false, tags: [] })
             }
+            title="New Note (Ctrl+N)"
             style={{
               height: 40,
               padding: "0 20px",

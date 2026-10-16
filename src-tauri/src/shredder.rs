@@ -111,7 +111,7 @@ pub struct WipeFreeSpaceResult {
 // ─── TRIM structs ────────────────────────────────────────────────────────────
 
 /// Result returned to the frontend after trim_drive completes.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct TrimResult {
     pub success: bool,
     pub drive: String,
@@ -121,6 +121,138 @@ pub struct TrimResult {
 // ═══════════════════════════════════════════════════════════════════════════
 // PATH VALIDATION & BLACKLIST
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Turns the octal escapes of a /proc/mounts field back into characters. The kernel
+/// writes a space as `\040`, a tab as `\011`, a newline as `\012` and a backslash as `\134`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn unescape_mount_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let is_escape = bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1..i + 4].iter().all(|b| (b'0'..=b'7').contains(b));
+        if is_escape {
+            let value = (bytes[i + 1] - b'0') as u32 * 64
+                + (bytes[i + 2] - b'0') as u32 * 8
+                + (bytes[i + 3] - b'0') as u32;
+            out.push(value as u8);
+            i += 4;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Says whether `path` is stored in RAM (tmpfs or ramfs), given the text of /proc/mounts.
+///
+/// The mount that holds the path most closely decides. A folder on a real disk mounted
+/// inside a tmpfs is not RAM backed, and `/tmpfiles` is not on a tmpfs mounted at `/tmp`.
+/// If the same place was mounted twice, the later line is the one on top.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn is_on_ram_backed_mount(path: &Path, mounts: &str) -> bool {
+    let mut best: Option<(usize, bool)> = None;
+    for line in mounts.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let mount_point = PathBuf::from(unescape_mount_field(fields[1]));
+        if !path.starts_with(&mount_point) {
+            continue;
+        }
+        let depth = mount_point.components().count();
+        if best.map_or(true, |(d, _)| depth >= d) {
+            best = Some((depth, matches!(fields[2], "tmpfs" | "ramfs")));
+        }
+    }
+    best.map_or(false, |(_, ram)| ram)
+}
+
+/// Turns the result of an `fstrim` run into the answer shown to the user.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn interpret_fstrim(success: bool, stdout: &str, stderr: &str, drive: String) -> Result<TrimResult> {
+    if success {
+        let msg = stdout.trim();
+        Ok(TrimResult {
+            success: true,
+            drive,
+            message: if msg.is_empty() {
+                "TRIM completed successfully.".to_string()
+            } else {
+                msg.to_string()
+            },
+        })
+    } else {
+        let detail = stderr.trim();
+        Err(anyhow!(
+            "fstrim failed: {}",
+            if detail.is_empty() {
+                "no error message was given (it usually needs root)"
+            } else {
+                detail
+            }
+        ))
+    }
+}
+
+// Folders the shredder refuses to touch, per operating system. They are plain lists so
+// they can be checked on any machine, whichever system the tests run on.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MACOS_PROTECTED: &[&str] = &[
+    "/System",
+    "/Library",
+    "/Applications",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/etc",
+    "/var",
+    "/private",
+];
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const LINUX_PROTECTED: &[&str] = &[
+    "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/sbin", "/sys", "/usr",
+    "/var",
+];
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const ANDROID_PROTECTED: &[&str] = &[
+    "/system",
+    "/data/app",
+    "/data/data",
+    "/data/system",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/vendor",
+    "/apex",
+];
+
+/// Returns the protected folder that holds `canonical`, if any.
+///
+/// `user_temp` is the current user's own temporary folder. It is never protected, even
+/// when it sits inside a protected tree: on macOS it lives in `/private/var/folders`,
+/// which would otherwise block every file the user keeps in a temporary folder.
+fn protected_folder_for<'a>(
+    canonical: &Path,
+    blacklist: &'a [PathBuf],
+    user_temp: Option<&Path>,
+) -> Option<&'a PathBuf> {
+    if user_temp.is_some_and(|temp| canonical.starts_with(temp)) {
+        return None;
+    }
+    blacklist
+        .iter()
+        .find(|blocked| canonical.starts_with(blocked) || canonical == blocked.as_path())
+}
 
 /// Generates a list of critical OS directories the shredder is forbidden to touch.
 /// FIX #8: This is now called ONCE per batch and the result is passed into
@@ -140,49 +272,13 @@ fn build_blacklist() -> Vec<PathBuf> {
     }
 
     #[cfg(target_os = "macos")]
-    {
-        blacklist.push(PathBuf::from("/System"));
-        blacklist.push(PathBuf::from("/Library"));
-        blacklist.push(PathBuf::from("/Applications"));
-        blacklist.push(PathBuf::from("/usr"));
-        blacklist.push(PathBuf::from("/bin"));
-        blacklist.push(PathBuf::from("/sbin"));
-        blacklist.push(PathBuf::from("/etc"));
-        blacklist.push(PathBuf::from("/var"));
-        blacklist.push(PathBuf::from("/private"));
-    }
+    blacklist.extend(MACOS_PROTECTED.iter().map(PathBuf::from));
 
     #[cfg(target_os = "linux")]
-    {
-        blacklist.push(PathBuf::from("/bin"));
-        blacklist.push(PathBuf::from("/boot"));
-        blacklist.push(PathBuf::from("/dev"));
-        blacklist.push(PathBuf::from("/etc"));
-        blacklist.push(PathBuf::from("/lib"));
-        blacklist.push(PathBuf::from("/lib64"));
-        blacklist.push(PathBuf::from("/proc"));
-        blacklist.push(PathBuf::from("/root"));
-        blacklist.push(PathBuf::from("/sbin"));
-        blacklist.push(PathBuf::from("/sys"));
-        blacklist.push(PathBuf::from("/usr"));
-        blacklist.push(PathBuf::from("/var"));
-    }
+    blacklist.extend(LINUX_PROTECTED.iter().map(PathBuf::from));
 
     #[cfg(target_os = "android")]
-    {
-        blacklist.push(PathBuf::from("/system"));
-        blacklist.push(PathBuf::from("/data/app"));
-        blacklist.push(PathBuf::from("/data/data"));
-        blacklist.push(PathBuf::from("/data/system"));
-        blacklist.push(PathBuf::from("/proc"));
-        blacklist.push(PathBuf::from("/sys"));
-        blacklist.push(PathBuf::from("/dev"));
-        blacklist.push(PathBuf::from("/etc"));
-        blacklist.push(PathBuf::from("/bin"));
-        blacklist.push(PathBuf::from("/sbin"));
-        blacklist.push(PathBuf::from("/vendor"));
-        blacklist.push(PathBuf::from("/apex"));
-    }
+    blacklist.extend(ANDROID_PROTECTED.iter().map(PathBuf::from));
 
     blacklist
         .into_iter()
@@ -220,13 +316,12 @@ fn validate_path(path: &Path, blacklist: &[PathBuf]) -> Result<PathBuf> {
 
     let canonical = fs::canonicalize(path)?;
 
-    for blocked in blacklist {
-        if canonical.starts_with(blocked) || canonical == *blocked {
-            return Err(anyhow!(
-                "Path is in protected system directory: {}",
-                blocked.display()
-            ));
-        }
+    let user_temp = fs::canonicalize(std::env::temp_dir()).ok();
+    if let Some(blocked) = protected_folder_for(&canonical, blacklist, user_temp.as_deref()) {
+        return Err(anyhow!(
+            "Path is in protected system directory: {}",
+            blocked.display()
+        ));
     }
 
     if metadata.permissions().readonly() {
@@ -820,24 +915,10 @@ pub fn wipe_free_space<R: tauri::Runtime>(
     #[cfg(target_os = "linux")]
     {
         // Detect tmpfs/ramfs mounts via /proc/mounts.
-        let path_str = base.to_string_lossy();
-        let is_ram_backed = std::fs::read_to_string("/proc/mounts")
-            .unwrap_or_default()
-            .lines()
-            .any(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 {
-                    let mount_point = parts[1];
-                    let fs_type = parts[2];
-                    let is_tmpfs = matches!(fs_type, "tmpfs" | "ramfs");
-                    let is_match = path_str.starts_with(mount_point);
-                    is_tmpfs && is_match
-                } else {
-                    false
-                }
-            });
+        let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+        let resolved = std::fs::canonicalize(base).unwrap_or_else(|_| base.to_path_buf());
 
-        if is_ram_backed {
+        if is_on_ram_backed_mount(&resolved, &mounts) {
             return Err(anyhow!(
                 "Free-space wipe is not supported on RAM-backed filesystems (tmpfs/ramfs). \
                 RAM is volatile — all data is automatically lost when unmounted or on reboot. \
@@ -966,21 +1047,12 @@ pub fn trim_drive(drive_path: String) -> Result<TrimResult> {
                 )
             })?;
 
-        if output.status.success() {
-            let msg = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            return Ok(TrimResult {
-                success: true,
-                drive: drive_path,
-                message: if msg.is_empty() {
-                    "TRIM completed successfully.".to_string()
-                } else {
-                    msg
-                },
-            });
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(anyhow!("fstrim failed: {}", stderr));
-        }
+        return interpret_fstrim(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+            drive_path,
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1437,6 +1509,236 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Cancelled"));
 
         drop(file);
+        let _ = fs::remove_file(path);
+    }
+
+    // ── Linux: RAM-backed mounts and TRIM ─────────────────────────────────
+    // These test plain text and plain paths, so they run on every platform.
+
+    const MOUNTS: &str = "\
+sysfs /sys sysfs rw,nosuid 0 0
+/dev/sda2 / ext4 rw,relatime 0 0
+tmpfs /tmp tmpfs rw,nosuid,nodev 0 0
+tmpfs /dev/shm tmpfs rw 0 0
+/dev/sdb1 /mnt/usb\\040drive ext4 rw 0 0
+/dev/sda3 /tmp/big ext4 rw 0 0
+";
+
+    #[test]
+    fn test_unescape_mount_field_decodes_octal_escapes() {
+        assert_eq!(unescape_mount_field("/mnt/usb\\040drive"), "/mnt/usb drive");
+        assert_eq!(unescape_mount_field("a\\011b\\012c"), "a\tb\nc");
+        assert_eq!(unescape_mount_field("a\\134b"), "a\\b");
+    }
+
+    #[test]
+    fn test_unescape_mount_field_leaves_other_text_alone() {
+        assert_eq!(unescape_mount_field("/plain/path"), "/plain/path");
+        assert_eq!(unescape_mount_field("cut\\04"), "cut\\04");
+        assert_eq!(unescape_mount_field("not\\089octal"), "not\\089octal");
+        assert_eq!(unescape_mount_field(""), "");
+    }
+
+    #[test]
+    fn test_ram_backed_detects_tmpfs_paths() {
+        assert!(is_on_ram_backed_mount(Path::new("/tmp/scratch"), MOUNTS));
+        assert!(is_on_ram_backed_mount(Path::new("/tmp"), MOUNTS));
+        assert!(is_on_ram_backed_mount(Path::new("/dev/shm/x"), MOUNTS));
+    }
+
+    #[test]
+    fn test_ram_backed_ignores_disk_paths() {
+        assert!(!is_on_ram_backed_mount(Path::new("/home/alice"), MOUNTS));
+        assert!(!is_on_ram_backed_mount(Path::new("/"), MOUNTS));
+    }
+
+    #[test]
+    fn test_ram_backed_compares_whole_folder_names() {
+        // "/tmpfiles" only starts with the letters "/tmp"; it is not inside /tmp.
+        assert!(!is_on_ram_backed_mount(Path::new("/tmpfiles/x"), MOUNTS));
+    }
+
+    #[test]
+    fn test_ram_backed_nearest_mount_wins() {
+        // /tmp/big is a real disk mounted inside the tmpfs at /tmp.
+        assert!(!is_on_ram_backed_mount(Path::new("/tmp/big/file"), MOUNTS));
+        assert!(is_on_ram_backed_mount(Path::new("/tmp/other/file"), MOUNTS));
+    }
+
+    #[test]
+    fn test_ram_backed_nearest_mount_wins_whatever_the_order() {
+        // /proc/mounts is in mount order, so a deeper mount can be listed before its parent.
+        let mounts = "/dev/sdb1 /tmp/big ext4 rw 0 0
+tmpfs /tmp tmpfs rw 0 0
+";
+        assert!(!is_on_ram_backed_mount(Path::new("/tmp/big/file"), mounts));
+        assert!(is_on_ram_backed_mount(Path::new("/tmp/file"), mounts));
+    }
+
+    #[test]
+    fn test_ram_backed_handles_mount_points_with_spaces() {
+        assert!(!is_on_ram_backed_mount(Path::new("/mnt/usb drive/file"), MOUNTS));
+        let mounts = "tmpfs /mnt/ram\\040disk tmpfs rw 0 0\n";
+        assert!(is_on_ram_backed_mount(Path::new("/mnt/ram disk/file"), mounts));
+    }
+
+    #[test]
+    fn test_ram_backed_later_mount_on_the_same_place_wins() {
+        let disk_on_top = "tmpfs /data tmpfs rw 0 0\n/dev/sdc1 /data ext4 rw 0 0\n";
+        let ram_on_top = "/dev/sdc1 /data ext4 rw 0 0\ntmpfs /data tmpfs rw 0 0\n";
+        assert!(!is_on_ram_backed_mount(Path::new("/data/x"), disk_on_top));
+        assert!(is_on_ram_backed_mount(Path::new("/data/x"), ram_on_top));
+    }
+
+    #[test]
+    fn test_ram_backed_whole_system_in_ram() {
+        // A live USB system keeps "/" in RAM, but a real disk under /home is still a disk.
+        let mounts = "tmpfs / tmpfs rw 0 0\n/dev/sda1 /home ext4 rw 0 0\n";
+        assert!(is_on_ram_backed_mount(Path::new("/var/tmp/x"), mounts));
+        assert!(!is_on_ram_backed_mount(Path::new("/home/alice"), mounts));
+    }
+
+    #[test]
+    fn test_ram_backed_recognises_ramfs_only_as_ram() {
+        let mounts = "ramfs /r ramfs rw 0 0\noverlay /o overlay rw 0 0\n";
+        assert!(is_on_ram_backed_mount(Path::new("/r/x"), mounts));
+        assert!(!is_on_ram_backed_mount(Path::new("/o/x"), mounts));
+    }
+
+    #[test]
+    fn test_ram_backed_with_no_usable_mount_data_is_false() {
+        assert!(!is_on_ram_backed_mount(Path::new("/tmp/x"), ""));
+        assert!(!is_on_ram_backed_mount(Path::new("/tmp/x"), "garbage\ntmpfs /tmp\n"));
+    }
+
+    #[test]
+    fn test_fstrim_success_returns_its_report() {
+        let r = interpret_fstrim(true, "/home: 12.3 GiB trimmed\n", "", "/home".into()).unwrap();
+        assert!(r.success);
+        assert_eq!(r.drive, "/home");
+        assert_eq!(r.message, "/home: 12.3 GiB trimmed");
+    }
+
+    #[test]
+    fn test_fstrim_success_without_output_gets_a_default_message() {
+        let r = interpret_fstrim(true, "  \n", "", "/".into()).unwrap();
+        assert_eq!(r.message, "TRIM completed successfully.");
+    }
+
+    #[test]
+    fn test_fstrim_failure_reports_the_reason() {
+        let err = interpret_fstrim(false, "", "fstrim: /: FITRIM ioctl failed\n", "/".into())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "fstrim failed: fstrim: /: FITRIM ioctl failed");
+    }
+
+    #[test]
+    fn test_fstrim_failure_without_a_message_hints_at_root() {
+        let err = interpret_fstrim(false, "", "  ", "/".into()).unwrap_err().to_string();
+        assert!(err.starts_with("fstrim failed: "));
+        assert!(err.contains("root"), "{err}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_blacklist_covers_system_folders_but_not_home() {
+        let blacklist = build_blacklist();
+        for dir in ["/bin", "/boot", "/dev", "/etc", "/proc", "/sys", "/usr", "/var"] {
+            assert!(
+                blacklist.iter().any(|b| b == Path::new(dir)),
+                "{dir} must be protected"
+            );
+        }
+        assert!(!blacklist.iter().any(|b| b == Path::new("/home")));
+        assert!(!blacklist.iter().any(|b| b == Path::new("/tmp")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_shredder_refuses_system_folders() {
+        let blacklist = build_blacklist();
+        let err = validate_path(Path::new("/etc/hostname"), &blacklist)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("protected system directory") || err.contains("Permission denied"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // ── macOS and Android protected folders ───────────────────────────────
+    // Plain lists and paths, so they are checked on every platform.
+
+    fn paths(list: &[&str]) -> Vec<PathBuf> {
+        list.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn test_every_platform_protects_its_core_system_folders() {
+        for (name, list, must) in [
+            ("macOS", MACOS_PROTECTED, ["/System", "/Library", "/Applications", "/usr", "/etc", "/private"].as_slice()),
+            ("Linux", LINUX_PROTECTED, ["/bin", "/boot", "/etc", "/proc", "/sys", "/usr", "/var"].as_slice()),
+            ("Android", ANDROID_PROTECTED, ["/system", "/data/data", "/data/app", "/proc", "/vendor"].as_slice()),
+        ] {
+            for dir in must {
+                assert!(list.contains(dir), "{name} must protect {dir}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_platform_protects_the_places_users_keep_files() {
+        for list in [MACOS_PROTECTED, LINUX_PROTECTED, ANDROID_PROTECTED] {
+            for user_dir in ["/", "/home", "/Users", "/sdcard", "/storage", "/storage/emulated/0", "/tmp", "/mnt", "/Volumes"] {
+                assert!(!list.contains(&user_dir), "{user_dir} must not be protected");
+            }
+            for dir in list {
+                assert!(dir.starts_with('/') && !dir.ends_with('/') && dir.len() > 1, "bad entry {dir}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_protected_folder_is_found_by_whole_folder_names() {
+        let list = paths(MACOS_PROTECTED);
+        assert_eq!(
+            protected_folder_for(Path::new("/System/Library/x"), &list, None),
+            Some(&PathBuf::from("/System"))
+        );
+        assert!(protected_folder_for(Path::new("/Applications"), &list, None).is_some());
+        // "/Systems" only starts with the letters of "/System".
+        assert!(protected_folder_for(Path::new("/Systems/x"), &list, None).is_none());
+        assert!(protected_folder_for(Path::new("/Users/alice/a.txt"), &list, None).is_none());
+    }
+
+    #[test]
+    fn test_users_own_temp_folder_is_not_protected_even_inside_a_protected_tree() {
+        // On a Mac the temporary folder is /private/var/folders/xx/yyy/T.
+        let list = paths(&["/private"]);
+        let temp = Path::new("/private/var/folders/xx/yyy/T");
+        assert!(protected_folder_for(Path::new("/private/var/folders/xx/yyy/T/a.txt"), &list, Some(temp)).is_none());
+        assert!(protected_folder_for(temp, &list, Some(temp)).is_none());
+    }
+
+    #[test]
+    fn test_only_the_users_own_temp_folder_is_exempt() {
+        let list = paths(&["/private"]);
+        let temp = Path::new("/private/var/folders/xx/yyy/T");
+        // System folders next to it, another user's folder, and a look-alike name stay protected.
+        assert!(protected_folder_for(Path::new("/private/etc/hosts"), &list, Some(temp)).is_some());
+        assert!(protected_folder_for(Path::new("/private/var/db/x"), &list, Some(temp)).is_some());
+        assert!(protected_folder_for(Path::new("/private/var/folders/xx/other/T/a"), &list, Some(temp)).is_some());
+        assert!(protected_folder_for(Path::new("/private/var/folders/xx/yyy/Tx/a"), &list, Some(temp)).is_some());
+    }
+
+    #[test]
+    fn test_real_temp_files_pass_validation_on_every_platform() {
+        // The test machine's own temp folder can sit under a protected tree (macOS), and
+        // a file there must still be allowed.
+        let blacklist = build_blacklist();
+        let path = create_temp_file("temp_exempt.txt", b"data");
+        assert!(validate_path(&path, &blacklist).is_ok());
         let _ = fs::remove_file(path);
     }
 }

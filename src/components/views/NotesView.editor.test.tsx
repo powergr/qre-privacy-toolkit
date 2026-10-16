@@ -1042,3 +1042,92 @@ describe("NotesView - import and export problems", () => {
     expect(screen.queryByText("Export Complete")).not.toBeInTheDocument();
   });
 });
+
+// ─── Escape key ──────────────────────────────────────────────────────────────
+
+describe("NotesView - Escape key", () => {
+  const escape = () => fireEvent.keyDown(window, { key: "Escape" });
+
+  it("closes an untouched note editor", async () => {
+    await renderNotes([]);
+    openNewNote();
+    expect(titleInput()).toBeInTheDocument();
+
+    escape();
+
+    expect(screen.queryByPlaceholderText("Untitled Note")).not.toBeInTheDocument();
+  });
+
+  it("asks before throwing away unsaved changes, and stays open on No", async () => {
+    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
+    await renderNotes([]);
+    openNewNote();
+    setTitle("Draft");
+
+    escape();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(titleInput()).toBeInTheDocument();
+  });
+
+  it("closes the find bar first, then the note", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    openNote("Alpha");
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    expect(screen.getByPlaceholderText(/find/i)).toBeInTheDocument();
+
+    escape();
+    expect(screen.queryByPlaceholderText(/find/i)).not.toBeInTheDocument();
+    expect(titleInput()).toBeInTheDocument();
+
+    escape();
+    expect(screen.queryByPlaceholderText("Untitled Note")).not.toBeInTheDocument();
+  });
+
+  it("does nothing on the note list", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    escape();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+});
+
+// ─── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+describe("NotesView - keyboard shortcuts", () => {
+  const ctrl = (key: string) => fireEvent.keyDown(window, { key, ctrlKey: true });
+
+  it("Ctrl+N starts a new note from the list", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    ctrl("n");
+    expect(titleInput()).toHaveValue("");
+  });
+
+  it("Ctrl+N does not start another note while one is open", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    openNote("Alpha");
+    ctrl("n");
+    expect(titleInput()).toHaveValue("Alpha");
+  });
+
+  it("Ctrl+F puts the cursor in the search box on the list", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    ctrl("f");
+    expect(screen.getByPlaceholderText("Search notes…")).toHaveFocus();
+  });
+
+  it("Ctrl+F inside a note still opens find, not the list search", async () => {
+    await renderNotes([makeNote("a", "Alpha")]);
+    openNote("Alpha");
+    ctrl("f");
+    expect(screen.getByPlaceholderText(/find/i)).toBeInTheDocument();
+  });
+
+  it("Ctrl+S saves the open note", async () => {
+    await renderNotes([]);
+    openNewNote();
+    setTitle("Quick note");
+    ctrl("s");
+    await waitFor(() => expect(savedVaults()).toHaveLength(1));
+    expect(lastSaved()[0].title).toBe("Quick note");
+  });
+});

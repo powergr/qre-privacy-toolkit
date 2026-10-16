@@ -1082,3 +1082,25 @@ describe("CleanerView - progress listeners", () => {
     expect(unlisten).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("CleanerView - keyboard shortcuts", () => {
+  const ctrlO = () => fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+
+  it("Ctrl+O picks files on the metadata tab", async () => {
+    mockOpen.mockResolvedValueOnce(["/a.jpg"]);
+    render(<CleanerView />);
+    ctrlO();
+    expect((await screen.findAllByText("a.jpg")).length).toBeGreaterThan(0);
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+    expect(mockOpen.mock.calls[0][0].filters[0].name).toBe("Media & Docs");
+  });
+
+  it("Ctrl+O picks images on the steganography tab", async () => {
+    mockOpen.mockResolvedValueOnce(null);
+    render(<CleanerView />);
+    goStego();
+    ctrlO();
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+    expect(mockOpen.mock.calls[0][0].filters[0].name).toBe("Images");
+  });
+});

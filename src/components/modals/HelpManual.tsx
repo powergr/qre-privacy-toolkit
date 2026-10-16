@@ -16,6 +16,7 @@ import {
   Brush,
   Wifi,
   Terminal,
+  Keyboard,
 } from "lucide-react";
 // @ts-ignore
 import pkg from "../../../package.json";
@@ -60,6 +61,21 @@ interface HelpManualProps {
   onScrollTo: (id: string) => void;
 }
 
+// [keys, where it works, what it does]
+const SHORTCUTS: [string, string, string][] = [
+  ["Esc", "Any dialog or editor", "Close it. With stacked dialogs, the top one closes first."],
+  ["Ctrl+N", "Vault, Bookmarks, Notes", "Add a new entry, bookmark, or note."],
+  ["Ctrl+F", "Vault, Bookmarks, Notes, Clipboard", "Jump to the search box."],
+  ["Ctrl+F", "Inside a note", "Open find and replace."],
+  ["Ctrl+S", "Vault, Bookmarks, Notes editor", "Save and close."],
+  ["Ctrl+O", "Integrity Checker", "Choose a file to hash."],
+  ["Ctrl+O", "File Analyzer, Privacy Check (Local Scanner)", "Choose a folder to scan."],
+  ["Ctrl+O", "Metadata Cleaner, Secure Shredder", "Add files."],
+  ["Ctrl+S", "QR Generator", "Save the code as PNG."],
+  ["Ctrl+Shift+S", "QR Generator", "Save the code as SVG."],
+  ["Ctrl+Shift+Q", "Desktop, even outside the app", "Panic button: close the app and wipe keys from memory."],
+];
+
 export function HelpManual({ onScrollTo }: HelpManualProps) {
   // Table of Contents Data
   const toc = [
@@ -87,6 +103,11 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
     { id: "cleaner", label: "Metadata Cleaner", icon: <Eraser size={16} /> },
     { id: "qr", label: "QR Generator", icon: <QrCode size={16} /> },
     { id: "shredder", label: "Secure Shredder", icon: <Trash2 size={16} /> },
+    {
+      id: "shortcuts",
+      label: "Keyboard Shortcuts",
+      icon: <Keyboard size={16} />,
+    },
     { id: "backup", label: "Backup & Recovery", icon: <LifeBuoy size={16} /> },
     { id: "settings", label: "Settings", icon: <Settings size={16} /> },
     {
@@ -597,6 +618,28 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           <strong>Warning:</strong> Shredded files cannot be recovered. Use with
           caution.
         </div>
+      </Section>
+
+      <Section id="shortcuts" title="Keyboard Shortcuts" icon={<Keyboard />}>
+        <p>
+          On a Mac, use <strong>Cmd</strong> in place of <strong>Ctrl</strong>.
+          Shortcuts pause while a dialog is open, so they never act behind it.
+        </p>
+        <table style={{ borderCollapse: "collapse", width: "100%", marginTop: 10 }}>
+          <tbody>
+            {SHORTCUTS.map(([keys, where, what]) => (
+              <tr key={keys + where} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td style={{ padding: "8px 12px 8px 0", whiteSpace: "nowrap" }}>
+                  <kbd style={{ background: "#333", padding: "2px 6px", borderRadius: 4 }}>
+                    {keys}
+                  </kbd>
+                </td>
+                <td style={{ padding: "8px 12px 8px 0", color: "var(--text-main)" }}>{where}</td>
+                <td style={{ padding: "8px 0" }}>{what}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Section>
 
       <Section id="backup" title="Backup & Recovery" icon={<LifeBuoy />}>

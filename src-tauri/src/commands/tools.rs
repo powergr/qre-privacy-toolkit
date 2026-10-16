@@ -295,34 +295,52 @@ fn is_safe_to_scan(path: &std::path::Path) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let lower = path.to_string_lossy().to_lowercase();
-        let blocked = [
-            "/bin",
-            "/sbin",
-            "/usr/bin",
-            "/usr/sbin",
-            "/usr/lib",
-            "/etc",
-            "/var",
-            "/boot",
-            "/proc",
-            "/sys",
-            "/dev",
-            "/.ssh",
-            "/.aws",
-            "/.gnupg",
-            "/.config/google-chrome",
-            "/.mozilla",
-            "/library/keychains",
-        ];
-        if blocked
-            .iter()
-            .any(|&b| lower.starts_with(b) || lower.contains(b))
-        {
+        if is_blocked_unix_path(&path.to_string_lossy()) {
             return false;
         }
     }
     true
+}
+
+/// The Linux and macOS half of `is_safe_to_scan`, working on the text of a canonical path.
+///
+/// System folders are blocked only when they sit at the root, so `/dev` is blocked but
+/// a user's own `/home/alice/dev` is not. Credential folders are blocked wherever they
+/// appear. Whole path parts are compared, never pieces of a name: `/var` must not match
+/// `/home/alice/variables`.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn is_blocked_unix_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    let parts: Vec<&str> = lower.split('/').filter(|p| !p.is_empty()).collect();
+
+    const SYSTEM_ROOTS: &[&[&str]] = &[
+        &["bin"],
+        &["sbin"],
+        &["usr", "bin"],
+        &["usr", "sbin"],
+        &["usr", "lib"],
+        &["etc"],
+        &["var"],
+        &["boot"],
+        &["proc"],
+        &["sys"],
+        &["dev"],
+    ];
+    if SYSTEM_ROOTS.iter().any(|root| parts.starts_with(root)) {
+        return true;
+    }
+
+    const CREDENTIAL_FOLDERS: &[&[&str]] = &[
+        &[".ssh"],
+        &[".aws"],
+        &[".gnupg"],
+        &[".mozilla"],
+        &[".config", "google-chrome"],
+        &["library", "keychains"],
+    ];
+    CREDENTIAL_FOLDERS
+        .iter()
+        .any(|folder| parts.windows(folder.len()).any(|w| w == *folder))
 }
 
 fn is_scannable_extension(path: &std::path::Path) -> bool {

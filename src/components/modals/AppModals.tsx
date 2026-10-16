@@ -24,6 +24,7 @@ import { PasswordInput } from "../common/PasswordInput";
 import pkg from "../../../package.json";
 import { FileCheck } from "lucide-react";
 import type { KdfTier } from "../../hooks/usePortableVault";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 // --- INFO MODAL (Success / Error) ---
 export function InfoModal({
@@ -39,7 +40,7 @@ export function InfoModal({
   // a mouse click worked, which was jarring right after typing a password.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === "Escape") {
+      if (e.key === "Enter") {
         e.preventDefault();
         onClose();
       }
@@ -47,6 +48,7 @@ export function InfoModal({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
+  useEscapeKey(onClose);
 
   const isError = type === "error";
   const accent = isError ? "var(--btn-danger)" : "var(--btn-success)";
@@ -99,6 +101,7 @@ export function BackupModal({
   onProceed: () => void;
   onCancel: () => void;
 }) {
+  useEscapeKey(onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -159,6 +162,7 @@ export function BackupReminderModal({
   onBackup: () => void;
   onCancel: () => void;
 }) {
+  useEscapeKey(onCancel);
   return (
     <div className="modal-overlay" style={{ zIndex: 100005 }}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -215,6 +219,7 @@ export function ErrorModal({
   message: string;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   return (
     <div className="modal-overlay" onClick={onClose} style={{ zIndex: 100002 }}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -314,6 +319,7 @@ export function ThemeModal({
   onCancel,
 }: ThemeModalProps) {
   const [selected, setSelected] = useState(currentTheme);
+  useEscapeKey(onCancel);
 
   const options = [
     { id: "system", label: "System Default", icon: <Monitor size={20} /> },
@@ -399,6 +405,7 @@ export function EntryDeleteModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  useEscapeKey(onCancel);
   return (
     <div
       className="modal-overlay"
@@ -460,6 +467,7 @@ export function DeleteConfirmModal({
   onShred,
   onCancel,
 }: DeleteConfirmModalProps) {
+  useEscapeKey(onCancel);
   const count = items.length;
   const displayName =
     count === 1 ? items[0].split(/[/\\]/).pop() : `${count} items`;
@@ -551,6 +559,7 @@ export function CompressionModal({
   onCancel,
 }: CompressionModalProps) {
   const [selected, setSelected] = useState(current);
+  useEscapeKey(onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -635,6 +644,7 @@ export function CompressionModal({
 export function AboutModal({ onClose }: { onClose: () => void }) {
   // Version is now imported from package.json
   const version = pkg.version;
+  useEscapeKey(onClose);
 
   return (
     <div className="modal-overlay" onClick={onClose} style={{ zIndex: 200000 }}>
@@ -739,6 +749,7 @@ export function ResetConfirmModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  useEscapeKey(onCancel);
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -797,6 +808,7 @@ export function ChangePassModal({
   onCancel,
   error,
 }: ChangePassProps) {
+  useEscapeKey(onCancel);
   return (
     <div className="modal-overlay">
       <div className="auth-card">
@@ -872,6 +884,7 @@ export function ExportSuccessModal({
   filePath: string;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   return (
     <div className="modal-overlay" style={{ zIndex: 100005 }} onClick={onClose}>
       <div className="auth-card" onClick={(e) => e.stopPropagation()}>
@@ -1019,6 +1032,7 @@ export function ExportWarningModal({
   onCancel: () => void;
   type?: string;
 }) {
+  useEscapeKey(onCancel);
   return (
     <div
       className="modal-overlay"
@@ -1130,6 +1144,7 @@ export function DriveInitModal({
   onCancel,
   error,
 }: DriveInitModalProps) {
+  useEscapeKey(onCancel);
   const tiers: { id: KdfTier; label: string; desc: string }[] = [
     {
       id: "Standard",
@@ -1471,6 +1486,7 @@ export function DriveUnlockModal({
   showTrustedWarning,
   onAcknowledgeWarning,
 }: DriveUnlockModalProps) {
+  useEscapeKey(onCancel);
   // Show the trusted-computer warning before the password field on first unlock.
   if (showTrustedWarning) {
     return (

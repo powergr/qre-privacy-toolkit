@@ -446,3 +446,23 @@ describe("HashView - exporting a report", () => {
     expect(await screen.findByText(/Failed to export results: .*disk full/)).toBeInTheDocument();
   });
 });
+
+describe("HashView - keyboard shortcuts", () => {
+  it("Ctrl+O opens the file picker and hashes the chosen file", async () => {
+    await renderHash();
+    mockOpen.mockResolvedValue("C:\files\setup.iso");
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    expect(await screen.findByText("Hashing completed successfully")).toBeInTheDocument();
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl+O does nothing while a dialog is open", async () => {
+    await renderHash();
+    mockOpen.mockResolvedValue("C:\files\setup.iso");
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    await screen.findByText("Hashing completed successfully");
+    mockOpen.mockClear();
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+});

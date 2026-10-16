@@ -1,3 +1,4 @@
+import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Copy,
@@ -19,6 +20,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useVault, VaultEntry } from "../../hooks/useVault";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -382,6 +384,71 @@ export function VaultView() {
     setSaveError(null);
     setEditing(null);
   };
+  useEscapeKey(closeEditor, editorOpen);
+
+  const openNewEntry = () =>
+    setEditing({
+      service: "",
+      username: "",
+      password: "",
+      notes: "",
+      color: BRAND_COLORS[0],
+      is_pinned: false,
+      totp_secret: "",
+    });
+
+  const saveEditor = async () => {
+    if (!editing) return;
+    if (isSaving) return;
+    setSaveError(null);
+    const trimmedService = (editing.service || "").trim();
+    const trimmedPassword = (editing.password || "").trim();
+    if (!trimmedService) {
+      setSaveError("Service name is required.");
+      return;
+    }
+    if (!trimmedPassword) {
+      setSaveError("Password must not be empty.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const now = Math.floor(Date.now() / 1000);
+
+      // FIX: Properly handle the optional TOTP field
+      // If it's empty, we make it undefined so Rust parses it as None.
+      const cleanTotp =
+        editing.totp_secret && editing.totp_secret.trim() !== ""
+          ? normalizeTotpSecret(editing.totp_secret)
+          : undefined;
+
+      await saveEntry({
+        id: editing.id || generateUUID(),
+        service: trimmedService,
+        username: editing.username || "",
+        password: trimmedPassword,
+        notes: editing.notes || "",
+        url: editing.url || "",
+        color: editing.color || BRAND_COLORS[0],
+        is_pinned: editing.is_pinned || false,
+        totp_secret: cleanTotp, // <--- Correctly passing undefined or the clean string
+        created_at: editing.created_at || now,
+        updated_at: now,
+      });
+      setEditing(null);
+    } catch (e) {
+      setSaveError("Error saving: " + e);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Ctrl+N adds an entry, Ctrl+F jumps to the search box, Ctrl+S saves the open editor.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useShortcut("n", openNewEntry);
+  useShortcut("f", () => searchRef.current?.focus());
+  useShortcut("s", saveEditor, { enabled: editorOpen, allowInDialog: true });
 
   // Not cancelled on unmount: the timer only wipes the clipboard, and it must still
   // fire if the user switches screens before the 30 seconds are up.
@@ -623,6 +690,7 @@ export function VaultView() {
           <Search size={18} className="search-icon" />
           <input
             className="search-input"
+            ref={searchRef}
             placeholder="Search Logins..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -658,17 +726,8 @@ export function VaultView() {
           </button>
           <button
             className="vault-primary-btn"
-            onClick={() =>
-              setEditing({
-                service: "",
-                username: "",
-                password: "",
-                notes: "",
-                color: BRAND_COLORS[0],
-                is_pinned: false,
-                totp_secret: "",
-              })
-            }
+            onClick={openNewEntry}
+            title="Add New (Ctrl+N)"
           >
             Add New
           </button>
@@ -1185,51 +1244,7 @@ export function VaultView() {
                   className="auth-btn"
                   style={{ flex: 1 }}
                   disabled={isSaving}
-                  onClick={async () => {
-                    if (isSaving) return;
-                    setSaveError(null);
-                    const trimmedService = (editing.service || "").trim();
-                    const trimmedPassword = (editing.password || "").trim();
-                    if (!trimmedService) {
-                      setSaveError("Service name is required.");
-                      return;
-                    }
-                    if (!trimmedPassword) {
-                      setSaveError("Password must not be empty.");
-                      return;
-                    }
-
-                    setIsSaving(true);
-                    try {
-                      const now = Math.floor(Date.now() / 1000);
-
-                      // FIX: Properly handle the optional TOTP field
-                      // If it's empty, we make it undefined so Rust parses it as None.
-                      const cleanTotp =
-                        editing.totp_secret && editing.totp_secret.trim() !== ""
-                          ? normalizeTotpSecret(editing.totp_secret)
-                          : undefined;
-
-                      await saveEntry({
-                        id: editing.id || generateUUID(),
-                        service: trimmedService,
-                        username: editing.username || "",
-                        password: trimmedPassword,
-                        notes: editing.notes || "",
-                        url: editing.url || "",
-                        color: editing.color || BRAND_COLORS[0],
-                        is_pinned: editing.is_pinned || false,
-                        totp_secret: cleanTotp, // <--- Correctly passing undefined or the clean string
-                        created_at: editing.created_at || now,
-                        updated_at: now,
-                      });
-                      setEditing(null);
-                    } catch (e) {
-                      setSaveError("Error saving: " + e);
-                    } finally {
-                      setIsSaving(false);
-                    }
-                  }}
+                  onClick={saveEditor}
                 >
                   Save
                 </button>

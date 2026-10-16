@@ -404,3 +404,26 @@ describe("QrView - saving", () => {
     });
   });
 });
+
+describe("QrView - keyboard shortcuts", () => {
+  it("Ctrl+Shift+S saves the SVG", async () => {
+    render(<QrView />);
+    goTab("Text");
+    typeInto("Enter any text...", "save me");
+    await waitFor(() => expect(previewLabel()).toBe("save me"));
+    mockSave.mockResolvedValue("C:\out\qrcode.svg");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    fireEvent.keyDown(window, { key: "S", ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => expect(mockWriteFile).toHaveBeenCalled());
+    expect(mockSave.mock.calls[0][0].defaultPath).toBe("qrcode.svg");
+  });
+
+  it("Ctrl+S and Ctrl+Shift+S do nothing before a code exists", () => {
+    render(<QrView />);
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "S", ctrlKey: true, shiftKey: true });
+    expect(mockSave).not.toHaveBeenCalled();
+  });
+});

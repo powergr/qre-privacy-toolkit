@@ -36,11 +36,14 @@ async function sha1Hex(text: string): Promise<string> {
     .toUpperCase();
 }
 
+import { useEscapeKey } from "../../hooks/useEscapeKey";
+
 export function VaultHealthModal({
   entries,
   onClose,
   onEditEntry,
 }: VaultHealthModalProps) {
+  useEscapeKey(onClose);
   const [pwnedIds, setPwnedIds] = useState<Set<string>>(new Set());
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);

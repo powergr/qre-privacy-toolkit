@@ -1,3 +1,4 @@
+import { ToolScroll } from "../common/ToolPage";
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -469,17 +470,11 @@ export function SystemCleanerView() {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
       {/* ── Main scroll area ─────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "30px",
-        display: "flex", flexDirection: "column",
-        justifyContent: !scanned && !cleanResult && !registryScanned ? "center" : "flex-start" }}>
-
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: scanned || cleanResult || registryScanned ? 20 : 40 }}>
-          <h2 style={{ margin: 0 }}>System Cleaner</h2>
-          <p style={{ color: "var(--text-dim)", marginTop: 5 }}>
-            Clear caches, browser data, developer artifacts, privacy traces, and registry leftovers.
-          </p>
-        </div>
+      <ToolScroll
+        title="System Cleaner"
+        subtitle="Clear caches, browser data, developer artifacts, privacy traces, and registry leftovers."
+        centered={!scanned && !cleanResult && !registryScanned}
+      >
 
         {/* Error banner — junk cleaner */}
         {error && (
@@ -1054,7 +1049,7 @@ export function SystemCleanerView() {
           </div>
         )}
 
-      </div>{/* end scroll area */}
+      </ToolScroll>{/* end scroll area */}
 
       {/* ── FOOTER ACTIONS — junk cleaner ────────────────────────────── */}
       {scanned && items.length > 0 && !showPreview && !cleaning && !isRegistryTab && (

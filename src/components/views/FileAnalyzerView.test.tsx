@@ -335,3 +335,13 @@ describe("FileAnalyzerView - on a phone", () => {
     expect(scans()).toHaveLength(0);
   });
 });
+
+describe("FileAnalyzerView - keyboard shortcuts", () => {
+  it("Ctrl+O opens the folder picker", async () => {
+    await renderAnalyzer();
+    mockOpen.mockResolvedValue(null);
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+    expect(mockOpen.mock.calls[0][0]).toMatchObject({ directory: true });
+  });
+});

@@ -259,11 +259,29 @@ pub fn get_user_dirs() -> Vec<String> {
         "/storage/emulated/0/Pictures",
     ];
 
-    candidates
-        .into_iter()
-        .filter(|p| std::path::Path::new(p).exists()) // Only return paths that actually exist on this device
-        .map(|p| p.to_string())
-        .collect()
+    unique_existing_dirs(&candidates, |p| std::fs::canonicalize(p).ok())
+}
+
+/// Keeps the folders that exist, once each. Android reaches the same storage through
+/// several names (/sdcard is a link to /storage/emulated/0), and scanning both would
+/// list every file twice. The resolve function gives the real location, or None if the
+/// folder is missing.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn unique_existing_dirs(
+    candidates: &[&str],
+    resolve: impl Fn(&str) -> Option<std::path::PathBuf>,
+) -> Vec<String> {
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut result = Vec::new();
+    for candidate in candidates {
+        if let Some(real) = resolve(candidate) {
+            if !seen.contains(&real) {
+                seen.push(real);
+                result.push(candidate.to_string());
+            }
+        }
+    }
+    result
 }
 
 // ==========================================
@@ -347,6 +365,56 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    // ── Android storage folders ───────────────────────────────────────────
+    // The folder lookup is passed in, so this runs on every platform.
+
+    use std::path::PathBuf;
+
+    /// A fake phone: /sdcard is a link to /storage/emulated/0, and some folders do not exist.
+    fn fake_android(p: &str) -> Option<PathBuf> {
+        let real = p.replacen("/sdcard", "/storage/emulated/0", 1);
+        let exists = ["/storage/emulated/0/Download", "/storage/emulated/0/DCIM"];
+        exists.contains(&real.as_str()).then(|| PathBuf::from(real))
+    }
+
+    #[test]
+    fn test_android_dirs_list_each_real_folder_once() {
+        let dirs = unique_existing_dirs(
+            &[
+                "/sdcard/Download",
+                "/sdcard/DCIM",
+                "/storage/emulated/0/Download",
+                "/storage/emulated/0/DCIM",
+            ],
+            fake_android,
+        );
+        assert_eq!(dirs, vec!["/sdcard/Download", "/sdcard/DCIM"]);
+    }
+
+    #[test]
+    fn test_android_dirs_skip_missing_folders() {
+        let dirs = unique_existing_dirs(
+            &["/sdcard/Documents", "/sdcard/Download", "/sdcard/Pictures"],
+            fake_android,
+        );
+        assert_eq!(dirs, vec!["/sdcard/Download"]);
+    }
+
+    #[test]
+    fn test_android_dirs_keep_the_first_name_in_order() {
+        let dirs = unique_existing_dirs(
+            &["/storage/emulated/0/DCIM", "/sdcard/DCIM", "/sdcard/Download"],
+            fake_android,
+        );
+        assert_eq!(dirs, vec!["/storage/emulated/0/DCIM", "/sdcard/Download"]);
+    }
+
+    #[test]
+    fn test_android_dirs_with_nothing_present_is_empty() {
+        assert!(unique_existing_dirs(&["/nowhere"], |_| None).is_empty());
+        assert!(unique_existing_dirs(&[], fake_android).is_empty());
     }
 }
 // --- END OF FILE analyzer.rs ---

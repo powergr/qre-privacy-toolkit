@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Lock, Clock, X, CalendarClock, CheckCircle2 } from "lucide-react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 // ==========================================
 // --- TYPES ---
@@ -120,13 +121,9 @@ export function TimeLockModal({
   }, []);
 
   // Escape to close
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !loading) onClose();
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [loading, onClose]);
+  useEscapeKey(() => {
+    if (!loading) onClose();
+  });
 
   function handlePresetClick(secs: number) {
     setSelectedPreset(secs);

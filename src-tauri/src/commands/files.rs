@@ -72,14 +72,56 @@ pub(crate) fn is_system_critical(path: &Path) -> bool {
             return true;
         }
     } else {
-        let critical = [
-            "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/etc", "/var", "/boot", "/proc", "/sys", "/dev",
-        ];
-        if critical.iter().any(|c| path_str.starts_with(c)) || path_str == "/" {
+        if is_unix_critical(&path_str, cfg!(target_os = "macos")) {
             return true;
         }
     }
     false
+}
+
+/// The Linux and macOS half of is_system_critical, working on the lower-cased path text.
+///
+/// Folders are compared by whole name, so /var is protected but /variables is not.
+/// With macos set, the system folders of macOS are protected too. The user's temporary
+/// folder (/var/folders and /tmp there) is not, because every Mac keeps it under /var.
+pub(crate) fn is_unix_critical(path_lower: &str, macos: bool) -> bool {
+    let parts: Vec<&str> = path_lower.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.is_empty() {
+        return path_lower.starts_with('/');
+    }
+
+    if macos {
+        const USER_TEMP: &[&[&str]] = &[
+            &["var", "folders"],
+            &["private", "var", "folders"],
+            &["tmp"],
+            &["private", "tmp"],
+        ];
+        if USER_TEMP.iter().any(|t| parts.starts_with(t)) {
+            return false;
+        }
+    }
+
+    const CRITICAL: &[&[&str]] = &[
+        &["bin"],
+        &["sbin"],
+        &["usr", "bin"],
+        &["usr", "sbin"],
+        &["etc"],
+        &["var"],
+        &["boot"],
+        &["proc"],
+        &["sys"],
+        &["dev"],
+    ];
+    const MACOS_CRITICAL: &[&[&str]] = &[
+        &["system"],
+        &["library"],
+        &["applications"],
+        &["private"],
+    ];
+    CRITICAL.iter().any(|c| parts.starts_with(c))
+        || (macos && MACOS_CRITICAL.iter().any(|c| parts.starts_with(c)))
 }
 
 pub(crate) fn reject_critical_path(path: &Path) -> Result<(), String> {

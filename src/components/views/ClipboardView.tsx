@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
+import { useShortcut } from "../../hooks/useShortcut";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   Clipboard,
   Copy,
@@ -43,6 +44,9 @@ export function ClipboardView() {
   const [msg, setMsg] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // Ctrl+F jumps to the search box.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useShortcut("f", () => searchRef.current?.focus());
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
@@ -228,6 +232,7 @@ export function ClipboardView() {
           >
             <Search size={16} color="var(--text-dim)" />
             <input
+              ref={searchRef}
               placeholder="Search history..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}

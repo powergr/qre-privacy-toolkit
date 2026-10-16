@@ -480,3 +480,19 @@ describe("BreachView - network check", () => {
     expect(mockClipboardWrite).toHaveBeenCalledWith("203.0.113.7");
   });
 });
+
+describe("BreachView - keyboard shortcuts", () => {
+  it("Ctrl+O opens the folder picker on the local scanner tab", async () => {
+    mockOpen.mockResolvedValueOnce(null);
+    render(<BreachView />);
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
+  });
+
+  it("Ctrl+O does nothing on the other tabs", async () => {
+    render(<BreachView />);
+    tab("Password Breach");
+    fireEvent.keyDown(window, { key: "o", ctrlKey: true });
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+});

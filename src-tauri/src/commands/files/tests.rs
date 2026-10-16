@@ -258,3 +258,76 @@ fn test_paste_rejects_path_traversal_in_the_source() {
 
     let _ = fs::remove_dir_all(base);
 }
+
+// ── Linux and macOS system-critical paths ────────────────────────────────
+// These test path text only, so they run on every platform.
+
+#[test]
+fn test_unix_critical_blocks_the_system_folders() {
+    for p in ["/", "/etc", "/etc/passwd", "/var/log/syslog", "/bin/sh", "/sbin/init", "/usr/bin/env", "/usr/sbin/cron", "/boot/grub", "/proc/1/mem", "/sys/class", "/dev/null"] {
+        assert!(is_unix_critical(p, false), "{p} must be critical");
+        assert!(is_unix_critical(p, true), "{p} must be critical on macOS");
+    }
+}
+
+#[test]
+fn test_unix_critical_compares_whole_folder_names() {
+    for p in ["/variables/x", "/devices/inventory", "/etcetera", "/binary", "/system", "/bootcamp/a", "/home/alice/etc", "/usr/local/bin/tool", "/usr/share/docs"] {
+        assert!(!is_unix_critical(p, false), "{p} must be allowed");
+    }
+}
+
+#[test]
+fn test_unix_critical_ordinary_paths_are_allowed() {
+    for p in ["/home/alice/vault.json", "/tmp/export.csv", "/mnt/usb/file", "/Users/bob/Documents/a.txt", "", "relative/path"] {
+        assert!(!is_unix_critical(p, false), "{p:?} must be allowed");
+        assert!(!is_unix_critical(p, true), "{p:?} must be allowed on macOS");
+    }
+}
+
+#[test]
+fn test_unix_critical_handles_repeated_slashes() {
+    assert!(is_unix_critical("//etc//passwd", false));
+    assert!(is_unix_critical("//", false));
+}
+
+#[test]
+fn test_macos_protects_its_own_system_folders() {
+    // These are lower-case because is_system_critical lower-cases the path first.
+    for p in ["/system/library/coreservices", "/library/preferences", "/applications/safari.app", "/private/etc/hosts", "/private/var/db/dslocal"] {
+        assert!(is_unix_critical(p, true), "{p} must be critical on macOS");
+    }
+}
+
+#[test]
+fn test_macos_system_folders_are_not_special_on_linux() {
+    // A Linux machine can have a user folder called /library or /applications.
+    for p in ["/library/books", "/applications/mine", "/system/notes"] {
+        assert!(!is_unix_critical(p, false), "{p} must be allowed on Linux");
+    }
+}
+
+#[test]
+fn test_macos_users_temp_folder_is_not_critical() {
+    for p in [
+        "/var/folders/zz/abc123/t/work.txt",
+        "/private/var/folders/zz/abc123/t/work.txt",
+        "/tmp/export.csv",
+        "/private/tmp/export.csv",
+    ] {
+        assert!(!is_unix_critical(p, true), "{p} must be allowed on macOS");
+    }
+}
+
+#[test]
+fn test_macos_temp_exemption_does_not_open_the_rest_of_var() {
+    for p in ["/var/db/x", "/var/log/system.log", "/private/var/root", "/private/var/folders_old/x"] {
+        assert!(is_unix_critical(p, true), "{p} must stay critical on macOS");
+    }
+}
+
+#[test]
+fn test_linux_still_protects_var_folders() {
+    // The temp exemption is a macOS rule only.
+    assert!(is_unix_critical("/var/folders/x", false));
+}
