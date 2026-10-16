@@ -1,0 +1,193 @@
+/* ==========================================================================
+   DESIGN TOKENS (Phase 0 of the interface plan)
+
+   These sit on top of the existing variables in App.css (--bg-color, --panel-bg,
+   --highlight, --accent, --text-main, --text-dim, --border, ...). Nothing here
+   replaces them, so screens that have not moved over yet keep working.
+
+   Two rules keep the themes correct:
+   1. A token that only mentions other variables lives on `body`, never on `:root`.
+      The theme is switched with data-theme on <body>, and a custom property that
+      reads var(--bg-color) is resolved on the element that declares it. Declared
+      on :root it would freeze the default theme's value for everything below.
+   2. A token whose value differs by theme is defined three times, the same way
+      App.css does it: dark by default, light for the system setting, then the
+      explicit data-theme choices. No colour uses color-mix, so older Android
+      WebViews render it too.
+   ========================================================================== */
+
+/* ---- Values that do not change with the theme ---- */
+:root {
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radius: controls, cards, panels, pills */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  /* Type scale */
+  --font-xs: 0.6875rem; /* 11px */
+  --font-sm: 0.75rem; /* 12px */
+  --font-md: 0.8125rem; /* 13px */
+  --font-lg: 0.9375rem; /* 15px */
+  --font-xl: 1.125rem; /* 18px */
+  --font-2xl: 1.5rem; /* 24px */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layers. Existing modals use 99999 to 200000; toasts sit above all of them. */
+  --layer-overlay: 100010;
+  --layer-dialog: 100020;
+  --layer-toast: 200050;
+
+  /* Text drawn on top of the accent colour */
+  --accent-fg: #ffffff;
+  --status-danger-fill: #d23e3e; /* red button background, white text */
+}
+
+/* ---- Theme dependent values: dark is the default ---- */
+:root {
+  --surface-raised: #2a2d2e;
+  --border-strong: #5a5a5e;
+  --accent-text: #4da3ff; /* accent used as text or an icon on a surface */
+  --accent-soft: rgba(0, 122, 204, 0.18);
+  --focus-ring: #4da3ff;
+
+  --status-ok: #4cd49a;
+  --status-warn: #e0af68;
+  --status-danger: #f49494;
+  --status-info: #6eb4ff;
+  --status-ok-soft: rgba(76, 212, 154, 0.16);
+  --status-warn-soft: rgba(224, 175, 104, 0.16);
+  --status-danger-soft: rgba(244, 148, 148, 0.16);
+  --status-info-soft: rgba(110, 180, 255, 0.16);
+
+  /* One hue per tool group */
+  --hue-protect: #3ccf91;
+  --hue-inspect: #a78bfa;
+  --hue-clean: #f0b340;
+  --hue-create: #38bdf8;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --surface-raised: #ffffff;
+    --border-strong: #c4c4c8;
+    --accent-text: #0062a3;
+    --accent-soft: rgba(0, 122, 204, 0.12);
+    --focus-ring: #0062a3;
+
+    --status-ok: #14704a;
+    --status-warn: #845800;
+    --status-danger: #b82d2d;
+    --status-info: #0062a3;
+    --status-ok-soft: rgba(20, 112, 74, 0.12);
+    --status-warn-soft: rgba(132, 88, 0, 0.12);
+    --status-danger-soft: rgba(184, 45, 45, 0.1);
+    --status-info-soft: rgba(0, 98, 163, 0.1);
+
+    --hue-protect: #1a9a63;
+    --hue-inspect: #6d4fe0;
+    --hue-clean: #b57a06;
+    --hue-create: #0b86bd;
+
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.08);
+    --shadow-2: 0 6px 18px rgba(16, 24, 40, 0.1);
+    --shadow-3: 0 18px 44px rgba(16, 24, 40, 0.18);
+  }
+}
+
+body[data-theme="dark"] {
+  --surface-raised: #2a2d2e;
+  --border-strong: #5a5a5e;
+  --accent-text: #4da3ff;
+  --accent-soft: rgba(0, 122, 204, 0.18);
+  --focus-ring: #4da3ff;
+
+  --status-ok: #4cd49a;
+  --status-warn: #e0af68;
+  --status-danger: #f49494;
+  --status-info: #6eb4ff;
+  --status-ok-soft: rgba(76, 212, 154, 0.16);
+  --status-warn-soft: rgba(224, 175, 104, 0.16);
+  --status-danger-soft: rgba(244, 148, 148, 0.16);
+  --status-info-soft: rgba(110, 180, 255, 0.16);
+
+  --hue-protect: #3ccf91;
+  --hue-inspect: #a78bfa;
+  --hue-clean: #f0b340;
+  --hue-create: #38bdf8;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+body[data-theme="light"] {
+  --surface-raised: #ffffff;
+  --border-strong: #c4c4c8;
+  --accent-text: #0062a3;
+  --accent-soft: rgba(0, 122, 204, 0.12);
+  --focus-ring: #0062a3;
+
+  --status-ok: #14704a;
+  --status-warn: #845800;
+  --status-danger: #b82d2d;
+  --status-info: #0062a3;
+  --status-ok-soft: rgba(20, 112, 74, 0.12);
+  --status-warn-soft: rgba(132, 88, 0, 0.12);
+  --status-danger-soft: rgba(184, 45, 45, 0.1);
+  --status-info-soft: rgba(0, 98, 163, 0.1);
+
+  --hue-protect: #1a9a63;
+  --hue-inspect: #6d4fe0;
+  --hue-clean: #b57a06;
+  --hue-create: #0b86bd;
+
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --shadow-2: 0 6px 18px rgba(16, 24, 40, 0.1);
+  --shadow-3: 0 18px 44px rgba(16, 24, 40, 0.18);
+}
+
+/* ---- Names for the existing surface variables (see rule 1 above) ---- */
+body {
+  --surface-page: var(--bg-color);
+  --surface-panel: var(--panel-bg);
+  --surface-hover: var(--highlight);
+  --border-subtle: var(--border);
+  --text-strong: var(--text-main);
+  --text-muted: var(--text-dim);
+}
+
+/* ---- Keyboard focus: one visible ring everywhere ----
+   :where() keeps this at zero specificity, so a component can still restyle it. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- People who ask for less motion get no transitions ----
+   Spinners and progress bars keep moving on purpose: they show that work is going on. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

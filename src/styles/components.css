@@ -3,36 +3,63 @@
   background-color: var(--highlight);
   border: 1px solid var(--border);
   color: var(--text-main);
-  padding: 10px;
-  border-radius: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
   font-size: 1rem;
   width: 100%;
   box-sizing: border-box;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+.auth-input:hover:not(:disabled) {
+  border-color: var(--border-strong);
 }
 .auth-input:focus {
   border-color: var(--accent);
   outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.auth-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .auth-btn,
 .secondary-btn {
-  padding: 10px;
+  padding: 10px 16px;
+  min-height: 40px;
   font-size: 1rem;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   box-sizing: border-box;
   margin-top: 5px;
   text-align: center;
   font-weight: bold;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    filter var(--motion-fast) var(--ease-out);
+}
+.secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Fingers need more room than a mouse pointer. */
+@media (pointer: coarse) {
+  .auth-btn,
+  .secondary-btn {
+    min-height: 44px;
+  }
 }
 
 .auth-btn {
   background-color: var(--accent);
-  color: white;
+  color: var(--accent-fg, white);
   border: 1px solid transparent;
 }
-.auth-btn:hover {
-  filter: brightness(1.1);
+.auth-btn:hover:not(:disabled) {
+  filter: brightness(1.12);
 }
 .auth-btn:disabled {
   opacity: 0.5;
