@@ -1293,7 +1293,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         let path = "C:\\Windows\\System32\\cmd.exe";
         #[cfg(not(target_os = "windows"))]
-        let path = "/bin/sh";
+        let path = "/etc/passwd"; // a regular file; /bin/sh is a link on most Linux systems
 
         if Path::new(path).exists() {
             let err = validate_path(path, &wl).unwrap_err();

@@ -1239,7 +1239,9 @@ mod tests {
         #[cfg(target_os = "windows")]
         let bad_path = Path::new("C:\\Windows\\System32\\cmd.exe");
         #[cfg(not(target_os = "windows"))]
-        let bad_path = Path::new("/bin/sh");
+        // A regular file. /bin/sh is a link on most Linux systems, and a link is refused
+        // for a different reason before the protected-folder check is reached.
+        let bad_path = Path::new("/etc/passwd");
 
         let result = validate_path(bad_path, &blacklist);
         assert!(result.is_err());
@@ -1645,10 +1647,10 @@ tmpfs /tmp tmpfs rw 0 0
     fn test_linux_blacklist_covers_system_folders_but_not_home() {
         let blacklist = build_blacklist();
         for dir in ["/bin", "/boot", "/dev", "/etc", "/proc", "/sys", "/usr", "/var"] {
-            assert!(
-                blacklist.iter().any(|b| b == Path::new(dir)),
-                "{dir} must be protected"
-            );
+            // The list holds resolved paths. On current Linux systems /bin is a link
+            // to /usr/bin, so compare with where each folder really is.
+            let Ok(real) = fs::canonicalize(dir) else { continue };
+            assert!(blacklist.contains(&real), "{dir} ({}) must be protected", real.display());
         }
         assert!(!blacklist.iter().any(|b| b == Path::new("/home")));
         assert!(!blacklist.iter().any(|b| b == Path::new("/tmp")));
@@ -1658,7 +1660,7 @@ tmpfs /tmp tmpfs rw 0 0
     #[test]
     fn test_linux_shredder_refuses_system_folders() {
         let blacklist = build_blacklist();
-        let err = validate_path(Path::new("/etc/hostname"), &blacklist)
+        let err = validate_path(Path::new("/etc/passwd"), &blacklist)
             .unwrap_err()
             .to_string();
         assert!(
