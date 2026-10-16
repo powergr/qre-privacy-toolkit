@@ -325,6 +325,14 @@ fn is_blocked_unix_path(path: &str) -> bool {
         &["proc"],
         &["sys"],
         &["dev"],
+        // macOS: its system folders, and the real place behind /etc and /var.
+        &["system"],
+        &["library"],
+        &["private", "etc"],
+        &["private", "var", "db"],
+        &["private", "var", "log"],
+        &["private", "var", "root"],
+        &["private", "var", "vm"],
     ];
     if SYSTEM_ROOTS.iter().any(|root| parts.starts_with(root)) {
         return true;

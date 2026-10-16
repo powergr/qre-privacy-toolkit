@@ -821,9 +821,24 @@ pub fn list_directory(path: String) -> CommandResult<Vec<DirListEntry>> {
         };
 
         let name = entry.file_name().to_string_lossy().to_string();
-        let is_directory = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let file_type = entry.file_type().ok();
+        let is_symlink = file_type.map(|t| t.is_symlink()).unwrap_or(false);
 
-        let (size, modified) = match entry.metadata() {
+        // DirEntry::metadata describes a symlink itself (its size is the length of the
+        // path it points to, and it is never a folder). Follow the link instead, so a
+        // linked folder can be opened and a linked file shows its real size.
+        let meta = if is_symlink {
+            fs::metadata(entry.path())
+        } else {
+            entry.metadata()
+        };
+
+        let is_directory = match &meta {
+            Ok(m) => m.is_dir(),
+            Err(_) => file_type.map(|t| t.is_dir()).unwrap_or(false),
+        };
+
+        let (size, modified) = match meta {
             Ok(meta) => {
                 let size = if meta.is_dir() { None } else { Some(meta.len()) };
                 let modified = meta

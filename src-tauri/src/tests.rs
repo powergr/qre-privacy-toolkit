@@ -2271,6 +2271,35 @@ fn test_list_directory_unreadable_entry_does_not_abort_whole_listing() {
             .find(|e| e.name == "broken_link")
             .expect("broken symlink must still be listed");
         assert_eq!(broken.size, None);
+        assert!(!broken.is_directory);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn test_list_directory_follows_symlinks_to_folders_and_files() {
+    #[cfg(unix)]
+    {
+        use crate::commands::files::list_directory;
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("qre_list_directory_test_symlinks");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("real_folder")).unwrap();
+        fs::write(dir.join("real_file.txt"), b"twelve bytes").unwrap();
+        std::os::unix::fs::symlink(dir.join("real_folder"), dir.join("folder_link")).unwrap();
+        std::os::unix::fs::symlink(dir.join("real_file.txt"), dir.join("file_link")).unwrap();
+
+        let entries =
+            list_directory(dir.to_str().unwrap().to_string()).expect("listing must succeed");
+        let get = |name: &str| entries.iter().find(|e| e.name == name).unwrap();
+
+        // A linked folder opens like a folder, a linked file shows the file's own size.
+        assert!(get("folder_link").is_directory);
+        assert_eq!(get("folder_link").size, None);
+        assert!(!get("file_link").is_directory);
+        assert_eq!(get("file_link").size, Some(12));
 
         let _ = fs::remove_dir_all(&dir);
     }

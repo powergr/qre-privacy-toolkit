@@ -19,7 +19,9 @@ fn workdir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("qre_secret_scan_{}_{}", name, std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    // The command resolves the folder before scanning. A Mac's temp folder is a link
+    // (/var points to /private/var), so the tests must scan the resolved path too.
+    fs::canonicalize(&dir).unwrap()
 }
 
 /// A folder where every scannable file holds a secret.
@@ -260,4 +262,25 @@ fn test_unix_ordinary_locations_are_allowed() {
 fn test_unix_paths_with_repeated_slashes_are_still_checked() {
     assert!(is_blocked_unix_path("//etc//passwd"));
     assert!(is_blocked_unix_path("/home//alice//.ssh"));
+}
+
+#[test]
+fn test_unix_macos_system_folders_are_blocked() {
+    for p in [
+        "/System/Library/CoreServices",
+        "/Library/Preferences",
+        "/private/etc/hosts",
+        "/private/var/db/dslocal",
+        "/private/var/log/system.log",
+        "/private/var/root",
+    ] {
+        assert!(is_blocked_unix_path(p), "{p} must be blocked");
+    }
+}
+
+#[test]
+fn test_unix_macos_user_temp_folder_is_scannable() {
+    // A Mac's per-user temporary folder lives inside /private/var.
+    assert!(!is_blocked_unix_path("/private/var/folders/zz/abc123/T/notes.txt"));
+    assert!(!is_blocked_unix_path("/Users/bob/Library/Application Support/App"));
 }

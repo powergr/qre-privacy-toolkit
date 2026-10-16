@@ -45,7 +45,7 @@ jobs:
         run: npm test -- --ci
 
   # --- Rust: fast tests ---
-  # Nearly all of the 504 Rust tests finish in well under a second each. The cost
+  # Nearly all of the 507 Rust tests finish in well under a second each. The cost
   # on a CI machine is compiling the dependency tree, which the cache removes.
   # Two tests are left for full-tests.yml: they scan the real file system of the
   # machine they run on, which makes them slow (tens of seconds) and dependent on
