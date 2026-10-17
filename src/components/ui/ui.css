@@ -446,6 +446,58 @@ button.ui-chip:hover {
   border-top: 1px solid var(--border);
 }
 
+.ui-sheet__grab {
+  display: none;
+}
+.ui-sheet__pull {
+  flex: none;
+}
+
+/* Phones: a drawer becomes a sheet that rises from the bottom edge. */
+@keyframes ui-slide-up {
+  from {
+    transform: translateY(32px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .modal-overlay.ui-overlay--drawer {
+    align-items: flex-end !important;
+    justify-content: center;
+    padding: 0 !important;
+  }
+  .ui-drawer {
+    width: 100%;
+    height: auto;
+    max-height: 90vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: ui-slide-up var(--motion-base) var(--ease-out);
+    touch-action: pan-y;
+  }
+  .ui-sheet__grab {
+    display: block;
+    width: 40px;
+    height: 4px;
+    margin: var(--space-2) auto 0;
+    border-radius: var(--radius-full);
+    background: var(--border-strong, var(--border));
+  }
+  .ui-sheet__foot {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+  .ui-sheet__foot .ui-btn {
+    flex: 1 1 0;
+  }
+}
+
 /* ---------- Toasts ---------- */
 .ui-toasts {
   position: fixed;
@@ -630,6 +682,57 @@ button.ui-chip:hover {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+/* On a phone the toasts sit above the bottom bar instead of behind it. */
+@media (max-width: 600px) {
+  .ui-toasts {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    width: auto;
+  }
+}
+
+.load-error__detail {
+  font-family: var(--font-mono);
+  font-size: var(--font-sm);
+  word-break: break-word;
+}
+
+/* ---------- Touch screens: every control is a comfortable target ----------
+   44 pixels is the smallest size a fingertip hits reliably. Rules for the buttons and
+   text fields live next to them (.ui-btn, .ui-input); this block covers the smaller controls. */
+@media (pointer: coarse) {
+  .ui-chip,
+  .ui-seg__item {
+    min-height: 44px;
+  }
+  .ui-banner__close,
+  .details-panel__close,
+  .icon-btn-ghost {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .color-picker {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .color-dot {
+    width: 40px;
+    height: 40px;
+  }
+  .crumb {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .file-row {
+    height: 48px;
+  }
 }
 
 /* ---------- Shortcut hint ---------- */

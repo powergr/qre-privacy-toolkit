@@ -69,6 +69,7 @@ const SHORTCUTS: [string, string, string][] = [
   ["Ctrl+N", "Vault, Bookmarks, Notes", "Add a new entry, bookmark, or note."],
   ["Ctrl+F", "Vault, Bookmarks, Notes, Clipboard", "Jump to the search box."],
   ["Ctrl+F", "Inside a note", "Open find and replace."],
+  ["Ctrl+L", "Files", "Edit the folder path in the address bar."],
   ["Ctrl+S", "Vault, Bookmarks, Notes editor", "Save and close."],
   ["Ctrl+O", "Integrity Checker", "Choose a file to hash."],
   ["Ctrl+O", "File Analyzer, Privacy Check (Local Scanner)", "Choose a folder to scan."],
@@ -255,6 +256,34 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           automatically. Use the <strong>Shredder</strong> if you want to
           permanently destroy the originals after encryption.
         </div>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Finding Your Way Around
+        </h4>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            The <strong>Places</strong> list on the left opens Home, Desktop,
+            Documents and Downloads in one click. It is hidden in narrow
+            windows and on phones.
+          </li>
+          <li>
+            Every part of the path in the address bar is a button. Press{" "}
+            <strong>Ctrl+L</strong> to type a path instead.
+          </li>
+          <li>
+            When you select something, a bar under the list names it and offers{" "}
+            <strong>Details</strong>, <strong>Delete</strong> and{" "}
+            <strong>Clear selection</strong>. Details shows the type, size,
+            date and location of the selection.
+          </li>
+          <li>
+            On a phone, the bar at the bottom has <strong>Home</strong>,{" "}
+            <strong>Files</strong>, <strong>Passwords</strong>,{" "}
+            <strong>Tools</strong> and <strong>More</strong>. Tools lists every
+            other tool. More holds Settings, Help and About. Pull a sheet down
+            to close it.
+          </li>
+        </ul>
 
         <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
           How to Unlock

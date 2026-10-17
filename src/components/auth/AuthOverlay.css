@@ -1,0 +1,56 @@
+/* The sign-in screens. Layout rules for .auth-overlay and .auth-card live in components.css;
+   these add what a phone needs: room for the keyboard, clear gesture bars, and large links. */
+.auth-overlay {
+  height: 100dvh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  align-items: safe center;
+}
+.auth-tagline {
+  margin: 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--font-sm);
+}
+.auth-link {
+  align-self: center;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.auth-link:hover {
+  color: var(--text-main);
+}
+.auth-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.auth-note {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-align: center;
+}
+.auth-warning {
+  margin: 0;
+  color: var(--warning);
+  font-weight: 600;
+  text-align: center;
+}
+.auth-explain {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 0.9rem;
+  text-align: center;
+}
+@media (pointer: coarse) {
+  .auth-link {
+    min-height: 44px;
+  }
+}

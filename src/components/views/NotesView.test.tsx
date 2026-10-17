@@ -90,7 +90,8 @@ afterEach(() => jest.restoreAllMocks());
 describe("NotesView - listing", () => {
   it("shows the empty state for a new notebook", async () => {
     await renderNotes([]);
-    expect(screen.getByText("Your notebook is empty.")).toBeInTheDocument();
+    expect(screen.getByText("Your notebook is empty.").closest(".ui-empty")).toBeInTheDocument();
+    expect(screen.getByText("Write a note, or import a text file, to get started.")).toBeInTheDocument();
   });
 
   it("lists pinned notes first, then the most recently modified", async () => {

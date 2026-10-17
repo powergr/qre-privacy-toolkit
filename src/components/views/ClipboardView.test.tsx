@@ -154,7 +154,7 @@ describe("ClipboardView - listing", () => {
     stored = [];
     backend();
     render(<ClipboardView />);
-    expect(await screen.findByText("Failed to load clipboard vault:")).toBeInTheDocument();
+    expect(await screen.findByText("Could not open the clipboard history")).toBeInTheDocument();
     expect(screen.getByText(/wrong key/)).toBeInTheDocument();
   });
 });
@@ -250,7 +250,7 @@ describe("ClipboardView - copy", () => {
 
     expect(await screen.findByText(/clipboard locked/)).toBeInTheDocument();
     expect(screen.queryByText(/Copied to clipboard/)).not.toBeInTheDocument();
-    expect(screen.queryByText("Failed to load clipboard vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
     expect(screen.getByText("preview-a")).toBeInTheDocument();
   });
 });
@@ -275,7 +275,7 @@ describe("ClipboardView - secure paste", () => {
 
     expect(await screen.findByText(/Clipboard is empty/)).toBeInTheDocument();
     expect(mockInvoke.mock.calls.some(([c]) => c === "add_clipboard_entry")).toBe(false);
-    expect(screen.queryByText("Failed to load clipboard vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
     expect(screen.getByText("preview-a")).toBeInTheDocument();
   });
 
@@ -289,7 +289,7 @@ describe("ClipboardView - secure paste", () => {
     fireEvent.click(screen.getByRole("button", { name: /Paste/ }));
 
     expect(await screen.findByText(/securely pasted/)).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load clipboard vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
     expect(await screen.findByText("second try")).toBeInTheDocument();
   });
 
@@ -328,7 +328,7 @@ describe("ClipboardView - delete, pin and clear", () => {
     fireEvent.click(screen.getByTitle("Delete Entry"));
 
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load clipboard vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
     expect(screen.getByText("preview-a")).toBeInTheDocument();
   });
 
@@ -349,7 +349,7 @@ describe("ClipboardView - delete, pin and clear", () => {
     fireEvent.click(screen.getByTitle("Pin to Top"));
 
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load clipboard vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
     expect(screen.getByTitle("Pin to Top")).toBeInTheDocument();
   });
 
@@ -420,5 +420,59 @@ describe("ClipboardView - on Android", () => {
     mockPlatform.mockReturnValue("macos");
     await renderClipboard([]);
     expect(header().style.flexDirection).toBe("row");
+  });
+});
+
+describe("ClipboardView - shared parts", () => {
+  it("shows the empty history in the shared empty state", async () => {
+    await renderClipboard([]);
+    const title = screen.getByText("Clipboard history is empty.");
+    expect(title.closest(".ui-empty")).toBeInTheDocument();
+    expect(screen.getByText(/Copy something sensitive, then click "Secure Paste"/)).toBeInTheDocument();
+  });
+
+  it("asks before clearing in a danger dialog, not a page-wide card", async () => {
+    await renderClipboard([makeClip("a"), makeClip("b")]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    const dialog = screen.getByRole("dialog", { name: "Clear History?" });
+    expect(dialog).toHaveClass("ui-dialog--danger");
+    expect(within(dialog).getByText("2")).toBeInTheDocument();
+  });
+
+  it("closes the clear question with Escape, clearing nothing", async () => {
+    await renderClipboard([makeClip("a")]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(saves()).toHaveLength(0);
+  });
+
+  it("puts Yes, Clear All last, as the main action", async () => {
+    await renderClipboard([makeClip("a")]);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    const foot = document.querySelector(".ui-sheet__foot") as HTMLElement;
+    expect(Array.from(foot.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Cancel", "Yes, Clear All"]);
+  });
+
+  it("shows a failed action in an error banner", async () => {
+    await renderClipboard([makeClip("a")]);
+    failing.add("save_clipboard_vault");
+    fireEvent.click(screen.getByTitle("Pin to Top"));
+    const message = await screen.findByText(/disk full/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+  });
+});
+
+describe("ClipboardView - a history that cannot be read", () => {
+  it("offers Try again, and shows the history once it opens", async () => {
+    loadFailure = "wrong key";
+    stored = [makeClip("a")];
+    backend();
+    render(<ClipboardView />);
+    await screen.findByText("Could not open the clipboard history");
+    loadFailure = null;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("preview-a")).toBeInTheDocument();
+    expect(screen.queryByText("Could not open the clipboard history")).not.toBeInTheDocument();
   });
 });

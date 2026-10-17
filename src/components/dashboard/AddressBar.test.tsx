@@ -226,3 +226,31 @@ describe("AddressBar - editing the path", () => {
     expect(input().value).toBe("C:\\Other");
   });
 });
+
+describe("AddressBar - keyboard and structure", () => {
+  it("makes every crumb a button, so the path can be used from the keyboard", () => {
+    renderBar("C:\\Users\\Docs");
+    const crumbs = Array.from(document.querySelectorAll(".crumb"));
+    expect(crumbs).toHaveLength(4);
+    expect(crumbs.every((c) => c.tagName === "BUTTON")).toBe(true);
+  });
+
+  it("marks the last folder as the current page, and only that one", () => {
+    renderBar("C:\\Users\\Docs");
+    const current = document.querySelectorAll('.crumb[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent("Docs");
+  });
+
+  it("marks the computer button as current at the list of drives", () => {
+    renderBar("");
+    expect(screen.getByRole("button", { name: "This computer" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("opens the path for editing with Ctrl+L", () => {
+    renderBar("C:\\Users");
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "l", ctrlKey: true });
+    expect(input()).toHaveValue("C:\\Users");
+  });
+});

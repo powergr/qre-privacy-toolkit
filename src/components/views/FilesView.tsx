@@ -30,6 +30,9 @@ import type { PortableDriveState } from "../../hooks/usePortableVault";
 import { Toolbar } from "../dashboard/Toolbar";
 import { AddressBar } from "../dashboard/AddressBar";
 import { FileGrid } from "../dashboard/FileGrid";
+import { PlacesRail } from "../dashboard/PlacesRail";
+import { DetailsPanel } from "../dashboard/DetailsPanel";
+import { SelectionBar } from "../dashboard/SelectionBar";
 import { ContextMenu } from "../dashboard/ContextMenu";
 import { InputModal } from "../modals/InputModal";
 import { EntropyModal } from "../modals/EntropyModal";
@@ -132,6 +135,8 @@ export function FilesView(props: FilesViewProps) {
     path: string;
   } | null>(null);
   const [itemsToDelete, setItemsToDelete] = useState<string[] | null>(null);
+  // Facts about the selection, shown beside the list. Closed until asked for.
+  const [showDetails, setShowDetails] = useState(false);
 
   // ── Time-lock state ─────────────────────────────────────────────────────────
   /** Path of the plaintext file to time-lock (opens TimeLockModal). */
@@ -514,6 +519,9 @@ export function FilesView(props: FilesViewProps) {
     setPendingUnlockTargets(null);
   };
 
+  // The selected entries in list order, for the selection bar and the details panel.
+  const selectedEntries = fs.entries.filter((e) => fs.selectedPaths.includes(e.path));
+
   // Derive the Set<string> that FileGrid uses for badge display
   const timeLockPaths = new Set(timeLockInfo.keys());
 
@@ -551,59 +559,80 @@ export function FilesView(props: FilesViewProps) {
         onGoHome={fs.goHome}
       />
 
-      {scopeCorrupted && scopeCorruptionDismissed ? (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            textAlign: "center",
-            padding: 40,
-            color: "var(--text-dim)",
-          }}
-        >
-          <AlertTriangle size={40} color="var(--btn-danger)" style={{ marginBottom: 12 }} />
-          <p style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 6 }}>
-            File browsing is still stuck
-          </p>
-          <p style={{ fontSize: "0.85rem", maxWidth: 360 }}>
-            {isAndroid
-              ? "Force-close the app from Recent Apps and reopen it to fix this."
-              : "Restart the app to fix this."}
-          </p>
-          <button
-            className="secondary-btn"
-            style={{ marginTop: 15 }}
-            onClick={() => setScopeCorruptionDismissed(false)}
-          >
-            Show details again
-          </button>
+      <div className="files-body">
+        {!isAndroid && <PlacesRail currentPath={fs.currentPath} onNavigate={fs.loadDir} />}
+        <div className="files-main">
+          {scopeCorrupted && scopeCorruptionDismissed ? (
+            <div
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                padding: 40,
+                color: "var(--text-dim)",
+              }}
+            >
+              <AlertTriangle size={40} color="var(--btn-danger)" style={{ marginBottom: 12 }} />
+              <p style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 6 }}>
+                File browsing is still stuck
+              </p>
+              <p style={{ fontSize: "0.85rem", maxWidth: 360 }}>
+                {isAndroid
+                  ? "Force-close the app from Recent Apps and reopen it to fix this."
+                  : "Restart the app to fix this."}
+              </p>
+              <button
+                className="secondary-btn"
+                style={{ marginTop: 15 }}
+                onClick={() => setScopeCorruptionDismissed(false)}
+              >
+                Show details again
+              </button>
+            </div>
+          ) : (
+            <FileGrid
+              entries={fs.entries}
+              selectedPaths={fs.selectedPaths}
+              onSelect={(path, idx, multi, range) =>
+                fs.handleSelection(path, idx, multi, range)
+              }
+              onNavigate={fs.loadDir}
+              onGoUp={fs.goUp}
+              onContextMenu={handleContextMenu}
+              sortField={fs.sortField}
+              sortDirection={fs.sortDirection}
+              onSort={fs.handleSort}
+              timeLockPaths={timeLockPaths}
+              timeLockInfo={timeLockInfo}
+            />
+          )}
+          <SelectionBar
+            names={selectedEntries.map((e) => e.name)}
+            totalSize={fs.selectionSize}
+            detailsOpen={showDetails}
+            onToggleDetails={() => setShowDetails((open) => !open)}
+            onDelete={() => setItemsToDelete(fs.selectedPaths)}
+            onClear={fs.clearSelection}
+          />
         </div>
-      ) : (
-        <FileGrid
-          entries={fs.entries}
-          selectedPaths={fs.selectedPaths}
-          onSelect={(path, idx, multi, range) =>
-            fs.handleSelection(path, idx, multi, range)
-          }
-          onNavigate={fs.loadDir}
-          onGoUp={fs.goUp}
-          onContextMenu={handleContextMenu}
-          sortField={fs.sortField}
-          sortDirection={fs.sortDirection}
-          onSort={fs.handleSort}
-          timeLockPaths={timeLockPaths}
-          timeLockInfo={timeLockInfo}
-        />
-      )}
+        {showDetails && (
+          <DetailsPanel
+            selected={selectedEntries}
+            timeLockInfo={timeLockInfo}
+            onClose={() => setShowDetails(false)}
+          />
+        )}
+      </div>
 
       {isDragging && (
-        <div className="drag-overlay">
+        <div className="drag-overlay" role="status">
           <div className="drag-content">
-            <UploadCloud />
+            <UploadCloud size={48} />
             <span>Drop to Lock</span>
+            <span className="drag-hint">Dropped files are encrypted with your current settings.</span>
           </div>
         </div>
       )}

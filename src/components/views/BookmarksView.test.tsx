@@ -143,7 +143,7 @@ describe("BookmarksView - listing", () => {
     loadFailure = "wrong key";
     backend([]);
     render(<BookmarksView />);
-    expect(await screen.findByText("Failed to load bookmarks vault:")).toBeInTheDocument();
+    expect(await screen.findByText("Could not open the bookmarks vault")).toBeInTheDocument();
     expect(screen.getByText(/wrong key/)).toBeInTheDocument();
   });
 });
@@ -257,7 +257,7 @@ describe("BookmarksView - adding and editing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.queryByText("Failed to load bookmarks vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the bookmarks vault")).not.toBeInTheDocument();
     expect(screen.getByText("Still here")).toBeInTheDocument();
   });
 });
@@ -339,7 +339,7 @@ describe("BookmarksView - pin and delete", () => {
     fireEvent.click(pinBtn);
 
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load bookmarks vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the bookmarks vault")).not.toBeInTheDocument();
     expect(screen.getByText("Site")).toBeInTheDocument();
   });
 
@@ -364,7 +364,7 @@ describe("BookmarksView - pin and delete", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load bookmarks vault:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not open the bookmarks vault")).not.toBeInTheDocument();
     expect(screen.getByText("Stubborn")).toBeInTheDocument();
   });
 });
@@ -488,5 +488,132 @@ describe("BookmarksView - keyboard shortcuts", () => {
     fireEvent.click(screen.getByTitle("Import from Browser"));
     ctrl("n");
     expect(screen.queryByText("Add Bookmark")).not.toBeInTheDocument();
+  });
+});
+
+describe("BookmarksView - editor drawer", () => {
+  const drawer = () => document.querySelector(".ui-drawer") as HTMLElement;
+
+  it("opens a new bookmark in a side drawer named after what it does", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    expect(screen.getByRole("dialog", { name: "Add Bookmark" })).toBe(drawer());
+    expect(screen.queryByText("Edit Bookmark")).not.toBeInTheDocument();
+  });
+
+  it("opens an existing bookmark in the same drawer, called Edit Bookmark", async () => {
+    await renderBookmarks([makeBookmark("a", "GitHub")]);
+    fireEvent.click(screen.getByText("GitHub"));
+    expect(screen.getByRole("dialog", { name: "Edit Bookmark" })).toBe(drawer());
+    expect(screen.getByPlaceholderText("Title (e.g. My Bank)")).toHaveValue("GitHub");
+  });
+
+  it("keeps Cancel and Save together below the form, Save last", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    const foot = drawer().querySelector(".ui-sheet__foot") as HTMLElement;
+    expect(Array.from(foot.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Cancel", "Save"]);
+  });
+
+  it("closes with Cancel, with Escape and by pressing the dark area, saving nothing", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    fireEvent.click(within(drawer()).getByRole("button", { name: "Cancel" }));
+    expect(drawer()).toBeNull();
+    clickAddNew();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(drawer()).toBeNull();
+    clickAddNew();
+    fireEvent.mouseDown(document.querySelector(".modal-overlay") as HTMLElement);
+    expect(drawer()).toBeNull();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("stays open when the press starts inside the drawer", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    fireEvent.mouseDown(drawer());
+    expect(drawer()).not.toBeNull();
+  });
+
+  it("shows a missing title in an error banner inside the drawer", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    clickSave();
+    const message = await screen.findByText("Bookmark title cannot be empty.");
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(drawer()).toContainElement(message);
+  });
+
+  it("shows a failed save in an error banner and keeps what was typed", async () => {
+    saveFailure = "disk full";
+    await renderBookmarks([]);
+    clickAddNew();
+    fill("Title (e.g. My Bank)", "Bank");
+    fill("URL (https://...)", "https://bank.example");
+    clickSave();
+    const message = await screen.findByText(/disk full/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(screen.getByPlaceholderText("Title (e.g. My Bank)")).toHaveValue("Bank");
+  });
+
+  it("warns in a warning banner when the URL is already stored", async () => {
+    await renderBookmarks([makeBookmark("a", "GitHub", { url: "https://github.com" })]);
+    clickAddNew();
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    fill("URL (https://...)", "https://github.com");
+    const message = screen.getByText(/This URL already exists in your vault/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--warning");
+  });
+
+  it("pins from inside the drawer, and saves the choice", async () => {
+    await renderBookmarks([]);
+    clickAddNew();
+    fill("Title (e.g. My Bank)", "Bank");
+    fill("URL (https://...)", "https://bank.example");
+    fireEvent.click(within(drawer()).getByTitle("Pin"));
+    expect(within(drawer()).getByTitle("Unpin")).toBeInTheDocument();
+    clickSave();
+    await waitFor(() => expect(lastSaved()[0].is_pinned).toBe(true));
+  });
+});
+
+describe("BookmarksView - empty state", () => {
+  it("uses the shared empty state, and points to Import on a computer", async () => {
+    await renderBookmarks([]);
+    expect(screen.getByText("No bookmarks yet.").closest(".ui-empty")).toBeInTheDocument();
+    expect(screen.getByText("Click the Import button to load from Chrome/Edge.")).toBeInTheDocument();
+  });
+
+  it("points to Add New on a phone, where there is nothing to import from", async () => {
+    mockPlatform.mockReturnValue("android");
+    await renderBookmarks([]);
+    await screen.findByText("Click Add New to save your first bookmark.");
+    expect(screen.queryByText(/Import button/)).not.toBeInTheDocument();
+  });
+});
+
+describe("BookmarksView - a vault that cannot be read", () => {
+  it("offers Try again, and shows the bookmarks once the vault opens", async () => {
+    loadFailure = "wrong key";
+    backend([makeBookmark("a", "GitHub")]);
+    render(<BookmarksView />);
+    await screen.findByText("Could not open the bookmarks vault");
+    loadFailure = null;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("GitHub")).toBeInTheDocument();
+    expect(screen.queryByText("Could not open the bookmarks vault")).not.toBeInTheDocument();
+    expect(loadCount).toBe(2);
+  });
+
+  it("stays on the error, with the new reason, when the second try fails too", async () => {
+    loadFailure = "wrong key";
+    backend([]);
+    render(<BookmarksView />);
+    await screen.findByText(/wrong key/);
+    loadFailure = "still locked";
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/still locked/)).toBeInTheDocument();
+    expect(screen.queryByText(/wrong key/)).not.toBeInTheDocument();
   });
 });

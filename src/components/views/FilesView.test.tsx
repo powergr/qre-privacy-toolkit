@@ -139,6 +139,9 @@ async function loaded(name = "secret.txt") {
   await waitFor(() => expect(screen.getByText(name)).toBeInTheDocument());
 }
 
+// The extract question is a dialog; its Desktop, Documents and Downloads buttons share their
+// names with the places in the side list.
+const extractDialog = () => screen.getByText("Extract Files").closest(".modal-overlay") as HTMLElement;
 const row = (name: string) => screen.getByText(name).closest(".file-row") as HTMLElement;
 const toolbarLock = () => document.querySelector(".tool-btn.success") as HTMLElement;
 const toolbarUnlock = () => document.querySelector(".tool-btn.danger") as HTMLElement;
@@ -176,6 +179,8 @@ function wiggle(times: number) {
     fireEvent.mouseMove(overlay, { clientX: wiggleX, clientY: 0 });
   }
 }
+
+afterEach(() => jest.restoreAllMocks());
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -349,6 +354,7 @@ describe("FilesView - locking", () => {
   });
 
   it("shows the error when the whole command fails", async () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
     handlers.lock_file = () => {
       throw "backend exploded";
     };
@@ -358,6 +364,7 @@ describe("FilesView - locking", () => {
     fireEvent.click(toolbarLock());
     await screen.findByText("backend exploded");
     expect(props.onShowBackupReminder).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledWith("Crypto Command Error (lock_file):", "backend exploded");
   });
 
   it("asks for a selection, and does not ask for entropy first when Paranoid Mode is on", async () => {
@@ -548,6 +555,7 @@ describe("FilesView - unlocking", () => {
   });
 
   it("shows the error when the whole command fails", async () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
     handlers.unlock_file = () => {
       throw "cannot open";
     };
@@ -556,6 +564,7 @@ describe("FilesView - unlocking", () => {
     await select("vault.qre");
     fireEvent.click(toolbarUnlock());
     await screen.findByText("cannot open");
+    expect(errorLog).toHaveBeenCalledWith("Crypto Command Error (unlock_file):", "cannot open");
   });
 });
 
@@ -651,7 +660,7 @@ describe("FilesView - files on an unlocked USB drive", () => {
     await screen.findByText("Extract Files");
     expect(calls("unlock_file")).toHaveLength(0);
 
-    fireEvent.click(screen.getByText("Downloads"));
+    fireEvent.click(within(extractDialog()).getByText("Downloads"));
     await waitFor(() => expect(calls("unlock_file")).toHaveLength(1));
     expect(calls("unlock_file")[0]).toMatchObject({
       filePaths: ["e:\\usb\\sealed.qre"],
@@ -669,7 +678,7 @@ describe("FilesView - files on an unlocked USB drive", () => {
     await select("sealed.qre");
     fireEvent.click(toolbarUnlock());
     await screen.findByText("Extract Files");
-    fireEvent.click(screen.getByText(label));
+    fireEvent.click(within(extractDialog()).getByText(label));
     await waitFor(() => expect(calls("unlock_file")[0].outputDir).toBe(dir));
   });
 
@@ -690,7 +699,7 @@ describe("FilesView - files on an unlocked USB drive", () => {
     await select("sealed.qre");
     fireEvent.click(toolbarUnlock());
     await screen.findByText("Extract Files");
-    fireEvent.click(document.querySelector("svg.lucide-x")!);
+    fireEvent.click(extractDialog().querySelector("svg.lucide-x")!);
     expect(screen.queryByText("Extract Files")).not.toBeInTheDocument();
     expect(calls("unlock_file")).toHaveLength(0);
   });
@@ -702,7 +711,7 @@ describe("FilesView - files on an unlocked USB drive", () => {
     await select("sealed.qre");
     fireEvent.click(toolbarUnlock());
     await screen.findByText("Extract Files");
-    fireEvent.click(screen.getByText("Desktop"));
+    fireEvent.click(within(extractDialog()).getByText("Desktop"));
     const msg = await screen.findByText(/Unlock failed/);
     expect(msg).toHaveTextContent("sealed.qre: Wrong password");
   });
@@ -966,7 +975,13 @@ describe("FilesView - cut, copy and paste", () => {
     await loaded();
     fireEvent.contextMenu(statusBar());
     expect(screen.queryByText("Paste Here")).not.toBeInTheDocument();
-    fireEvent.click(menuItem("Refresh"));
+    const listings = calls("list_directory").length;
+    // Refresh reloads the folder and then the time-lock state; let both finish before going on.
+    await act(async () => {
+      fireEvent.click(menuItem("Refresh"));
+    });
+    await waitFor(() => expect(calls("list_directory").length).toBe(listings + 1));
+    await loaded();
     await runMenu("secret.txt", "Copy");
     fireEvent.contextMenu(statusBar());
     expect(menuItem("Paste Here")).toBeInTheDocument();
@@ -1192,6 +1207,7 @@ describe("FilesView - keyboard shortcuts", () => {
   it("does not go up a folder while an error dialog is showing", async () => {
     // Backspace is the "go up" key; pressing it to dismiss or correct something must not
     // silently navigate away behind the dialog.
+    jest.spyOn(console, "error").mockImplementation(() => {});
     handlers.lock_file = () => {
       throw "backend exploded";
     };
@@ -1403,5 +1419,153 @@ describe("FilesView - corrupted file-browser scope", () => {
     setup();
     fireEvent.click(await screen.findByText("Dismiss for now"));
     expect(screen.getByText(/Force-close the app/)).toBeInTheDocument();
+  });
+});
+
+// ─── Places, selection bar and details ───────────────────────────────────────
+
+describe("FilesView - places", () => {
+  const rail = () => screen.queryByRole("navigation", { name: "Places" });
+
+  it("lists the usual folders beside the files", async () => {
+    setup();
+    await loaded();
+    const places = await screen.findByRole("navigation", { name: "Places" });
+    expect(within(places).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Home",
+      "Desktop",
+      "Documents",
+      "Downloads",
+    ]);
+  });
+
+  it("opens a place when it is pressed", async () => {
+    setup();
+    await loaded();
+    const places = await screen.findByRole("navigation", { name: "Places" });
+    fireEvent.click(within(places).getByRole("button", { name: "Documents" }));
+    await waitFor(() => expect(listedPaths()).toContain("/documents"));
+  });
+
+  it("marks Home while the home folder is open", async () => {
+    setup();
+    await loaded();
+    const places = await screen.findByRole("navigation", { name: "Places" });
+    expect(within(places).getByRole("button", { name: "Home" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("has no list of places on a phone", async () => {
+    mockPlatform.mockReturnValue("android");
+    listings[ANDROID_HOME] = listings[HOME];
+    setup();
+    await loaded();
+    expect(rail()).not.toBeInTheDocument();
+  });
+});
+
+describe("FilesView - selection bar", () => {
+  const bar = () => screen.queryByRole("region", { name: "Selection" });
+
+  it("is not shown while nothing is selected", async () => {
+    setup();
+    await loaded();
+    expect(bar()).not.toBeInTheDocument();
+  });
+
+  it("names a single selected item", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    expect(bar()).toHaveTextContent("Selected: secret.txt");
+  });
+
+  it("counts several selected items and adds up their size", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt", "vault.qre");
+    expect(bar()).toHaveTextContent("2 items selected, ");
+  });
+
+  it("asks before deleting the selection", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Delete" }));
+    expect(screen.getByText("Delete Item")).toBeInTheDocument();
+  });
+
+  it("clears the selection and goes away", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    fireEvent.click(within(bar()!).getByRole("button", { name: "Clear selection" }));
+    expect(statusBar()).toHaveTextContent("No selection");
+    expect(bar()).not.toBeInTheDocument();
+  });
+});
+
+describe("FilesView - details panel", () => {
+  const panel = () => screen.queryByRole("complementary", { name: "Details" });
+  const toggle = () =>
+    fireEvent.click(within(screen.getByRole("region", { name: "Selection" })).getByRole("button", { name: "Details" }));
+
+  it("is closed until asked for", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    expect(panel()).not.toBeInTheDocument();
+  });
+
+  it("describes the selected file when opened", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    toggle();
+    expect(within(panel()!).getByText("secret.txt")).toBeInTheDocument();
+    expect(within(panel()!).getByText("Type")).toBeInTheDocument();
+    expect(within(panel()!).getByText(HOME)).toBeInTheDocument();
+  });
+
+  it("follows the selection", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    toggle();
+    fireEvent.click(screen.getByText("vault.qre"));
+    expect(within(panel()!).getByText("QRE encrypted file")).toBeInTheDocument();
+  });
+
+  it("closes with its own button and with the Details button again", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    toggle();
+    fireEvent.click(within(panel()!).getByRole("button", { name: "Close details" }));
+    expect(panel()).not.toBeInTheDocument();
+    toggle();
+    expect(panel()).toBeInTheDocument();
+    toggle();
+    expect(panel()).not.toBeInTheDocument();
+  });
+
+  it("stays open, asking for a selection, when the selection is cleared", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    toggle();
+    pressKey("Escape");
+    expect(within(panel()!).getByText("Select a file or folder to see its details.")).toBeInTheDocument();
+  });
+});
+
+describe("FilesView - drop hint", () => {
+  it("tells what a drop does, as a status message", async () => {
+    setup();
+    await loaded();
+    await waitFor(() => expect(windowEvents["tauri://drag-enter"]).toBeDefined());
+    act(() => windowEvents["tauri://drag-enter"]({}));
+    const hint = screen.getByRole("status");
+    expect(hint).toHaveTextContent("Drop to Lock");
+    expect(hint).toHaveTextContent("Dropped files are encrypted with your current settings.");
   });
 });

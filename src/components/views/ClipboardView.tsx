@@ -1,3 +1,8 @@
+import { LoadError } from "../common/LoadError";
+import { Banner } from "../ui/Banner";
+import { Dialog } from "../ui/Sheet";
+import { Button } from "../ui/Button";
+import { EmptyState } from "../ui/EmptyState";
 import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -8,7 +13,6 @@ import {
   CreditCard,
   Key,
   Bitcoin,
-  X,
   Clock,
   Search,
   ExternalLink,
@@ -18,7 +22,6 @@ import {
   Mail,
   Landmark,
   ChevronDown,
-  AlertTriangle,
   Pin,
   PinOff, // <--- Icons
 } from "lucide-react";
@@ -39,6 +42,7 @@ export function ClipboardView() {
     togglePin, // <--- Added togglePin
     retentionHours,
     updateRetention,
+    refreshVault,
   } = useClipboard();
 
   const toast = useToast();
@@ -178,13 +182,11 @@ export function ClipboardView() {
 
   if (error && !actionError)
     return (
-      <div
-        style={{ padding: 40, color: "var(--btn-danger)", textAlign: "center" }}
-      >
-        <AlertTriangle size={48} style={{ marginBottom: 10 }} />
-        <p>Failed to load clipboard vault:</p>
-        <p style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>{error}</p>
-      </div>
+      <LoadError
+        title="Could not open the clipboard history"
+        detail={error}
+        onRetry={refreshVault}
+      />
     );
 
   return (
@@ -412,33 +414,17 @@ export function ClipboardView() {
       </div>
 
       {actionError && (
-        <div
-          style={{
-            marginBottom: 15,
-            color: "var(--btn-danger)",
-            fontSize: "0.85rem",
-            background: "rgba(239,68,68,0.1)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 6,
-            padding: "8px 12px",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <AlertTriangle size={16} />
-          {actionError}
+        <div style={{ marginBottom: 15 }}>
+          <Banner tone="error">{actionError}</Banner>
         </div>
       )}
 
       {entries.length === 0 && !loading && (
-        <div style={{ textAlign: "center", marginTop: 50, opacity: 0.5 }}>
-          <Clipboard size={64} />
-          <p>Clipboard history is empty.</p>
-          <p style={{ fontSize: "0.8rem" }}>
-            Copy something sensitive, then click "Secure Paste".
-          </p>
-        </div>
+        <EmptyState
+          icon={<Clipboard size={48} />}
+          title="Clipboard history is empty."
+          description={'Copy something sensitive, then click "Secure Paste".'}
+        />
       )}
 
       {/* LIST */}
@@ -523,47 +509,23 @@ export function ClipboardView() {
       </div>
 
 
-      {showClearConfirm && (
-        <div
-          className="modal-overlay"
-          style={{ zIndex: 100005 }}
-          onClick={() => setShowClearConfirm(false)}
-        >
-          <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <Trash2 size={20} color="var(--btn-danger)" />
-              <h2 style={{ color: "var(--btn-danger)" }}>Clear History?</h2>
-              <div style={{ flex: 1 }}></div>
-              <X
-                size={20}
-                style={{ cursor: "pointer" }}
-                onClick={() => setShowClearConfirm(false)}
-              />
-            </div>
-            <div className="modal-body" style={{ textAlign: "center" }}>
-              <p style={{ fontSize: "1.1rem", color: "var(--text-main)" }}>
-                Delete all <strong>{entries.length}</strong> clipboard entries?
-              </p>
-              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                <button
-                  className="secondary-btn"
-                  style={{ flex: 1 }}
-                  onClick={() => setShowClearConfirm(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="auth-btn danger-btn"
-                  style={{ flex: 1 }}
-                  onClick={handleClearAll}
-                >
-                  Yes, Clear All
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={showClearConfirm}
+        tone="danger"
+        icon={<Trash2 size={18} />}
+        title="Clear History?"
+        onClose={() => setShowClearConfirm(false)}
+        actions={
+          <>
+            <Button onClick={() => setShowClearConfirm(false)}>Cancel</Button>
+            <Button variant="danger" onClick={handleClearAll}>
+              Yes, Clear All
+            </Button>
+          </>
+        }
+      >
+        Delete all <strong>{entries.length}</strong> clipboard entries?
+      </Dialog>
     </div>
   );
 }

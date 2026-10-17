@@ -19,6 +19,9 @@ import { usePortableVault } from "./hooks/usePortableVault";
 
 // Components (Layout & Views)
 import { Sidebar } from "./components/layout/Sidebar";
+import { BottomBar } from "./components/layout/BottomBar";
+import { ToolsView } from "./components/views/ToolsView";
+import { useIsPhone } from "./hooks/useIsPhone";
 import { HomeView } from "./components/views/HomeView";
 import { FilesView } from "./components/views/FilesView";
 import { ShredderView } from "./components/views/ShredderView";
@@ -80,6 +83,8 @@ function App() {
   // Tools opened since the app was unlocked, newest first. Kept in memory only, so it is
   // gone when the app locks or closes. It holds tool names, never anything from inside them.
   const [recentTools, setRecentTools] = useState<string[]>([]);
+  // On a phone the sidebar gives way to a bottom bar of five places.
+  const isPhone = useIsPhone();
 
   function openTab(id: string) {
     setActiveTab(id);
@@ -304,18 +309,22 @@ function App() {
   // --- MAIN APP LAYOUT ---
   return (
     <div className="app-container">
-      <Sidebar
-        activeTab={activeTab}
-        setTab={openTab}
-        onOpenHelpModal={() => setShowHelpModal(true)}
-        onOpenAboutModal={() => setShowAbout(true)}
-        onLogout={auth.logout}
-        onTheme={() => setShowThemeModal(true)}
-        onBackup={() => setShowBackupModal(true)}
-        onChangePassword={() => setShowChangePass(true)}
-        onReset2FA={() => setShowResetConfirm(true)}
-        onUpdate={() => setShowUpdateModal(true)}
-      />
+      {isPhone ? (
+        <BottomBar activeTab={activeTab} setTab={openTab} />
+      ) : (
+        <Sidebar
+          activeTab={activeTab}
+          setTab={openTab}
+          onOpenHelpModal={() => setShowHelpModal(true)}
+          onOpenAboutModal={() => setShowAbout(true)}
+          onLogout={auth.logout}
+          onTheme={() => setShowThemeModal(true)}
+          onBackup={() => setShowBackupModal(true)}
+          onChangePassword={() => setShowChangePass(true)}
+          onReset2FA={() => setShowResetConfirm(true)}
+          onUpdate={() => setShowUpdateModal(true)}
+        />
+      )}
 
       <div className="main-column">
       <StatusStrip
@@ -364,6 +373,7 @@ function App() {
         {activeTab === "hash" && <HashView />}
         {activeTab === "sysclean" && <SystemCleanerView />}
         {activeTab === "analyzer" && <FileAnalyzerView />}
+        {activeTab === "tools" && <ToolsView setTab={openTab} />}
         {activeTab === "help" && (
           <HelpView
             onOpenHelpModal={() => setShowHelpModal(true)}
@@ -378,6 +388,8 @@ function App() {
             onReset2FA={() => setShowResetConfirm(true)}
             onUpdate={() => setShowUpdateModal(true)}
             onLogout={auth.logout}
+            onHelp={() => setShowHelpModal(true)}
+            onAbout={() => setShowAbout(true)}
           />
         )}
       </div>

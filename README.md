@@ -27,7 +27,7 @@ QRE Privacy Toolkit is a secure, cross-platform application designed to handle y
 
 ---
 
-## 🛠️ The 12-Tool Suite (v2.8.6)
+## 🛠️ The 12-Tool Suite (v2.9.0)
 
 QRE Privacy Toolkit combines 12 essential privacy tools into one mathematically secure, memory-safe application:
 
@@ -117,7 +117,7 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 
 ---
 
-## New in v2.8.6
+## New in v2.9.0
 
 - **New:** The Home screen was rebuilt as one screen. All twelve tools are in view at once with no scrolling, even in a small laptop window. The tools are grouped as Protect, Inspect, Clean up and Create, each with its own color. Every tile is the same size, the block is centered in the window, and the tiles grow with the window height, so a large or full-screen window is filled instead of leaving empty space. A Protection panel shows whether your keychain is backed up, with a Back up now button. A short list shows the tools you opened since you unlocked the app. That list is kept in memory only and is cleared when the app locks.
 - **New:** A jump bar opens with Ctrl+K (Cmd+K on a Mac) anywhere, or with the button on the Home screen. Type a few letters and press Enter to open a tool or run an action such as Lock now, Back up keychain or Change theme. It searches names only. It never looks inside your passwords or notes.
@@ -132,8 +132,20 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 - **New:** Privacy Check counts the exposed secrets by category. Each finding has a Locate button that opens its folder. The start screen no longer shows behind the Scan Cancelled message.
 - **New:** System Cleaner tells you how much space the selected items will free, right next to the Clean button. Its notices about warnings, administrator rights, developer caches and privacy items use the shared message box.
 - **Changed:** The QR Generator tabs share the width of the card equally, and the PNG and SVG buttons show their save keys.
+- **Changed:** Adding or editing a password or a bookmark now opens in a panel that slides in from the right, so the list stays visible behind it. Cancel and Save sit together at the bottom of the panel, and Escape or a click outside closes it. Errors such as a missing title or a failed save show inside the panel.
+- **Changed:** The bookmark editor warns you in a message box if the URL is already stored. The question before clearing the clipboard history is now a red dialog that Escape also closes.
+- **Changed:** Passwords, Notes, Bookmarks and Clipboard share one empty screen with a short hint on what to do first. A failed text import in Notes now shows the themed error dialog instead of a plain system alert.
+- **New:** The Files screen has a Places list on the left with Home, Desktop, Documents and Downloads. The folder you are in is marked. The list is hidden in narrow windows and on phones.
+- **New:** When you select files, a bar under the list names the selection and offers Details, Delete and Clear selection. Details opens a panel with the type, size, date and location of the item. For several items it shows the totals.
+- **Changed:** Every part of the path in the address bar is now a button that works from the keyboard, and Ctrl+L (Cmd+L on a Mac) lets you type a path. The drop hint now says that dropped files are encrypted with your current settings.
+- **New:** On a phone the sidebar is replaced by a bottom bar with five places: Home, Files, Passwords, Tools and More. Tools lists every other tool in its group. More opens Settings, which now has Help Topics and About as well. Switching the window width between phone and computer sizes switches the layout.
+- **Changed:** On a phone, the side panels for editing a password or a bookmark rise from the bottom edge as sheets. Pull a sheet down by its top edge to close it. The Details panel in Files also becomes a sheet above the bottom bar. Messages that pop up at the bottom now appear above the bar instead of behind it.
+- **Changed:** Settings is grouped into Appearance, Security and App. Each row has a short line that says what it does.
+- **Changed:** On touch screens the chips, tabs, close buttons, color dots and the Files rows are at least 44 pixels in size, so they are easy to hit with a finger.
+- **Changed:** The sign-in screens keep clear of notches and gesture bars, and scroll when the keyboard takes space. Forgot Password and Restore from Backup are now real buttons with a large touch area. The old grey texts have a readable color. The sign-in and setup screens say that everything stays on the device.
+- **Changed:** If the bookmarks vault or the clipboard history cannot be opened, the screen now says what failed, shows the reason, and offers a Try again button. Before, it was a dead end.
 - **Fixed:** The Home screen was not centered in a full-screen window.
-- **Testing:** The project now has 507 Rust tests and over 1,900 frontend tests, and every screen and dialog is covered. Each push to GitHub runs a fast subset on Windows, Linux and macOS, and a full run happens weekly.
+- **Testing:** The project now has 507 Rust tests and over 2,100 frontend tests, and every screen and dialog is covered. Each push to GitHub runs a fast subset on Windows, Linux and macOS, and a full run happens weekly.
 
 ## New in v2.8.5
 

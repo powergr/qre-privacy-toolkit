@@ -392,3 +392,51 @@ describe("AuthOverlay - switching screens", () => {
     expect(screen.getByPlaceholderText("New Master Password")).toHaveAttribute("type", "password");
   });
 });
+
+describe("AuthOverlay - links and reassurance", () => {
+  it("offers Forgot Password as a real button, which a keyboard can reach", () => {
+    const { props } = renderOverlay();
+    const link = screen.getByRole("button", { name: "Forgot Password?" });
+    expect(link).toHaveAttribute("type", "button");
+    expect(link).toHaveClass("auth-link");
+    fireEvent.click(link);
+    expect(props.onSwitchToRecovery).toHaveBeenCalledTimes(1);
+    expect(props.onLogin).not.toHaveBeenCalled();
+  });
+
+  it("offers Restore from Backup as a real button on the setup screen", () => {
+    const { props } = renderOverlay({ view: "setup" });
+    const link = screen.getByRole("button", { name: "Restore from Backup instead" });
+    expect(link).toHaveAttribute("type", "button");
+    fireEvent.click(link);
+    expect(props.onRestoreBackup).toHaveBeenCalledTimes(1);
+    expect(props.onInit).not.toHaveBeenCalled();
+  });
+
+  it("says on the sign-in and setup screens that everything stays on the device", () => {
+    const { unmount } = renderOverlay({ view: "login" });
+    expect(screen.getByText("Everything stays on this device.")).toBeInTheDocument();
+    unmount();
+    renderOverlay({ view: "setup" });
+    expect(screen.getByText("Everything stays on this device.")).toBeInTheDocument();
+  });
+
+  it.each(["recovery_entry", "recovery_display", "loading"] as const)("does not say it on the %s screen", (view) => {
+    renderOverlay({ view });
+    expect(screen.queryByText("Everything stays on this device.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the recovery warning and explanation in the shared text styles, not fixed grey", () => {
+    renderOverlay({ view: "recovery_display" });
+    expect(screen.getByText("SAVE THIS CODE SECURELY")).toHaveClass("auth-warning");
+    expect(screen.getByText(/ONLY way to recover/)).toHaveClass("auth-explain");
+  });
+
+  it("styles the clipboard notice with the readable note colour", async () => {
+    jest.clearAllMocks();
+    mockWriteText.mockResolvedValue(undefined);
+    renderRecoveryDisplay();
+    fireEvent.click(screen.getByRole("button", { name: /Copy to Clipboard/ }));
+    expect(await screen.findByText("Clipboard will clear in 30s")).toHaveClass("auth-note");
+  });
+});

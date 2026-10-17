@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ArrowUp, Home, ChevronRight, X } from "lucide-react";
 import { platform } from "@tauri-apps/plugin-os";
+import { useShortcut } from "../../hooks/useShortcut";
 
 interface AddressBarProps {
   currentPath: string;
@@ -33,6 +34,9 @@ export function AddressBar({
   useEffect(() => {
     setTempPath(currentPath);
   }, [currentPath]);
+
+  // Ctrl+L (Cmd+L) edits the path, as in a browser or file manager.
+  useShortcut("l", () => setIsEditing(true));
 
   // Focus input when editing starts
   useEffect(() => {
@@ -126,8 +130,11 @@ export function AddressBar({
             }}
           >
             {/* Root / Drives Button */}
-            <div
+            <button
+              type="button"
               className={`crumb ${segments.length === 0 ? "active" : ""}`}
+              aria-label="This computer"
+              aria-current={segments.length === 0 ? "page" : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 onGoHome();
@@ -135,7 +142,7 @@ export function AddressBar({
               style={{ display: "flex", alignItems: "center", paddingRight: 4 }}
             >
               <Home size={16} />
-            </div>
+            </button>
 
             {segments.map((seg, i) => {
               let path = segments.slice(0, i + 1).join(separator);
@@ -149,8 +156,10 @@ export function AddressBar({
                     className="crumb-separator"
                     style={{ opacity: 0.5 }}
                   />
-                  <div
+                  <button
+                    type="button"
                     className="crumb"
+                    aria-current={i === segments.length - 1 ? "page" : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       onNavigate(path);
@@ -162,7 +171,7 @@ export function AddressBar({
                     }}
                   >
                     {seg}
-                  </div>
+                  </button>
                 </div>
               );
             })}

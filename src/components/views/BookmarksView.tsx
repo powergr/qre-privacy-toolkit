@@ -1,3 +1,8 @@
+import { LoadError } from "../common/LoadError";
+import { EmptyState } from "../ui/EmptyState";
+import { Banner } from "../ui/Banner";
+import { Button } from "../ui/Button";
+import { Drawer } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -75,7 +80,6 @@ export function BookmarksView() {
   };
   useEscapeKey(() => setShowImportModal(false), showImportModal);
   useEscapeKey(() => setDownloadWarnUrl(null), downloadWarnUrl !== null);
-  useEscapeKey(closeEditor, editing !== null);
 
   const openNewBookmark = () => {
     setSaveError(null);
@@ -264,17 +268,11 @@ export function BookmarksView() {
 
   if (error && !editing) {
     return (
-      <div
-        style={{
-          padding: 40,
-          color: "var(--btn-danger)",
-          textAlign: "center",
-        }}
-      >
-        <AlertTriangle size={48} style={{ marginBottom: 10 }} />
-        <p>Failed to load bookmarks vault:</p>
-        <p style={{ fontFamily: "monospace", fontSize: "0.9rem" }}>{error}</p>
-      </div>
+      <LoadError
+        title="Could not open the bookmarks vault"
+        detail={error}
+        onRetry={refreshVault}
+      />
     );
   }
 
@@ -406,32 +404,15 @@ export function BookmarksView() {
 
       {/* --- EMPTY STATE --- */}
       {entries.length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            marginTop: 80,
-            color: "var(--text-dim)",
-            opacity: 0.7,
-          }}
-        >
-          <div
-            style={{
-              background: "var(--panel-bg)",
-              padding: 30,
-              borderRadius: "50%",
-              display: "inline-block",
-              marginBottom: 20,
-            }}
-          >
-            <Bookmark size={48} style={{ opacity: 0.5 }} />
-          </div>
-          <p>No bookmarks yet.</p>
-          {!isAndroid && (
-            <p style={{ fontSize: "0.8rem" }}>
-              Click the Import button to load from Chrome/Edge.
-            </p>
-          )}
-        </div>
+        <EmptyState
+          icon={<Bookmark size={48} />}
+          title="No bookmarks yet."
+          description={
+            isAndroid
+              ? "Click Add New to save your first bookmark."
+              : "Click the Import button to load from Chrome/Edge."
+          }
+        />
       ) : filteredEntries.length === 0 ? (
         <div
           style={{
@@ -698,28 +679,22 @@ export function BookmarksView() {
         </div>
       )}
 
-      {/* --- EDIT MODAL --- */}
+      {/* --- EDIT DRAWER --- */}
       {editing && (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setSaveError(null);
-            setEditing(null);
-          }}
+        <Drawer
+          title={editing.id ? "Edit Bookmark" : "Add Bookmark"}
+          onClose={closeEditor}
+          footer={
+            <>
+              <Button onClick={closeEditor}>Cancel</Button>
+              <Button variant="primary" onClick={saveEditor}>
+                Save
+              </Button>
+            </>
+          }
         >
-          <div className="auth-card" onClick={(e) => e.stopPropagation()}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginBottom: 20,
-                marginTop: 15,
-                position: "relative",
-              }}
-            >
-              <h3 style={{ margin: 0 }}>
-                {editing.id ? "Edit Bookmark" : "Add Bookmark"}
-              </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 className="icon-btn-ghost"
                 title={editing.is_pinned ? "Unpin" : "Pin"}
@@ -731,8 +706,6 @@ export function BookmarksView() {
                 }
                 style={{
                   color: editing.is_pinned ? "#ffd700" : "var(--text-dim)",
-                  position: "absolute",
-                  right: 0,
                 }}
               >
                 <Pin
@@ -742,127 +715,79 @@ export function BookmarksView() {
               </button>
             </div>
 
-            <div
-              className="modal-body"
-              style={{ display: "flex", flexDirection: "column", gap: 15 }}
-            >
-              <div style={{ position: "relative" }}>
-                <input
-                  className="auth-input"
-                  placeholder="Title (e.g. My Bank)"
-                  value={editing.title ?? ""}
-                  onChange={(e) =>
-                    setEditing({ ...editing, title: e.target.value })
-                  }
-                  autoFocus
-                />
-              </div>
-
-              <div
-                style={{
-                  position: "relative",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <Globe
-                  size={16}
-                  style={{
-                    position: "absolute",
-                    left: 12,
-                    color: "var(--text-dim)",
-                  }}
-                />
-                <input
-                  className="auth-input"
-                  style={{ paddingLeft: 40 }}
-                  placeholder="URL (https://...)"
-                  value={editing.url ?? ""}
-                  onChange={(e) =>
-                    setEditing({ ...editing, url: e.target.value })
-                  }
-                />
-              </div>
-              {editing.url && isDuplicate(editing.url) && (
-                <div
-                  style={{
-                    fontSize: "0.75rem",
-                    color: "#f59e0b",
-                    marginTop: -10,
-                    display: "flex",
-                    gap: 5,
-                    alignItems: "center",
-                  }}
-                >
-                  <AlertTriangle size={12} /> Warning: This URL already exists
-                  in your vault.
-                </div>
-              )}
-
+            <div style={{ position: "relative" }}>
               <input
                 className="auth-input"
-                placeholder="Category (e.g. Finance)"
-                value={editing.category ?? ""}
+                placeholder="Title (e.g. My Bank)"
+                value={editing.title ?? ""}
                 onChange={(e) =>
-                  setEditing({ ...editing, category: e.target.value })
+                  setEditing({ ...editing, title: e.target.value })
+                }
+                autoFocus
+              />
+            </div>
+
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Globe
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  color: "var(--text-dim)",
+                }}
+              />
+              <input
+                className="auth-input"
+                style={{ paddingLeft: 40 }}
+                placeholder="URL (https://...)"
+                value={editing.url ?? ""}
+                onChange={(e) =>
+                  setEditing({ ...editing, url: e.target.value })
                 }
               />
+            </div>
+            {editing.url && isDuplicate(editing.url) && (
+              <Banner tone="warning">
+                Warning: This URL already exists in your vault.
+              </Banner>
+            )}
 
-              <div>
-                <label
-                  style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}
-                >
-                  Color Label
-                </label>
-                <div className="color-picker">
-                  {BRAND_COLORS.map((c) => (
-                    <div
-                      key={c}
-                      className={`color-dot ${editing.color === c ? "selected" : ""}`}
-                      style={{ backgroundColor: c }}
-                      onClick={() => setEditing({ ...editing, color: c })}
-                    />
-                  ))}
-                </div>
-              </div>
+            <input
+              className="auth-input"
+              placeholder="Category (e.g. Finance)"
+              value={editing.category ?? ""}
+              onChange={(e) =>
+                setEditing({ ...editing, category: e.target.value })
+              }
+            />
 
-              {saveError && (
-                <div
-                  style={{
-                    color: "var(--btn-danger)",
-                    fontSize: "0.85rem",
-                    background: "rgba(239,68,68,0.1)",
-                    border: "1px solid rgba(239,68,68,0.3)",
-                    borderRadius: 6,
-                    padding: "8px 12px",
-                  }}
-                >
-                  {saveError}
-                </div>
-              )}
-
-              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-                <button
-                  className="auth-btn"
-                  style={{ flex: 1 }}
-                  onClick={saveEditor}
-                >
-                  Save
-                </button>
-                <button
-                  className="secondary-btn"
-                  style={{ flex: 1 }}
-                  onClick={() => {
-                    setSaveError(null);
-                    setEditing(null);
-                  }}
-                >
-                  Cancel
-                </button>
+            <div>
+              <label
+                style={{ fontSize: "0.85rem", color: "var(--text-dim)" }}
+              >
+                Color Label
+              </label>
+              <div className="color-picker">
+                {BRAND_COLORS.map((c) => (
+                  <div
+                    key={c}
+                    className={`color-dot ${editing.color === c ? "selected" : ""}`}
+                    style={{ backgroundColor: c }}
+                    onClick={() => setEditing({ ...editing, color: c })}
+                  />
+                ))}
               </div>
             </div>
+
+            {saveError && <Banner tone="error">{saveError}</Banner>}
           </div>
-        </div>
+        </Drawer>
       )}
 
       {itemToDelete && (

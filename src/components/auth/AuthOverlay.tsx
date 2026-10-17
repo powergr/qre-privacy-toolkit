@@ -3,6 +3,7 @@ import { Shield, Copy, Check } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ViewState } from "../../types";
 import { PasswordInput } from "../common/PasswordInput";
+import "./AuthOverlay.css";
 
 interface AuthOverlayProps {
   view: ViewState;
@@ -90,9 +91,7 @@ export function AuthOverlay(props: AuthOverlayProps) {
           ) : view === "recovery_display" ? (
             /* --- RECOVERY CODE DISPLAY --- */
             <>
-              <p style={{ color: "var(--warning)", textAlign: "center" }}>
-                SAVE THIS CODE SECURELY
-              </p>
+              <p className="auth-warning">SAVE THIS CODE SECURELY</p>
 
               <div className="recovery-box">
                 <div className="recovery-code">{recoveryCode}</div>
@@ -110,25 +109,11 @@ export function AuthOverlay(props: AuthOverlayProps) {
                   {copied ? "Copied!" : "Copy to Clipboard"}
                 </button>
                 {copied && (
-                  <span
-                    style={{
-                      fontSize: "0.7rem",
-                      color: "#666",
-                      textAlign: "center",
-                    }}
-                  >
-                    Clipboard will clear in 30s
-                  </span>
+                  <span className="auth-note">Clipboard will clear in 30s</span>
                 )}
               </div>
 
-              <p
-                style={{
-                  color: "#ccc",
-                  fontSize: "0.9rem",
-                  textAlign: "center",
-                }}
-              >
+              <p className="auth-explain">
                 It is the ONLY way to recover your data if you forget your
                 password.
               </p>
@@ -142,6 +127,10 @@ export function AuthOverlay(props: AuthOverlayProps) {
               onSubmit={handleSubmit}
               style={{ display: "flex", flexDirection: "column", gap: "15px" }}
             >
+              {(view === "login" || view === "setup") && (
+                <p className="auth-tagline">Everything stays on this device.</p>
+              )}
+
               {view === "recovery_entry" && (
                 <input
                   className="auth-input"
@@ -182,34 +171,14 @@ export function AuthOverlay(props: AuthOverlayProps) {
               </button>
 
               {view === "login" && (
-                <div style={{ textAlign: "center", marginTop: -5 }}>
-                  <span
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "#888",
-                      cursor: "pointer",
-                      textDecoration: "underline",
-                    }}
-                    onClick={props.onSwitchToRecovery}
-                  >
-                    Forgot Password?
-                  </span>
-                </div>
+                <button type="button" className="auth-link" onClick={props.onSwitchToRecovery}>
+                  Forgot Password?
+                </button>
               )}
               {view === "setup" && (
-                <div style={{ textAlign: "center", marginTop: -5 }}>
-                  <span
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "#888",
-                      cursor: "pointer",
-                      textDecoration: "underline",
-                    }}
-                    onClick={props.onRestoreBackup}
-                  >
-                    Restore from Backup instead
-                  </span>
-                </div>
+                <button type="button" className="auth-link" onClick={props.onRestoreBackup}>
+                  Restore from Backup instead
+                </button>
               )}
               {view === "recovery_entry" && (
                 <button

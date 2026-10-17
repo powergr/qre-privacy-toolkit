@@ -93,7 +93,7 @@ const openNew = () => fireEvent.click(screen.getByRole("button", { name: "Add Ne
 const grid = () => fireEvent.click(screen.getByTitle("Grid View"));
 const card = (service: string) => screen.getByText(service).closest(".modern-card") as HTMLElement;
 const listRow = (service: string) => screen.getByText(service).closest(".vault-list-row") as HTMLElement;
-const editorCard = () => document.querySelector(".modal-overlay .auth-card") as HTMLElement;
+const editorCard = () => document.querySelector(".ui-drawer") as HTMLElement;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -303,7 +303,7 @@ describe("VaultView - editor", () => {
   it("closes without saving when the dark area is clicked", async () => {
     await renderVault([makeEntry("a", "GitHub")]);
     fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(document.querySelector(".modal-overlay") as HTMLElement);
+    fireEvent.mouseDown(document.querySelector(".modal-overlay") as HTMLElement);
     expect(screen.queryByText("Edit Entry")).not.toBeInTheDocument();
     expect(savedVaults()).toHaveLength(0);
   });
@@ -311,7 +311,7 @@ describe("VaultView - editor", () => {
   it("does not close when the click is inside the editor", async () => {
     await renderVault([makeEntry("a", "GitHub")]);
     fireEvent.click(screen.getByText("GitHub"));
-    fireEvent.click(editorCard());
+    fireEvent.mouseDown(editorCard());
     expect(screen.getByText("Edit Entry")).toBeInTheDocument();
   });
 
@@ -320,7 +320,7 @@ describe("VaultView - editor", () => {
     openNew();
     clickSave();
     await screen.findByText("Service name is required.");
-    fireEvent.click(document.querySelector(".modal-overlay") as HTMLElement);
+    fireEvent.mouseDown(document.querySelector(".modal-overlay") as HTMLElement);
     expect(screen.queryByText("Service name is required.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "OK" })).not.toBeInTheDocument();
   });
@@ -1068,5 +1068,77 @@ describe("VaultView - keyboard shortcuts", () => {
     expect(screen.getByText("Delete Item")).toBeInTheDocument();
     ctrl("n");
     expect(screen.queryByPlaceholderText(SERVICE)).not.toBeInTheDocument();
+  });
+});
+
+// ─── Shared parts ────────────────────────────────────────────────────────────
+
+describe("VaultView - editor drawer", () => {
+  it("opens a new entry in a side drawer", async () => {
+    await renderVault([]);
+    openNew();
+    expect(screen.getByRole("dialog", { name: "New Entry" })).toBe(editorCard());
+  });
+
+  it("opens an existing entry in the same drawer, called Edit Entry", async () => {
+    await renderVault([makeEntry("a", "GitHub")]);
+    fireEvent.click(screen.getByText("GitHub"));
+    expect(screen.getByRole("dialog", { name: "Edit Entry" })).toBe(editorCard());
+  });
+
+  it("keeps Cancel and Save together below the form, Save last", async () => {
+    await renderVault([]);
+    openNew();
+    const foot = editorCard().querySelector(".ui-sheet__foot") as HTMLElement;
+    expect(Array.from(foot.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Cancel", "Save"]);
+  });
+
+  it("closes with Cancel and keeps nothing", async () => {
+    await renderVault([]);
+    openNew();
+    fill(SERVICE, "Typed");
+    fireEvent.click(within(editorCard()).getByRole("button", { name: "Cancel" }));
+    expect(editorCard()).toBeNull();
+    expect(savedVaults()).toHaveLength(0);
+  });
+
+  it("shows a validation message in an error banner inside the drawer", async () => {
+    await renderVault([]);
+    openNew();
+    clickSave();
+    const message = await screen.findByText("Service name is required.");
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(editorCard()).toContainElement(message);
+  });
+
+  it("shows a failed save in an error banner and keeps what was typed", async () => {
+    saveFailure = "disk full";
+    await renderVault([]);
+    openNew();
+    fill(SERVICE, "Mail");
+    fill("Password", "Sup3r-secret-Pass!");
+    clickSave();
+    const message = await screen.findByText(/Error saving: .*disk full/);
+    expect(message.closest(".ui-banner")).toHaveClass("ui-banner--error");
+    expect(field(SERVICE).value).toBe("Mail");
+  });
+
+  it("does not leave the Save button usable while a save is running", async () => {
+    let release!: () => void;
+    saveGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await renderVault([]);
+    openNew();
+    fill(SERVICE, "Mail");
+    fill("Password", "Sup3r-secret-Pass!");
+    clickSave();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeDisabled());
+    await act(async () => release());
+  });
+
+  it("uses the shared empty state when there are no passwords", async () => {
+    await renderVault([]);
+    expect(screen.getByText("No Passwords Yet").closest(".ui-empty")).toBeInTheDocument();
   });
 });

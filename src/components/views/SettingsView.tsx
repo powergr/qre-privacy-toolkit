@@ -1,3 +1,4 @@
+import { useId, type ReactNode } from "react";
 import {
   Monitor,
   Download,
@@ -5,8 +6,11 @@ import {
   RotateCcw,
   RefreshCw,
   LogOut,
+  BookOpen,
+  Info,
   ChevronRight,
 } from "lucide-react";
+import "./SettingsView.css";
 
 interface SettingsViewProps {
   onTheme: () => void;
@@ -15,42 +19,51 @@ interface SettingsViewProps {
   onReset2FA: () => void;
   onUpdate: () => void;
   onLogout: () => void;
+  /** On a phone these live here too, since the bottom bar has no Help button. */
+  onHelp?: () => void;
+  onAbout?: () => void;
 }
 
 interface RowProps {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
+  /** One line on what the row does. Read out as the button's description. */
+  hint: string;
   onClick: () => void;
   danger?: boolean;
 }
 
-function SettingsRow({ icon, label, onClick, danger }: RowProps) {
+function SettingsRow({ icon, label, hint, onClick, danger }: RowProps) {
+  const hintId = useId();
   return (
     <button
+      type="button"
+      className={`settings-row${danger ? " settings-row--danger" : ""}`}
+      // The label alone is the name; the hint is a description, so tests and screen readers
+      // can find the button by what it is called.
+      aria-label={label}
+      aria-describedby={hintId}
       onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "16px",
-        background: "var(--panel-bg)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        cursor: "pointer",
-        width: "100%",
-        fontFamily: "inherit",
-        fontSize: "1rem",
-        color: danger ? "var(--btn-danger)" : "var(--text-main)",
-      }}
     >
-      <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        {icon} {label}
+      <span className="settings-row__icon" aria-hidden="true">
+        {icon}
       </span>
-      <ChevronRight
-        size={16}
-        color={danger ? "var(--btn-danger)" : "var(--text-dim)"}
-      />
+      <span className="settings-row__text" aria-hidden="true">
+        <strong>{label}</strong>
+        <small id={hintId}>{hint}</small>
+      </span>
+      <ChevronRight size={16} aria-hidden="true" />
     </button>
+  );
+}
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section className="settings-view__group" aria-labelledby={id}>
+      <h3 id={id}>{title}</h3>
+      {children}
+    </section>
   );
 }
 
@@ -61,67 +74,77 @@ export function SettingsView({
   onReset2FA,
   onUpdate,
   onLogout,
+  onHelp,
+  onAbout,
 }: SettingsViewProps) {
   return (
-    <div
-      style={{
-        padding: "24px 16px 24px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <h2
-        style={{
-          margin: "0 0 12px",
-          fontSize: "1.2rem",
-          color: "var(--text-main)",
-        }}
-      >
-        Settings
-      </h2>
+    <div className="settings-view">
+      <h2 className="settings-view__title">Settings</h2>
 
-      <SettingsRow
-        icon={<Monitor size={20} />}
-        label="Theme"
-        onClick={onTheme}
-      />
-      <SettingsRow
-        icon={<Download size={20} />}
-        label="Backup"
-        onClick={onBackup}
-      />
-      <SettingsRow
-        icon={<Key size={20} />}
-        label="Change Password"
-        onClick={onChangePassword}
-      />
-      <SettingsRow
-        icon={<RotateCcw size={20} />}
-        label="Reset 2FA"
-        onClick={onReset2FA}
-      />
-      <SettingsRow
-        icon={<RefreshCw size={20} />}
-        label="Check Updates"
-        onClick={onUpdate}
-      />
+      <Group title="Appearance">
+        <SettingsRow
+          icon={<Monitor size={20} />}
+          label="Theme"
+          hint="Light, dark, or follow your device."
+          onClick={onTheme}
+        />
+      </Group>
 
-      <div
-        style={{
-          height: 1,
-          background: "var(--border)",
-          margin: "6px 0",
-          opacity: 0.4,
-        }}
-      />
+      <Group title="Security">
+        <SettingsRow
+          icon={<Download size={20} />}
+          label="Backup"
+          hint="Save a copy of your keychain."
+          onClick={onBackup}
+        />
+        <SettingsRow
+          icon={<Key size={20} />}
+          label="Change Password"
+          hint="Choose a new master password."
+          onClick={onChangePassword}
+        />
+        <SettingsRow
+          icon={<RotateCcw size={20} />}
+          label="Reset 2FA"
+          hint="Turn off two-factor sign-in and set it up again."
+          onClick={onReset2FA}
+        />
+      </Group>
 
-      <SettingsRow
-        icon={<LogOut size={20} />}
-        label="Log Out"
-        onClick={onLogout}
-        danger
-      />
+      <Group title="App">
+        <SettingsRow
+          icon={<RefreshCw size={20} />}
+          label="Check Updates"
+          hint="See whether a newer version is available."
+          onClick={onUpdate}
+        />
+        {onHelp && (
+          <SettingsRow
+            icon={<BookOpen size={20} />}
+            label="Help Topics"
+            hint="How each tool works."
+            onClick={onHelp}
+          />
+        )}
+        {onAbout && (
+          <SettingsRow
+            icon={<Info size={20} />}
+            label="About"
+            hint="Version and licence."
+            onClick={onAbout}
+          />
+        )}
+      </Group>
+
+      <div className="settings-view__session">
+        <SettingsRow
+          icon={<LogOut size={20} />}
+          label="Log Out"
+          hint="Lock the vault and return to the sign-in screen."
+          onClick={onLogout}
+          danger
+        />
+      </div>
     </div>
   );
 }

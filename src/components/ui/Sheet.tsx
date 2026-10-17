@@ -1,6 +1,7 @@
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode, type TouchEvent } from "react";
 import { X } from "lucide-react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { useIsPhone } from "../../hooks/useIsPhone";
 import { cx } from "./cx";
 import { Button } from "./Button";
 import { useFocusTrap } from "./useFocusTrap";
@@ -19,6 +20,9 @@ interface SheetProps {
   role: "dialog" | "alertdialog";
   className?: string;
 }
+
+/** How far down a phone's sheet must be pulled, at least, before letting go closes it. */
+export const SHEET_CLOSE_DISTANCE = 80;
 
 /** The shared frame of Dialog and Drawer: dimmed page, focus trap, Escape, labelled panel. */
 function Sheet({
@@ -43,6 +47,27 @@ function Sheet({
   useFocusTrap(panel, true);
 
   const isDrawer = kind === "drawer";
+
+  // On a phone the drawer is a sheet from the bottom edge. Pulling its top down closes it.
+  const isPhone = useIsPhone();
+  const canPull = isDrawer && dismissible && isPhone;
+  const [pull, setPull] = useState(0);
+  const touchStart = useRef<number | null>(null);
+  const onTouchStart = (e: TouchEvent) => {
+    touchStart.current = e.touches[0]?.clientY ?? null;
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (touchStart.current === null) return;
+    // Only downwards: pulling up just stays where it is.
+    setPull(Math.max(0, (e.touches[0]?.clientY ?? touchStart.current) - touchStart.current));
+  };
+  const onTouchEnd = () => {
+    if (touchStart.current === null) return;
+    touchStart.current = null;
+    const needed = Math.max(SHEET_CLOSE_DISTANCE, (panel.current?.offsetHeight ?? 0) * 0.25);
+    if (pull >= needed) onClose();
+    setPull(0);
+  };
   return (
     <div
       className={cx("modal-overlay", "ui-overlay", isDrawer && "ui-overlay--drawer")}
@@ -59,7 +84,13 @@ function Sheet({
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
         className={cx(isDrawer ? "ui-drawer" : "ui-dialog", tone === "danger" && "ui-dialog--danger", className)}
+        style={pull > 0 ? { transform: `translateY(${pull}px)`, transition: "none" } : undefined}
       >
+        <div
+          className="ui-sheet__pull"
+          {...(canPull ? { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel: onTouchEnd } : {})}
+        >
+        {isDrawer && <div className="ui-sheet__grab" aria-hidden="true" />}
         <div className="ui-sheet__head">
           {icon && (
             <span className="ui-sheet__icon" aria-hidden="true">
@@ -86,6 +117,7 @@ function Sheet({
               icon={<X size={16} />}
             />
           )}
+        </div>
         </div>
         {children !== undefined && <div className="ui-sheet__body">{children}</div>}
         {footer && <div className="ui-sheet__foot">{footer}</div>}

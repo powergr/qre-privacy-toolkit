@@ -1,3 +1,7 @@
+import { EmptyState } from "../ui/EmptyState";
+import { Banner } from "../ui/Banner";
+import { Button } from "../ui/Button";
+import { Drawer } from "../ui/Sheet";
 import { useToast } from "../ui/Toast";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -21,7 +25,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useVault, VaultEntry } from "../../hooks/useVault";
-import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -386,7 +389,6 @@ export function VaultView() {
     setSaveError(null);
     setEditing(null);
   };
-  useEscapeKey(closeEditor, editorOpen);
 
   const openNewEntry = () =>
     setEditing({
@@ -743,21 +745,11 @@ export function VaultView() {
       </div>
 
       {entries.length === 0 && !searchQuery && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "40vh",
-            color: "var(--text-dim)",
-            opacity: 0.7,
-          }}
-        >
-          <Key size={64} style={{ marginBottom: 20, color: "var(--accent)" }} />
-          <h3>No Passwords Yet</h3>
-          <p>Click "Add New" or use Import to get started.</p>
-        </div>
+        <EmptyState
+          icon={<Key size={48} />}
+          title="No Passwords Yet"
+          description={'Click "Add New" or use Import to get started.'}
+        />
       )}
 
       {/* LIST VIEW */}
@@ -957,27 +949,22 @@ export function VaultView() {
         />
       )}
 
-      {/* --- EDIT / ADD MODAL --- */}
+      {/* --- EDIT / ADD DRAWER --- */}
       {editing && (
-        <div
-          className="modal-overlay"
-          style={{ zIndex: 100010 }}
-          onClick={closeEditor}
+        <Drawer
+          title={editing.id ? "Edit Entry" : "New Entry"}
+          onClose={closeEditor}
+          footer={
+            <>
+              <Button onClick={closeEditor}>Cancel</Button>
+              <Button variant="primary" disabled={isSaving} onClick={saveEditor}>
+                Save
+              </Button>
+            </>
+          }
         >
-          <div
-            className="auth-card"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: 500, width: "100%" }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginBottom: 20,
-                position: "relative",
-              }}
-            >
-              <h3>{editing.id ? "Edit Entry" : "New Entry"}</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 className="icon-btn-ghost"
                 title={editing.is_pinned ? "Unpin" : "Pin"}
@@ -986,8 +973,6 @@ export function VaultView() {
                 }
                 style={{
                   color: editing.is_pinned ? "#ffd700" : "var(--text-dim)",
-                  position: "absolute",
-                  right: 0,
                 }}
               >
                 <Pin
@@ -998,8 +983,164 @@ export function VaultView() {
             </div>
 
             <div
-              className="modal-body"
-              style={{ display: "flex", flexDirection: "column", gap: 15 }}
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Globe
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  color: "var(--text-dim)",
+                }}
+              />
+              <input
+                className="auth-input"
+                style={{ paddingLeft: 40 }}
+                placeholder="Service Name (e.g. Google)"
+                value={editing.service ?? ""}
+                onChange={(e) =>
+                  setEditing({ ...editing, service: e.target.value })
+                }
+                autoFocus
+              />
+            </div>
+
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <User
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  color: "var(--text-dim)",
+                }}
+              />
+              <input
+                className="auth-input"
+                style={{ paddingLeft: 40 }}
+                placeholder="Username / Email"
+                value={editing.username ?? ""}
+                onChange={(e) =>
+                  setEditing({ ...editing, username: e.target.value })
+                }
+              />
+            </div>
+
+            <div
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <LinkIcon
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  color: "var(--text-dim)",
+                }}
+              />
+              <input
+                className="auth-input"
+                style={{ paddingLeft: 40 }}
+                placeholder="Website URL (Optional)"
+                value={editing.url || ""}
+                onChange={(e) =>
+                  setEditing({ ...editing, url: e.target.value })
+                }
+              />
+            </div>
+
+            <div>
+              <div className="vault-view-custom-password-wrapper">
+                <input
+                  type={showEditPass ? "text" : "password"}
+                  className="auth-input has-icon"
+                  placeholder="Password"
+                  value={editing.password ?? ""}
+                  onChange={(e) =>
+                    setEditing({ ...editing, password: e.target.value })
+                  }
+                />
+                <button
+                  className="vault-view-custom-password-toggle"
+                  title="Generate Strong Password"
+                  onClick={() =>
+                    setEditing({
+                      ...editing,
+                      password: generateStrongPassword(),
+                    })
+                  }
+                >
+                  <Key size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="vault-view-custom-password-toggle"
+                  title={showEditPass ? "Hide password" : "Show password"}
+                  onClick={() => setShowEditPass(!showEditPass)}
+                >
+                  {showEditPass ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+
+              {editing.password && editing.password.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div
+                    style={{
+                      height: 4,
+                      width: "100%",
+                      background: "rgba(255,255,255,0.1)",
+                      borderRadius: 2,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${(strength.score + 1) * 20}%`,
+                        background: getStrengthColor(strength.score),
+                        transition:
+                          "width 0.3s ease, background-color 0.3s ease",
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      color: "var(--text-dim)",
+                      marginTop: 4,
+                      textAlign: "right",
+                      display: "flex",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ color: getStrengthColor(strength.score) }}>
+                      {strength.label}
+                    </span>
+                    <span>{strength.feedback}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2FA SETUP FIELD */}
+            <div
+              style={{
+                borderTop: "1px solid var(--border)",
+                paddingTop: 15,
+                marginTop: 5,
+              }}
             >
               <div
                 style={{
@@ -1008,7 +1149,7 @@ export function VaultView() {
                   alignItems: "center",
                 }}
               >
-                <Globe
+                <ShieldCheck
                   size={16}
                   style={{
                     position: "absolute",
@@ -1018,255 +1159,63 @@ export function VaultView() {
                 />
                 <input
                   className="auth-input"
-                  style={{ paddingLeft: 40 }}
-                  placeholder="Service Name (e.g. Google)"
-                  value={editing.service ?? ""}
-                  onChange={(e) =>
-                    setEditing({ ...editing, service: e.target.value })
-                  }
-                  autoFocus
-                />
-              </div>
-
-              <div
-                style={{
-                  position: "relative",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                <User
-                  size={16}
                   style={{
-                    position: "absolute",
-                    left: 12,
-                    color: "var(--text-dim)",
+                    paddingLeft: 40,
+                    fontFamily: "monospace",
+                    textTransform: "uppercase",
+                    flex: 1,
                   }}
-                />
-                <input
-                  className="auth-input"
-                  style={{ paddingLeft: 40 }}
-                  placeholder="Username / Email"
-                  value={editing.username ?? ""}
+                  placeholder="2FA Authenticator Key (e.g. JBSWY3DP...)"
+                  value={editing.totp_secret || ""}
                   onChange={(e) =>
-                    setEditing({ ...editing, username: e.target.value })
+                    setEditing({ ...editing, totp_secret: e.target.value })
                   }
                 />
               </div>
 
               <div
                 style={{
-                  position: "relative",
                   display: "flex",
+                  justifyContent: "space-between",
                   alignItems: "center",
+                  marginTop: 8,
                 }}
               >
-                <LinkIcon
-                  size={16}
+                <p
                   style={{
-                    position: "absolute",
-                    left: 12,
+                    fontSize: "0.75rem",
                     color: "var(--text-dim)",
+                    margin: 0,
+                    flex: 1,
                   }}
-                />
-                <input
-                  className="auth-input"
-                  style={{ paddingLeft: 40 }}
-                  placeholder="Website URL (Optional)"
-                  value={editing.url || ""}
-                  onChange={(e) =>
-                    setEditing({ ...editing, url: e.target.value })
-                  }
-                />
-              </div>
+                >
+                  Paste the Secret Key provided by the website.
+                </p>
 
-              <div>
-                <div className="vault-view-custom-password-wrapper">
-                  <input
-                    type={showEditPass ? "text" : "password"}
-                    className="auth-input has-icon"
-                    placeholder="Password"
-                    value={editing.password ?? ""}
-                    onChange={(e) =>
-                      setEditing({ ...editing, password: e.target.value })
-                    }
-                  />
-                  <button
-                    className="vault-view-custom-password-toggle"
-                    title="Generate Strong Password"
-                    onClick={() =>
-                      setEditing({
-                        ...editing,
-                        password: generateStrongPassword(),
-                      })
-                    }
+                {/* LIVE FEEDBACK: Show the generated code instantly! */}
+                {editing.totp_secret &&
+                  normalizeTotpSecret(editing.totp_secret).length >= 16 && (
+                  <div
+                    style={{
+                      background: "var(--bg-color)",
+                      border: "1px solid var(--border)",
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                    }}
                   >
-                    <Key size={18} />
-                  </button>
-                  <button
-                    type="button"
-                    className="vault-view-custom-password-toggle"
-                    title={showEditPass ? "Hide password" : "Show password"}
-                    onClick={() => setShowEditPass(!showEditPass)}
-                  >
-                    {showEditPass ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-
-                {editing.password && editing.password.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <div
-                      style={{
-                        height: 4,
-                        width: "100%",
-                        background: "rgba(255,255,255,0.1)",
-                        borderRadius: 2,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${(strength.score + 1) * 20}%`,
-                          background: getStrengthColor(strength.score),
-                          transition:
-                            "width 0.3s ease, background-color 0.3s ease",
-                        }}
-                      />
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "0.75rem",
-                        color: "var(--text-dim)",
-                        marginTop: 4,
-                        textAlign: "right",
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: getStrengthColor(strength.score) }}>
-                        {strength.label}
-                      </span>
-                      <span>{strength.feedback}</span>
-                    </div>
+                    <TotpDisplay
+                      secret={editing.totp_secret}
+                      compact={true}
+                      onCopy={(code) => handleCopy(code, true)}
+                    />
                   </div>
                 )}
               </div>
-
-              {/* 2FA SETUP FIELD */}
-              <div
-                style={{
-                  borderTop: "1px solid var(--border)",
-                  paddingTop: 15,
-                  marginTop: 5,
-                }}
-              >
-                <div
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
-                >
-                  <ShieldCheck
-                    size={16}
-                    style={{
-                      position: "absolute",
-                      left: 12,
-                      color: "var(--text-dim)",
-                    }}
-                  />
-                  <input
-                    className="auth-input"
-                    style={{
-                      paddingLeft: 40,
-                      fontFamily: "monospace",
-                      textTransform: "uppercase",
-                      flex: 1,
-                    }}
-                    placeholder="2FA Authenticator Key (e.g. JBSWY3DP...)"
-                    value={editing.totp_secret || ""}
-                    onChange={(e) =>
-                      setEditing({ ...editing, totp_secret: e.target.value })
-                    }
-                  />
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginTop: 8,
-                  }}
-                >
-                  <p
-                    style={{
-                      fontSize: "0.75rem",
-                      color: "var(--text-dim)",
-                      margin: 0,
-                      flex: 1,
-                    }}
-                  >
-                    Paste the Secret Key provided by the website.
-                  </p>
-
-                  {/* LIVE FEEDBACK: Show the generated code instantly! */}
-                  {editing.totp_secret &&
-                    normalizeTotpSecret(editing.totp_secret).length >= 16 && (
-                    <div
-                      style={{
-                        background: "var(--bg-color)",
-                        border: "1px solid var(--border)",
-                        padding: "4px 10px",
-                        borderRadius: 6,
-                      }}
-                    >
-                      <TotpDisplay
-                        secret={editing.totp_secret}
-                        compact={true}
-                        onCopy={(code) => handleCopy(code, true)}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {saveError && (
-                <div
-                  style={{
-                    color: "var(--btn-danger)",
-                    fontSize: "0.85rem",
-                    background: "rgba(239,68,68,0.1)",
-                    border: "1px solid rgba(239,68,68,0.3)",
-                    borderRadius: 6,
-                    padding: "8px 12px",
-                  }}
-                >
-                  {saveError}
-                </div>
-              )}
-
-              <div style={{ display: "flex", gap: 10, marginTop: 15 }}>
-                <button
-                  className="auth-btn"
-                  style={{ flex: 1 }}
-                  disabled={isSaving}
-                  onClick={saveEditor}
-                >
-                  Save
-                </button>
-                <button
-                  className="secondary-btn"
-                  style={{ flex: 1 }}
-                  onClick={closeEditor}
-                >
-                  Cancel
-                </button>
-              </div>
             </div>
+
+            {saveError && <Banner tone="error">{saveError}</Banner>}
           </div>
-        </div>
+        </Drawer>
       )}
 
       {itemToDelete && (

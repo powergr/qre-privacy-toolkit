@@ -178,5 +178,6 @@ export function useClipboard() {
     togglePin, // Added togglePin
     retentionHours,
     updateRetention,
+    refreshVault,
   };
 }

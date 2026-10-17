@@ -204,6 +204,8 @@ jest.mock("./components/views/SettingsView", () => ({
         reset: p.onReset2FA,
         update: p.onUpdate,
         logout: p.onLogout,
+        help: p.onHelp,
+        about: p.onAbout,
       })}
     </div>
   ),
@@ -1369,5 +1371,97 @@ describe("App - Home screen", () => {
     act(() => mockLatest.setView("login"));
     act(() => mockLatest.setView("dashboard"));
     expect(recent()).toBe("");
+  });
+});
+
+// ─── Phone layout ────────────────────────────────────────────────────────────
+
+describe("App - phone layout", () => {
+  function usePhone(matches: boolean) {
+    const listeners = new Set<() => void>();
+    const mql = {
+      matches,
+      addEventListener: (_: string, l: () => void) => listeners.add(l),
+      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
+    };
+    Object.defineProperty(window, "matchMedia", { value: () => mql, configurable: true, writable: true });
+    return {
+      resize(next: boolean) {
+        mql.matches = next;
+        act(() => listeners.forEach((l) => l()));
+      },
+    };
+  }
+  afterEach(() => {
+    // @ts-expect-error removed again so the other tests run as on a computer
+    delete window.matchMedia;
+  });
+  const bar = () => screen.getByRole("navigation", { name: "Main" });
+  const go = (label: string) => fireEvent.click(within(bar()).getByRole("button", { name: label }));
+
+  it("shows the bottom bar instead of the sidebar", () => {
+    usePhone(true);
+    renderApp();
+    expect(bar()).toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument();
+  });
+
+  it("keeps the sidebar and no bottom bar on a wide window", () => {
+    usePhone(false);
+    renderApp();
+    expect(screen.getByTestId("sidebar")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
+  });
+
+  it("switches layout when the window is resized", () => {
+    const media = usePhone(false);
+    renderApp();
+    expect(screen.getByTestId("sidebar")).toBeInTheDocument();
+    media.resize(true);
+    expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument();
+    expect(bar()).toBeInTheDocument();
+    media.resize(false);
+    expect(screen.getByTestId("sidebar")).toBeInTheDocument();
+  });
+
+  it("opens Files and Passwords from the bar", () => {
+    usePhone(true);
+    renderApp();
+    go("Files");
+    expect(screen.getByTestId("view-files")).toBeInTheDocument();
+    go("Passwords");
+    expect(screen.getByTestId("view-vault")).toBeInTheDocument();
+    go("Home");
+    expect(screen.getByTestId("view-home")).toBeInTheDocument();
+  });
+
+  it("opens the list of tools, and a tool from it, with Tools still marked", () => {
+    usePhone(true);
+    renderApp();
+    go("Tools");
+    expect(screen.getByRole("heading", { name: "Tools" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Shredder", { selector: "strong" }));
+    expect(screen.getByTestId("view-shred")).toBeInTheDocument();
+    expect(within(bar()).getByRole("button", { name: "Tools" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("does not list the Tools screen itself as a recent tool", () => {
+    usePhone(true);
+    renderApp();
+    go("Tools");
+    go("Home");
+    expect(screen.getByTestId("view-home")).toHaveAttribute("data-recent", "");
+  });
+
+  it("opens Settings from More, with Help and About in it", () => {
+    usePhone(true);
+    renderApp();
+    go("More");
+    expect(screen.getByTestId("view-settings")).toBeInTheDocument();
+    click("st: help");
+    expect(screen.getByTestId("help-modal")).toBeInTheDocument();
+    click("help-modal: close");
+    click("st: about");
+    expect(document.querySelector('[style*="200000"]')).not.toBeNull();
   });
 });

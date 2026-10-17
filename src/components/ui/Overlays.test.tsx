@@ -2,7 +2,7 @@ import { useState } from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
-import { Dialog, Drawer } from "./Sheet";
+import { Dialog, Drawer, SHEET_CLOSE_DISTANCE } from "./Sheet";
 import { dialogIsOpen } from "../../hooks/useShortcut";
 
 const escape = () => fireEvent.keyDown(window, { key: "Escape" });
@@ -250,5 +250,136 @@ describe("Dialog over a Drawer", () => {
     escape();
     expect(closeDialog).toHaveBeenCalledTimes(1);
     expect(closeDrawer).not.toHaveBeenCalled();
+  });
+});
+
+describe("Drawer as a phone sheet", () => {
+  function phone(matches: boolean) {
+    Object.defineProperty(window, "matchMedia", {
+      value: () => ({ matches, addEventListener: () => {}, removeEventListener: () => {} }),
+      configurable: true,
+      writable: true,
+    });
+  }
+  afterEach(() => {
+    // @ts-expect-error removed again so other tests see the computer layout
+    delete window.matchMedia;
+  });
+
+  const zone = () => document.querySelector(".ui-sheet__pull") as HTMLElement;
+  const panel = () => screen.getByRole("dialog");
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", y?: number) =>
+    fireEvent[type](zone(), y === undefined ? {} : { touches: [{ clientY: y }] });
+
+  it("has a grab handle at the top, which only a phone's style sheet shows", () => {
+    phone(true);
+    render(<Drawer title="Edit" onClose={() => {}} />);
+    expect(document.querySelector(".ui-sheet__grab")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("follows a finger pulling down", () => {
+    phone(true);
+    render(<Drawer title="Edit" onClose={() => {}} />);
+    touch("touchStart", 100);
+    touch("touchMove", 130);
+    expect(panel().style.transform).toBe("translateY(30px)");
+  });
+
+  it("does not move up when pulled up", () => {
+    phone(true);
+    render(<Drawer title="Edit" onClose={() => {}} />);
+    touch("touchStart", 100);
+    touch("touchMove", 60);
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("closes when let go after a long pull", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Drawer title="Edit" onClose={onClose} />);
+    touch("touchStart", 100);
+    touch("touchMove", 100 + SHEET_CLOSE_DISTANCE);
+    touch("touchEnd");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("springs back, and stays open, after a short pull", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Drawer title="Edit" onClose={onClose} />);
+    touch("touchStart", 100);
+    touch("touchMove", 100 + SHEET_CLOSE_DISTANCE - 1);
+    touch("touchEnd");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("ignores a move that began outside the pull area", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Drawer title="Edit" onClose={onClose}><button>inside</button></Drawer>);
+    fireEvent.touchMove(zone(), { touches: [{ clientY: 500 }] });
+    fireEvent.touchEnd(zone());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("cannot be pulled shut while it must stay open", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Drawer title="Saving" dismissible={false} onClose={onClose} />);
+    touch("touchStart", 100);
+    touch("touchMove", 400);
+    touch("touchEnd");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("is not pulled on a computer, where it is a side panel", () => {
+    phone(false);
+    const onClose = jest.fn();
+    render(<Drawer title="Edit" onClose={onClose} />);
+    touch("touchStart", 100);
+    touch("touchMove", 400);
+    touch("touchEnd");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("needs a pull of 80 pixels, not less", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Drawer title="Edit" onClose={onClose} />);
+    touch("touchStart", 0);
+    touch("touchMove", 79);
+    touch("touchEnd");
+    expect(onClose).not.toHaveBeenCalled();
+    touch("touchStart", 0);
+    touch("touchMove", 80);
+    touch("touchEnd");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not moved by a touch that began outside the pull area", () => {
+    phone(true);
+    render(<Drawer title="Edit" onClose={() => {}} />);
+    fireEvent.touchMove(zone(), { touches: [{ clientY: 500 }] });
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("does not close a dialog by pulling it, on a phone either", () => {
+    phone(true);
+    const onClose = jest.fn();
+    render(<Dialog title="Sure?" onClose={onClose} />);
+    touch("touchStart", 0);
+    touch("touchMove", 300);
+    touch("touchEnd");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel().style.transform).toBe("");
+  });
+
+  it("gives a dialog no pull area handle, since it stays in the middle", () => {
+    phone(true);
+    render(<Dialog title="Sure?" onClose={() => {}} />);
+    expect(document.querySelector(".ui-sheet__grab")).toBeNull();
   });
 });

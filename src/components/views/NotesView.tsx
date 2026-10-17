@@ -1,3 +1,4 @@
+import { EmptyState } from "../ui/EmptyState";
 import { useShortcut } from "../../hooks/useShortcut";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
@@ -36,6 +37,7 @@ import { useNotes, NoteEntry } from "../../hooks/useNotes";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import {
   EntryDeleteModal,
+  ErrorModal,
   ExportSuccessModal,
   ExportWarningModal,
   InfoModal,
@@ -377,6 +379,7 @@ export function NotesView() {
   const [itemToDelete, setItemToDelete] = useState<NoteEntry | null>(null);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [showExportWarning, setShowExportWarning] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Shown when a delete or pin from the card list could not be saved.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -851,7 +854,7 @@ export function NotesView() {
 
       openEditor({ title: filename, content, is_pinned: false, tags: [] });
     } catch (e) {
-      alert("Import failed: " + e);
+      setImportError("Import failed: " + e);
     }
   };
 
@@ -1035,16 +1038,11 @@ export function NotesView() {
 
       {/* ── EMPTY STATE ── */}
       {entries.length === 0 && !searchQuery && (
-        <div
-          style={{
-            textAlign: "center",
-            marginTop: 50,
-            color: "var(--text-dim)",
-          }}
-        >
-          <StickyNote size={48} style={{ marginBottom: 10, opacity: 0.5 }} />
-          <p>Your notebook is empty.</p>
-        </div>
+        <EmptyState
+          icon={<StickyNote size={48} />}
+          title="Your notebook is empty."
+          description="Write a note, or import a text file, to get started."
+        />
       )}
 
       {/* ── GRID / LIST VIEW ── */}
@@ -1606,6 +1604,10 @@ export function NotesView() {
           onClose={() => setExportedPath(null)}
         />
       )}
+      {importError && (
+        <ErrorModal message={importError} onClose={() => setImportError(null)} />
+      )}
+
       {itemToDelete && (
         <EntryDeleteModal
           title={itemToDelete.title || "Untitled Note"}

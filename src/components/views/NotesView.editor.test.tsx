@@ -984,9 +984,11 @@ describe("NotesView - import and export problems", () => {
     );
     const alertSpy = jest.spyOn(window, "alert").mockImplementation(() => {});
     fireEvent.click(byTitle("Import Text File"));
-    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
-    expect(alertSpy.mock.calls[0][0]).toContain("not valid UTF-8");
+    expect(await screen.findByText(/Import failed: .*not valid UTF-8/)).toBeInTheDocument();
+    expect(alertSpy).not.toHaveBeenCalled();
     expect(screen.queryByPlaceholderText("Untitled Note")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByText(/Import failed/)).not.toBeInTheDocument();
   });
 
   it("offers Cancel in the export warning", async () => {
