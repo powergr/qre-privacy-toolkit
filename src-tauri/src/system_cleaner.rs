@@ -25,6 +25,59 @@ const LARGE_OPERATION_THRESHOLD: u64 = 10 * 1024 * 1024 * 1024; // Warn at 10 GB
 // one that is still winding down.
 static CANCEL_SLOT: CancelSlot = CancelSlot::new();
 
+/// Windows process flag that stops a console window from opening for a child program. The app
+/// has no console of its own, so without it every command line tool started here would flash
+/// a window of its own.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// A command that runs without opening a console window.
+#[cfg(target_os = "windows")]
+fn windows_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+/// The PowerShell script that empties the Recycle Bin. A bin that is already empty is done
+/// before anything is cleared, and any real failure stops the script with the reason on stderr
+/// and exit code 1, so it can be reported instead of hidden.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const EMPTY_RECYCLE_BIN_SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
+try { \
+$bin = (New-Object -ComObject Shell.Application).Namespace(0xA); \
+if ($bin.Items().Count -eq 0) { exit 0 }; \
+Clear-RecycleBin -Force \
+} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }";
+
+/// The result of a finished PowerShell run: its exit status and what it wrote to stderr.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn recycle_bin_result(output: &std::process::Output) -> Result<(), String> {
+    recycle_bin_outcome(
+        output.status.success(),
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+/// Turns the outcome of the PowerShell run into the result the cleaner reports.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn recycle_bin_outcome(success: bool, exit_code: Option<i32>, stderr: &str) -> Result<(), String> {
+    if success {
+        return Ok(());
+    }
+    let reason = stderr.trim();
+    if reason.is_empty() {
+        match exit_code {
+            Some(code) => Err(format!("Failed to empty Recycle Bin (exit code {})", code)),
+            None => Err("Failed to empty Recycle Bin".to_string()),
+        }
+    } else {
+        Err(format!("Failed to empty Recycle Bin: {}", reason))
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA STRUCTURES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1010,7 +1063,7 @@ pub fn cancel_cleaning() {
 fn flush_dns() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("ipconfig")
+        windows_command("ipconfig")
             .arg("/flushdns")
             .output()
             .map_err(|e| format!("Failed to flush DNS: {}", e))?;
@@ -1044,7 +1097,7 @@ fn flush_dns() -> Result<(), String> {
 fn clear_clipboard() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        windows_command("cmd")
             .args(["/C", "echo off | clip"])
             .output()
             .map_err(|e| format!("Failed to clear clipboard: {}", e))?;
@@ -1098,15 +1151,11 @@ fn clear_shell_history(shell: &str) -> Result<(), String> {
 fn empty_recycle_bin() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Clear-RecycleBin -Force -ErrorAction SilentlyContinue",
-            ])
+        let output = windows_command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", EMPTY_RECYCLE_BIN_SCRIPT])
             .output()
             .map_err(|e| format!("Failed to empty Recycle Bin: {}", e))?;
-        Ok(())
+        recycle_bin_result(&output)
     }
     #[cfg(not(target_os = "windows"))]
     Err("Recycle Bin is a Windows-only feature".to_string())
@@ -2038,5 +2087,148 @@ mod tests {
                 "Linux /var/crash must be flagged as requiring elevation"
             );
         }
+    }
+
+    // ── Windows commands run without a console window ──────────────────────
+
+    #[test]
+    fn test_create_no_window_is_the_windows_flag_value() {
+        assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_windows_command_runs_the_program_and_returns_its_output() {
+        let output = windows_command("cmd")
+            .args(["/C", "echo hidden"])
+            .output()
+            .expect("cmd must start");
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("hidden"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_windows_command_passes_the_exit_code_through() {
+        let output = windows_command("cmd").args(["/C", "exit 7"]).output().unwrap();
+        assert_eq!(output.status.code(), Some(7));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_windows_command_names_the_program_it_starts() {
+        assert_eq!(windows_command("ipconfig").get_program(), "ipconfig");
+    }
+
+    #[test]
+    fn test_windows_programs_are_never_started_with_a_visible_window() {
+        // Every Windows tool the cleaner runs goes through windows_command. A plain
+        // process::Command here would flash a console window again.
+        let source = include_str!("system_cleaner.rs");
+        for program in ["powershell", "ipconfig", "cmd"] {
+            let plain = format!("process::Command::new(\"{}\")", program);
+            assert!(!source.contains(&plain), "{} is started without hiding its window", program);
+            let hidden = format!("windows_command(\"{}\")", program);
+            assert!(source.contains(&hidden), "{} should go through windows_command", program);
+        }
+    }
+
+    // ── Emptying the Recycle Bin ───────────────────────────────────────────
+
+    #[test]
+    fn test_recycle_bin_script_does_not_hide_errors() {
+        assert!(!EMPTY_RECYCLE_BIN_SCRIPT.contains("SilentlyContinue"));
+        assert!(EMPTY_RECYCLE_BIN_SCRIPT.contains("$ErrorActionPreference = 'Stop'"));
+    }
+
+    #[test]
+    fn test_recycle_bin_script_clears_without_asking() {
+        assert!(EMPTY_RECYCLE_BIN_SCRIPT.contains("Clear-RecycleBin -Force"));
+    }
+
+    #[test]
+    fn test_recycle_bin_script_leaves_an_empty_bin_alone() {
+        let check = EMPTY_RECYCLE_BIN_SCRIPT.find("Items().Count -eq 0").expect("empty check");
+        let clear = EMPTY_RECYCLE_BIN_SCRIPT.find("Clear-RecycleBin").expect("clear");
+        assert!(check < clear, "the emptiness check must come before the clear");
+        assert!(EMPTY_RECYCLE_BIN_SCRIPT.contains("exit 0"));
+    }
+
+    #[test]
+    fn test_recycle_bin_script_reports_a_failure_on_stderr_and_exits_nonzero() {
+        assert!(EMPTY_RECYCLE_BIN_SCRIPT.contains("[Console]::Error.WriteLine($_.Exception.Message)"));
+        assert!(EMPTY_RECYCLE_BIN_SCRIPT.contains("exit 1"));
+    }
+
+    #[test]
+    fn test_recycle_bin_outcome_success_is_ok_whatever_stderr_says() {
+        assert_eq!(recycle_bin_outcome(true, Some(0), ""), Ok(()));
+        assert_eq!(recycle_bin_outcome(true, Some(0), "a harmless warning"), Ok(()));
+    }
+
+    #[test]
+    fn test_recycle_bin_outcome_failure_carries_the_reason() {
+        assert_eq!(
+            recycle_bin_outcome(false, Some(1), "Access is denied\r\n"),
+            Err("Failed to empty Recycle Bin: Access is denied".to_string())
+        );
+    }
+
+    #[test]
+    fn test_recycle_bin_outcome_failure_without_a_reason_gives_the_exit_code() {
+        assert_eq!(
+            recycle_bin_outcome(false, Some(1), "  \n"),
+            Err("Failed to empty Recycle Bin (exit code 1)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_recycle_bin_outcome_failure_without_a_reason_or_code() {
+        assert_eq!(
+            recycle_bin_outcome(false, None, ""),
+            Err("Failed to empty Recycle Bin".to_string())
+        );
+    }
+
+    /// A finished process with the given exit code and stderr, made without running anything.
+    fn finished(code: i32, stderr: &str) -> std::process::Output {
+        #[cfg(unix)]
+        let status = {
+            use std::os::unix::process::ExitStatusExt;
+            std::process::ExitStatus::from_raw(code << 8)
+        };
+        #[cfg(windows)]
+        let status = {
+            use std::os::windows::process::ExitStatusExt;
+            std::process::ExitStatus::from_raw(code as u32)
+        };
+        std::process::Output { status, stdout: Vec::new(), stderr: stderr.as_bytes().to_vec() }
+    }
+
+    #[test]
+    fn test_recycle_bin_result_reads_a_successful_run() {
+        assert_eq!(recycle_bin_result(&finished(0, "")), Ok(()));
+    }
+
+    #[test]
+    fn test_recycle_bin_result_reads_a_failed_run_and_its_stderr() {
+        assert_eq!(
+            recycle_bin_result(&finished(1, "Access is denied")),
+            Err("Failed to empty Recycle Bin: Access is denied".to_string())
+        );
+    }
+
+    #[test]
+    fn test_recycle_bin_result_reads_the_exit_code_of_a_silent_failure() {
+        assert_eq!(
+            recycle_bin_result(&finished(5, "")),
+            Err("Failed to empty Recycle Bin (exit code 5)".to_string())
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_empty_recycle_bin_is_windows_only() {
+        assert!(empty_recycle_bin().is_err());
     }
 }

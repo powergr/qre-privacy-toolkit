@@ -300,3 +300,25 @@ describe("HomeView - everything on one screen", () => {
     ]);
   });
 });
+
+describe("HomeView - jump button on a touch screen", () => {
+  afterEach(() => {
+    // @ts-expect-error removed again so other tests see the computer
+    delete window.matchMedia;
+  });
+
+  it("keeps the button but not the keyboard shortcut, which a phone cannot press", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }),
+    });
+    const onOpenPalette = jest.fn();
+    render(<HomeView setTab={jest.fn()} onOpenPalette={onOpenPalette} />);
+    const button = screen.getByRole("button", { name: "Jump to a tool or action" });
+    expect(button.querySelector("kbd")).toBeNull();
+    expect(button).not.toHaveTextContent("Ctrl");
+    fireEvent.click(button);
+    expect(onOpenPalette).toHaveBeenCalledTimes(1);
+  });
+});

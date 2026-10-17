@@ -144,8 +144,11 @@ Transform any standard USB flash drive into a highly secure, cross-platform encr
 - **Changed:** On touch screens the chips, tabs, close buttons, color dots and the Files rows are at least 44 pixels in size, so they are easy to hit with a finger.
 - **Changed:** The sign-in screens keep clear of notches and gesture bars, and scroll when the keyboard takes space. Forgot Password and Restore from Backup are now real buttons with a large touch area. The old grey texts have a readable color. The sign-in and setup screens say that everything stays on the device.
 - **Changed:** If the bookmarks vault or the clipboard history cannot be opened, the screen now says what failed, shows the reason, and offers a Try again button. Before, it was a dead end.
+- **Fixed:** On phones and tablets without a mouse, keyboard hints such as Ctrl+K on the Home jump button and the save keys in the QR Generator are no longer shown. The buttons themselves still work.
+- **Fixed:** On Windows, emptying the Recycle Bin, flushing DNS and clearing the clipboard in System Cleaner no longer flash a black command window.
+- **Fixed:** If emptying the Recycle Bin fails, System Cleaner now reports the failure with its reason. Before, it always said the bin was emptied.
 - **Fixed:** The Home screen was not centered in a full-screen window.
-- **Testing:** The project now has 507 Rust tests and over 2,100 frontend tests, and every screen and dialog is covered. Each push to GitHub runs a fast subset on Windows, Linux and macOS, and a full run happens weekly.
+- **Testing:** The project now has 523 Rust tests and over 2,100 frontend tests, and every screen and dialog is covered. Each push to GitHub runs a fast subset on Windows, Linux and macOS, and a full run happens weekly.
 
 ## New in v2.8.5
 
@@ -186,7 +189,7 @@ QRE Privacy Toolkit maintains rigorous, automated cryptographic and UI testing t
 
 **Rust Backend (`cargo test`):**
 
-- 507 tests passed from 507 total. Covers memory wiping, file routing, steganography detection, and Zip-Bomb prevention. Also covers AES-GCM streaming integrity and metadata-cleaner round-trips across every supported file format. Includes concurrency and injection regression tests for the Shredder and keychain. The command layer now has tests for login lockout, session wiping, vault file encryption, clipboard expiry, TOTP codes, paste, and time-lock checks. Cancelling a scan, hash, or clean is tested too, including starting a new run right after a cancel. The Linux, macOS and Android paths are tested as well: protected folders, RAM-backed drives, TRIM results, browser bookmark locations, and the Android storage folders.
+- 523 tests passed from 523 total. Covers memory wiping, file routing, steganography detection, and Zip-Bomb prevention. Also covers AES-GCM streaming integrity and metadata-cleaner round-trips across every supported file format. Includes concurrency and injection regression tests for the Shredder and keychain. The command layer now has tests for login lockout, session wiping, vault file encryption, clipboard expiry, TOTP codes, paste, and time-lock checks. Cancelling a scan, hash, or clean is tested too, including starting a new run right after a cancel. The Linux, macOS and Android paths are tested as well: protected folders, RAM-backed drives, TRIM results, browser bookmark locations, and the Android storage folders.
 
 **Automated checks (GitHub Actions):** every push and pull request runs the type-check, the whole frontend suite (about ten seconds) and the Rust tests except two slow file-system scans. The Rust tests run on Windows, Linux and macOS. Android logic is tested through plain functions on those machines, and its screens by the frontend tests. A full run of everything happens weekly and can be started by hand from the Actions tab.
 

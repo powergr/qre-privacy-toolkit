@@ -1,4 +1,8 @@
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import "./ui.css";
+
+/** A screen you can only touch: no mouse to hover with, so most likely no keyboard either. */
+export const TOUCH_ONLY_QUERY = "(hover: none) and (pointer: coarse)";
 
 /** True on macOS and iOS, where the command key replaces Ctrl. */
 export function isMacPlatform(): boolean {
@@ -38,8 +42,13 @@ export interface ShortcutHintProps {
   shortcut: string;
 }
 
-/** Shows a keyboard shortcut next to the action it triggers. */
+/**
+ * Shows a keyboard shortcut next to the action it triggers. On a phone or tablet with no
+ * mouse it shows nothing, since there is no key to press.
+ */
 export function ShortcutHint({ shortcut }: ShortcutHintProps) {
+  const touchOnly = useMediaQuery(TOUCH_ONLY_QUERY);
+  if (touchOnly) return null;
   const keys = shortcutKeys(shortcut);
   return (
     <span className="ui-keys" title={keys.join(" + ")}>

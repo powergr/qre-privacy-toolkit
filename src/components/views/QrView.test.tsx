@@ -487,3 +487,21 @@ describe("QrView - shared parts", () => {
     expect(Array.from(svg.querySelectorAll("kbd")).map((k) => k.textContent)).toEqual(["Ctrl", "Shift", "S"]);
   });
 });
+
+describe("QrView - save buttons on a touch screen", () => {
+  afterEach(() => {
+    // @ts-expect-error removed again so other tests see the computer
+    delete window.matchMedia;
+  });
+
+  it("leaves out the save keys, which a phone cannot press", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }),
+    });
+    render(<QrView />);
+    expect(screen.getByRole("button", { name: /PNG/ }).querySelector("kbd")).toBeNull();
+    expect(screen.getByRole("button", { name: /SVG/ }).querySelector("kbd")).toBeNull();
+  });
+});

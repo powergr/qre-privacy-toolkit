@@ -273,3 +273,40 @@ describe("ProgressCard - extra lines", () => {
     expect(order.indexOf("ui-progress__extra")).toBeLessThan(order.indexOf("ui-progress__foot"));
   });
 });
+
+describe("ShortcutHint - on touch screens", () => {
+  function device(touchOnly: boolean) {
+    const asked: string[] = [];
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => {
+        asked.push(query);
+        return { matches: touchOnly, addEventListener: () => {}, removeEventListener: () => {} };
+      },
+    });
+    return asked;
+  }
+  afterEach(() => {
+    // @ts-expect-error removed again so other tests see the computer
+    delete window.matchMedia;
+  });
+
+  it("shows nothing on a screen with only a finger, since there is no key to press", () => {
+    device(true);
+    const { container } = render(<ShortcutHint shortcut="Mod+K" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows the keys where there is a mouse", () => {
+    device(false);
+    const { container } = render(<ShortcutHint shortcut="Mod+K" />);
+    expect(container.querySelectorAll("kbd")).toHaveLength(2);
+  });
+
+  it("asks about no hover and a coarse pointer, the mark of a touch-only device", () => {
+    const asked = device(false);
+    render(<ShortcutHint shortcut="Mod+K" />);
+    expect(asked).toContain("(hover: none) and (pointer: coarse)");
+  });
+});
