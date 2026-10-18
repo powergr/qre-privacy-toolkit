@@ -9,6 +9,7 @@ import {
 import "@testing-library/jest-dom";
 import { FilesView } from "./FilesView";
 import type { PortableDriveState } from "../../hooks/usePortableVault";
+import { ToastProvider } from "../ui";
 
 // ─── Mock every Tauri API these components/hooks touch ─────────────────────
 
@@ -162,9 +163,21 @@ function rightClick(name: string) {
   fireEvent.contextMenu(screen.getByText(name));
 }
 
+// The click can start async work, such as a copy that goes on to the system clipboard. It runs
+// inside an awaited act(), so the state updates that follow are finished before the test goes on.
 async function runMenu(name: string, action: string | RegExp) {
   rightClick(name);
-  fireEvent.click(menuItem(action));
+  await act(async () => {
+    fireEvent.click(menuItem(action));
+  });
+}
+
+// Opens the menu of the empty part of the list. Opening it asks the system clipboard if it holds
+// files, which ends in a state update, so this runs inside an awaited act() too.
+async function openBackgroundMenu() {
+  await act(async () => {
+    fireEvent.contextMenu(statusBar());
+  });
 }
 
 function pressKey(key: string, init: KeyboardEventInit = {}, target: Element = document.body) {
@@ -326,6 +339,7 @@ describe("FilesView - locking", () => {
       keyfileBytes: null,
       extraEntropy: null,
       compressionMode: "auto",
+      verifyAfter: true,
       outputDir: null,
     });
     await waitFor(() => expect(props.onShowBackupReminder).toHaveBeenCalledTimes(1));
@@ -427,7 +441,7 @@ describe("FilesView - locking", () => {
     await select("secret.txt");
     fireEvent.click(advancedButton());
     fireEvent.click(screen.getByText("Zip Options"));
-    fireEvent.click(screen.getByText("Store (None)"));
+    fireEvent.click(screen.getByText("Fastest (Minimal)"));
     fireEvent.click(screen.getByText("Save"));
     expect(screen.queryByText("Select compression mode:")).not.toBeInTheDocument();
 
@@ -441,7 +455,7 @@ describe("FilesView - locking", () => {
     await select("secret.txt");
     fireEvent.click(advancedButton());
     fireEvent.click(screen.getByText("Zip Options"));
-    fireEvent.click(screen.getByText("Store (None)"));
+    fireEvent.click(screen.getByText("Fastest (Minimal)"));
     fireEvent.click(screen.getByText("Cancel"));
     fireEvent.click(toolbarLock());
     await waitFor(() => expect(calls("lock_file")[0].compressionMode).toBe("auto"));
@@ -773,7 +787,7 @@ describe("FilesView - context menu", () => {
   it("right click on empty space opens the background menu", async () => {
     setup();
     await loaded();
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     expect(menuItem("New Folder")).toBeInTheDocument();
     expect(menuItem("Refresh")).toBeInTheDocument();
     expect(screen.queryByText("Rename")).not.toBeInTheDocument();
@@ -783,7 +797,7 @@ describe("FilesView - context menu", () => {
     setup();
     await loaded();
     const before = listedPaths().length;
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("Refresh"));
     await waitFor(() => expect(listedPaths().length).toBe(before + 1));
     expect(screen.queryByText("Refresh")).not.toBeInTheDocument();
@@ -861,7 +875,7 @@ describe("FilesView - new folder and rename", () => {
     setup();
     await loaded();
     const before = listedPaths().length;
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("New Folder"));
     const input = await screen.findByRole("textbox");
     fireEvent.change(input, { target: { value: "Photos" } });
@@ -875,7 +889,7 @@ describe("FilesView - new folder and rename", () => {
   it("ignores spaces around the new folder name", async () => {
     setup();
     await loaded();
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("New Folder"));
     fireEvent.change(await screen.findByRole("textbox"), { target: { value: "  Photos  " } });
     fireEvent.click(screen.getByText("Create"));
@@ -885,7 +899,7 @@ describe("FilesView - new folder and rename", () => {
   it("does nothing for an empty or blank name", async () => {
     setup();
     await loaded();
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("New Folder"));
     const input = await screen.findByRole("textbox");
     fireEvent.click(screen.getByText("Create"));
@@ -900,7 +914,7 @@ describe("FilesView - new folder and rename", () => {
     };
     setup();
     await loaded();
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("New Folder"));
     fireEvent.change(await screen.findByRole("textbox"), { target: { value: "Dup" } });
     fireEvent.click(screen.getByText("Create"));
@@ -956,7 +970,7 @@ describe("FilesView - new folder and rename", () => {
 describe("FilesView - cut, copy and paste", () => {
   async function copyThenPasteHere(name: string, action: "Copy" | "Cut") {
     await runMenu(name, action);
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("Paste Here"));
   }
 
@@ -973,7 +987,7 @@ describe("FilesView - cut, copy and paste", () => {
   it("offers Paste Here only when something was copied", async () => {
     setup();
     await loaded();
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     expect(screen.queryByText("Paste Here")).not.toBeInTheDocument();
     const listings = calls("list_directory").length;
     // Refresh reloads the folder and then the time-lock state; let both finish before going on.
@@ -983,7 +997,7 @@ describe("FilesView - cut, copy and paste", () => {
     await waitFor(() => expect(calls("list_directory").length).toBe(listings + 1));
     await loaded();
     await runMenu("secret.txt", "Copy");
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     expect(menuItem("Paste Here")).toBeInTheDocument();
   });
 
@@ -1013,7 +1027,7 @@ describe("FilesView - cut, copy and paste", () => {
     await runMenu("secret.txt", "Copy");
     fireEvent.doubleClick(screen.getByText("sub"));
     await loaded("inner.txt");
-    fireEvent.contextMenu(statusBar());
+    await openBackgroundMenu();
     fireEvent.click(menuItem("Paste Here"));
     await waitFor(() => expect(calls("paste_items")[0].destDir).toBe(SUB));
   });
@@ -1567,5 +1581,1387 @@ describe("FilesView - drop hint", () => {
     const hint = screen.getByRole("status");
     expect(hint).toHaveTextContent("Drop to Lock");
     expect(hint).toHaveTextContent("Dropped files are encrypted with your current settings.");
+  });
+});
+
+describe("FilesView - verify after locking", () => {
+  const optionsMenu = () => fireEvent.click(advancedButton());
+  const verifyItem = () => screen.getByRole("menuitemcheckbox", { name: /Verify After Locking/ });
+
+  it("asks the backend to check the new file by default", async () => {
+    setup();
+    await loaded();
+    await select("secret.txt");
+    fireEvent.click(toolbarLock());
+    await waitFor(() => expect(calls("lock_file")).toHaveLength(1));
+    expect(calls("lock_file")[0].verifyAfter).toBe(true);
+  });
+
+  it("turns the check off from the options menu, and sends that", async () => {
+    setup();
+    await loaded();
+    optionsMenu();
+    expect(verifyItem()).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(verifyItem());
+    expect(verifyItem()).toHaveAttribute("aria-checked", "false");
+    await select("secret.txt");
+    fireEvent.click(toolbarLock());
+    await waitFor(() => expect(calls("lock_file")).toHaveLength(1));
+    expect(calls("lock_file")[0].verifyAfter).toBe(false);
+  });
+
+  it("also tells the time-lock command", async () => {
+    handlers.lock_file_with_timelock = () => ({ name: "secret.txt", success: true, message: "Time-locked for 1 hour and verified" });
+    setup();
+    await loaded();
+    await runMenu("secret.txt", /Time-Lock/);
+    fireEvent.click(await screen.findByText("1 Hour"));
+    fireEvent.click(screen.getByRole("button", { name: /Lock File/ }));
+    await waitFor(() => expect(calls("lock_file_with_timelock")).toHaveLength(1));
+    expect(calls("lock_file_with_timelock")[0].verifyAfter).toBe(true);
+  });
+});
+
+// ─── Upgrading locked files made by older versions ───────────────────────────
+
+describe("FilesView - upgrading older locked files", () => {
+  const OLD_A = `${HOME}\\old-a.qre`;
+  const OLD_B = `${HOME}\\sub\\old-b.qre`;
+  const oldFile = (path: string) => ({ path, name: path.split("\\").pop(), version: 6, locked_until: null });
+  const openUpgrade = async () => {
+    fireEvent.click(advancedButton());
+    fireEvent.click(await screen.findByText("Upgrade Older Locked Files…"));
+  };
+
+  beforeEach(() => {
+    handlers.find_old_format_files = () => [oldFile(OLD_A), oldFile(OLD_B)];
+    handlers.relock_file = (a) =>
+      (a.filePaths as string[]).map((p) => ({ name: p.split("\\").pop(), success: true, message: "Upgraded to the current format" }));
+  });
+
+  it("is in the options menu and scans the folder that is open", async () => {
+    setup();
+    await loaded();
+    await openUpgrade();
+    expect(await screen.findByText("2 locked files")).toBeInTheDocument();
+    expect(calls("find_old_format_files")).toEqual([{ folder: HOME, recursive: true }]);
+  });
+
+  it("scans the folder the user has moved into", async () => {
+    setup();
+    await loaded();
+    fireEvent.doubleClick(screen.getByText("sub"));
+    await loaded("inner.txt");
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    expect(calls("find_old_format_files")[0].folder).toBe(SUB);
+  });
+
+  it("upgrades the files it found, then shows the result and refreshes the list", async () => {
+    setup();
+    await loaded();
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    const listingsBefore = listedPaths().length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade 2 files" }));
+
+    expect(await screen.findByText(/2 files were upgraded to the current format/)).toBeInTheDocument();
+    expect(calls("relock_file")).toHaveLength(1);
+    expect(calls("relock_file")[0].filePaths).toEqual([OLD_A, OLD_B]);
+    expect(listedPaths().length).toBeGreaterThan(listingsBefore);
+  });
+
+  it("sends the selected key file with the request", async () => {
+    mockOpenDialog.mockResolvedValue("C:\\keys\\mine.key");
+    setup();
+    await loaded();
+    fireEvent.click(advancedButton());
+    fireEvent.click(await screen.findByText("Select Keyfile"));
+    await waitFor(() => expect(mockOpenDialog).toHaveBeenCalled());
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    expect(screen.getByText(/The key file you selected will be used/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade 2 files" }));
+    await screen.findByText(/were upgraded/);
+    expect(calls("relock_file")[0].keyfilePath).toBe("C:\\keys\\mine.key");
+  });
+
+  it("sends no key file when none was chosen", async () => {
+    setup();
+    await loaded();
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade 2 files" }));
+    await screen.findByText(/were upgraded/);
+    expect(calls("relock_file")[0].keyfilePath).toBeNull();
+    expect(calls("relock_file")[0].keyfileBytes).toBeNull();
+  });
+
+  it("lists the files that could not be upgraded and why", async () => {
+    handlers.relock_file = (a) =>
+      (a.filePaths as string[]).map((_p, i) =>
+        i === 0
+          ? { name: "old-a.qre", success: false, message: "Decryption Denied. If it was locked with a key file, select that key file and try again." }
+          : { name: "old-b.qre", success: true, message: "Upgraded to the current format" },
+      );
+    setup();
+    await loaded();
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade 2 files" }));
+    expect(await screen.findByText(/old-a\.qre: Decryption Denied/)).toBeInTheDocument();
+    expect(screen.getByText(/1 file was upgraded/)).toBeInTheDocument();
+  });
+
+  it("says so when there is nothing to upgrade, and never calls the upgrade", async () => {
+    handlers.find_old_format_files = () => [];
+    setup();
+    await loaded();
+    await openUpgrade();
+    expect(await screen.findByText(/No locked files in an older format were found here/)).toBeInTheDocument();
+    expect(calls("relock_file")).toHaveLength(0);
+  });
+
+  it("closes without doing anything on Cancel", async () => {
+    setup();
+    await loaded();
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("2 locked files")).not.toBeInTheDocument();
+    expect(calls("relock_file")).toHaveLength(0);
+  });
+
+  it("shows the working overlay on top of the dialog while the upgrade runs", async () => {
+    const run = deferred<unknown>();
+    handlers.relock_file = () => run.promise;
+    setup();
+    await loaded();
+    await openUpgrade();
+    await screen.findByText("2 locked files");
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade 2 files" }));
+    await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+    await act(async () => progressHandler?.({ payload: { status: "Upgrading: old-a.qre", percentage: 20 } }));
+    expect(screen.getByText("Upgrading: old-a.qre")).toBeInTheDocument();
+    await act(async () => run.resolve([ok("old-a.qre"), ok("old-b.qre")]));
+  });
+});
+
+// ─── Upgrading one file from the menu, and upgrading when unlocking ──────────
+
+// The format of each .qre file arrives a moment after the listing. Wait for it before acting.
+const settle = () =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+
+describe("FilesView - the format of each locked file", () => {
+  const OLD = `${HOME}\\old.qre`;
+  const OLD2 = `${HOME}\\old2.qre`;
+  const NEW = `${HOME}\\new.qre`;
+  let formats: Record<string, number>;
+
+  beforeEach(() => {
+    formats = { [OLD]: 6, [OLD2]: 7, [NEW]: 8 };
+    listings[HOME] = [listedFile("secret.txt"), listedFile("old.qre"), listedFile("old2.qre"), listedFile("new.qre")];
+    handlers.get_file_timelock_status = (a) => ({ is_locked: false, locked_until: 0, format_version: formats[a.qrePath] ?? 0 });
+    handlers.relock_file = (a) =>
+      (a.filePaths as string[]).map((p) => {
+        formats[p] = 8; // what the backend does, so the next listing shows the new format
+        return { name: p.split("\\").pop(), success: true, message: "Upgraded to the current format" };
+      });
+  });
+
+  const upgradeItem = () => screen.queryByText("Upgrade Format");
+
+  describe("the menu entry", () => {
+    it.each([
+      ["old.qre", true],
+      ["old2.qre", true],
+      ["new.qre", false],
+      ["secret.txt", false],
+    ])("%s: offers Upgrade Format = %s", async (name, offered) => {
+      setup();
+      await loaded(name);
+      await waitFor(() => expect(calls("get_file_timelock_status").length).toBeGreaterThan(0));
+      await settle();
+      rightClick(name);
+      if (offered) expect(upgradeItem()).toBeInTheDocument();
+      else expect(upgradeItem()).not.toBeInTheDocument();
+    });
+
+    it("treats only versions 5, 6 and 7 as old", async () => {
+      formats = { [OLD]: 5, [OLD2]: 4, [NEW]: 0 };
+      setup();
+      await loaded("old.qre");
+      await settle();
+      rightClick("old.qre");
+      expect(upgradeItem()).toBeInTheDocument();
+      fireEvent.keyDown(document, { key: "Escape" });
+      fireEvent.click(document.querySelector(".modal-overlay") as HTMLElement);
+      rightClick("old2.qre");
+      expect(upgradeItem()).not.toBeInTheDocument();
+    });
+
+    it("does not offer it when the status could not be read", async () => {
+      handlers.get_file_timelock_status = () => {
+        throw new Error("unreadable");
+      };
+      setup();
+      await loaded("old.qre");
+      await settle();
+      rightClick("old.qre");
+      expect(upgradeItem()).not.toBeInTheDocument();
+    });
+  });
+
+  describe("upgrading from the menu", () => {
+    async function openMenuOn(name: string) {
+      setup();
+      await loaded(name);
+      await settle();
+      rightClick(name);
+    }
+
+    it("upgrades that one file and refreshes the folder", async () => {
+      await openMenuOn("old.qre");
+      const before = listedPaths().length;
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD]);
+      expect(calls("unlock_file")).toHaveLength(0);
+      await waitFor(() => expect(listedPaths().length).toBeGreaterThan(before));
+    });
+
+    it("stops offering it once the file is in the current format", async () => {
+      await openMenuOn("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      await settle();
+      // Not inside waitFor: a right-click changes the page, and waitFor re-runs on every change.
+      rightClick("old.qre");
+      expect(upgradeItem()).not.toBeInTheDocument();
+    });
+
+    it("upgrades the old files of a selection and leaves the others out", async () => {
+      setup();
+      await loaded("old.qre");
+      await settle();
+      await select("old.qre", "old2.qre", "new.qre");
+      rightClick("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD, OLD2]);
+    });
+
+    it("sends no key file when none was chosen", async () => {
+      await openMenuOn("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].keyfilePath).toBeNull();
+    });
+
+    it("sends the selected key file", async () => {
+      mockOpenDialog.mockResolvedValue("C:\\keys\\mine.key");
+      setup();
+      await loaded("old.qre");
+      await settle();
+      fireEvent.click(advancedButton());
+      fireEvent.click(await screen.findByText("Select Keyfile"));
+      await waitFor(() => expect(mockOpenDialog).toHaveBeenCalled());
+      fireEvent.click(document.body);
+      rightClick("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].keyfilePath).toBe("C:\\keys\\mine.key");
+    });
+
+    it("shows why a file could not be upgraded", async () => {
+      handlers.relock_file = () => [fail("old.qre", "Local Vault is locked.")];
+      await openMenuOn("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      const msg = await screen.findByText(/Upgrade failed for some items/);
+      expect(msg).toHaveTextContent("old.qre: Local Vault is locked.");
+    });
+
+    it("does not call the backend when nothing in the selection is old", async () => {
+      // Right-clicking an old file while a new one is the only thing selected targets the old file.
+      setup();
+      await loaded("new.qre");
+      await settle();
+      await select("new.qre");
+      rightClick("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD]);
+    });
+  });
+
+  describe("upgrading when unlocking", () => {
+    const unlockSelected = async (...names: string[]) => {
+      await select(...names);
+      fireEvent.click(toolbarUnlock());
+    };
+    const order = () => mockInvoke.mock.calls.map(([c]) => c).filter((c) => c === "unlock_file" || c === "relock_file");
+
+    async function ready(on: boolean) {
+      if (on) localStorage.setItem("qre_upgrade_when_unlocking", "1");
+      setup();
+      await loaded("old.qre");
+      await settle();
+    }
+
+    it("is off by default: unlocking an old file changes nothing else", async () => {
+      await ready(false);
+      await unlockSelected("old.qre");
+      await waitFor(() => expect(calls("unlock_file")).toHaveLength(1));
+      await settle();
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("when on, upgrades the locked copy after it unlocked, in that order", async () => {
+      await ready(true);
+      await unlockSelected("old.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD]);
+      expect(order()).toEqual(["unlock_file", "relock_file"]);
+    });
+
+    it("leaves a file that is already current alone", async () => {
+      await ready(true);
+      await unlockSelected("new.qre");
+      await waitFor(() => expect(calls("unlock_file")).toHaveLength(1));
+      await settle();
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("upgrades only the old files of a mixed selection", async () => {
+      await ready(true);
+      await unlockSelected("old.qre", "new.qre", "old2.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD, OLD2]);
+    });
+
+    it("never upgrades a file that did not unlock", async () => {
+      handlers.unlock_file = (a) =>
+        (a.filePaths as string[]).map((p) => (p === OLD ? fail("old.qre", "Wrong password") : ok(p.split("\\").pop() as string)));
+      await ready(true);
+      await unlockSelected("old.qre", "old2.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD2]);
+      expect(await screen.findByText(/old.qre: Wrong password/)).toBeInTheDocument();
+    });
+
+    it("does not start an upgrade for a time-locked file that stayed locked", async () => {
+      handlers.unlock_file = () => [fail("old.qre", "TIME_LOCKED:1893456000:Locked for 3 days")];
+      await ready(true);
+      await unlockSelected("old.qre");
+      await screen.findByText(/Locked for 3 days/);
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("shows unlock problems and upgrade problems together", async () => {
+      handlers.unlock_file = (a) =>
+        (a.filePaths as string[]).map((p) => (p === OLD ? fail("old.qre", "Wrong password") : ok(p.split("\\").pop() as string)));
+      handlers.relock_file = () => [fail("old2.qre", "Could not replace the old file.")];
+      await ready(true);
+      await unlockSelected("old.qre", "old2.qre");
+      const msg = await screen.findByText(/Upgrade failed for some items/);
+      expect(msg).toHaveTextContent("old.qre: Wrong password");
+      expect(msg).toHaveTextContent("old2.qre: Could not replace the old file.");
+    });
+
+    it("does not report an upgrade as a problem when it works", async () => {
+      await ready(true);
+      await unlockSelected("old.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      await settle();
+      expect(screen.queryByText(/Upgrade failed/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Error")).not.toBeInTheDocument();
+    });
+
+    it("sends the same key file to the upgrade as to the unlock", async () => {
+      mockOpenDialog.mockResolvedValue("C:\\keys\\mine.key");
+      await ready(true);
+      fireEvent.click(advancedButton());
+      fireEvent.click(await screen.findByText("Select Keyfile"));
+      await waitFor(() => expect(mockOpenDialog).toHaveBeenCalled());
+      fireEvent.click(document.body);
+      await unlockSelected("old.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("unlock_file")[0].keyfilePath).toBe("C:\\keys\\mine.key");
+      expect(calls("relock_file")[0].keyfilePath).toBe("C:\\keys\\mine.key");
+    });
+
+    it("also works when a file is dropped on the window to unlock it", async () => {
+      await ready(true);
+      await waitFor(() => expect(windowEvents["tauri://drag-drop"]).toBeDefined());
+      await act(async () => windowEvents["tauri://drag-drop"]({ payload: { paths: [OLD] } }));
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([OLD]);
+    });
+
+    it("is switched on and off in the options menu, and remembered", async () => {
+      await ready(false);
+      fireEvent.click(advancedButton());
+      const item = () => screen.getByRole("menuitemcheckbox", { name: /Upgrade Older Files When Unlocking/ });
+      expect(item()).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(item());
+      expect(localStorage.getItem("qre_upgrade_when_unlocking")).toBe("1");
+      expect(item()).toHaveAttribute("aria-checked", "true");
+
+      fireEvent.click(item());
+      expect(localStorage.getItem("qre_upgrade_when_unlocking")).toBe("0");
+      expect(item()).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("takes effect on the very next unlock after it is switched on", async () => {
+      await ready(false);
+      fireEvent.click(advancedButton());
+      fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Upgrade Older Files When Unlocking/ }));
+      fireEvent.click(document.body);
+      await unlockSelected("old.qre");
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+    });
+  });
+
+  describe("upgrading after extracting from a USB drive", () => {
+    const SEALED = "e:\\usb\\sealed.qre";
+
+    beforeEach(() => {
+      listings[HOME] = [{ name: "sealed.qre", is_directory: false, path: SEALED, size: 100, modified: null }];
+      formats[SEALED] = 6;
+    });
+
+    async function extract(on: boolean) {
+      if (on) localStorage.setItem("qre_upgrade_when_unlocking", "1");
+      setup([drive("E:\\usb\\")]);
+      await loaded("sealed.qre");
+      await settle();
+      await select("sealed.qre");
+      fireEvent.click(toolbarUnlock());
+      await screen.findByText("Extract Files");
+      fireEvent.click(within(extractDialog()).getByText("Desktop"));
+      await waitFor(() => expect(calls("unlock_file")).toHaveLength(1));
+    }
+
+    it("upgrades the file on the drive when the setting is on", async () => {
+      await extract(true);
+      await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+      expect(calls("relock_file")[0].filePaths).toEqual([SEALED]);
+    });
+
+    it("does nothing extra when the setting is off", async () => {
+      await extract(false);
+      await settle();
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("reports an unlock problem and an upgrade problem together", async () => {
+      handlers.unlock_file = () => [ok("sealed.qre")];
+      handlers.relock_file = () => [fail("sealed.qre", "Could not replace the old file.")];
+      await extract(true);
+      expect(await screen.findByText(/sealed.qre: Could not replace the old file./)).toBeInTheDocument();
+    });
+  });
+});
+
+describe("FilesView - telling the user an upgrade worked", () => {
+  const OLD = `${HOME}\\old.qre`;
+  const OLD2 = `${HOME}\\old2.qre`;
+
+  beforeEach(() => {
+    listings[HOME] = [listedFile("secret.txt"), listedFile("old.qre"), listedFile("old2.qre")];
+    handlers.get_file_timelock_status = (a) => ({ is_locked: false, locked_until: 0, format_version: a.qrePath === OLD || a.qrePath === OLD2 ? 6 : 8 });
+    handlers.relock_file = (a) =>
+      (a.filePaths as string[]).map((p) => ({ name: p.split("\\").pop(), success: true, message: "Upgraded to the current format" }));
+  });
+
+  function setupWithToasts() {
+    const props = {
+      onShowBackupReminder: jest.fn(),
+      portable: { drives: [] as PortableDriveState[], isScanning: false, scanDrives: jest.fn(), lockVault: jest.fn() },
+      onInitDrive: jest.fn(),
+      onUnlockDrive: jest.fn(),
+    };
+    return render(
+      <ToastProvider>
+        <FilesView {...props} />
+      </ToastProvider>,
+    );
+  }
+
+  it("says so after one file is upgraded from the menu", async () => {
+    setupWithToasts();
+    await loaded("old.qre");
+    await settle();
+    rightClick("old.qre");
+    fireEvent.click(screen.getByText("Upgrade Format"));
+    const toast = (await screen.findByText("Upgraded 1 file to the current format.")).closest(".ui-toast");
+    expect(toast).toHaveClass("ui-toast--success");
+  });
+
+  it("gives the number when several files are upgraded", async () => {
+    setupWithToasts();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre", "old2.qre");
+    rightClick("old.qre");
+    fireEvent.click(screen.getByText("Upgrade Format"));
+    expect(await screen.findByText("Upgraded 2 files to the current format.")).toBeInTheDocument();
+  });
+
+  it("says so after the upgrade that follows an unlock", async () => {
+    localStorage.setItem("qre_upgrade_when_unlocking", "1");
+    setupWithToasts();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre");
+    fireEvent.click(toolbarUnlock());
+    expect(await screen.findByText("Upgraded 1 file to the current format.")).toBeInTheDocument();
+  });
+
+  it("says nothing of success when nothing was upgraded", async () => {
+    handlers.relock_file = () => [fail("old.qre", "Local Vault is locked.")];
+    setupWithToasts();
+    await loaded("old.qre");
+    await settle();
+    rightClick("old.qre");
+    fireEvent.click(screen.getByText("Upgrade Format"));
+    await screen.findByText(/Upgrade failed for some items/);
+    expect(screen.queryByText(/Upgraded \d+ files? to the current format/)).not.toBeInTheDocument();
+  });
+
+  it("does not call a file that was already current a success", async () => {
+    handlers.relock_file = () => [{ name: "old.qre", success: true, message: "Already in the current format" }];
+    setupWithToasts();
+    await loaded("old.qre");
+    await settle();
+    rightClick("old.qre");
+    fireEvent.click(screen.getByText("Upgrade Format"));
+    await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+    await settle();
+    expect(screen.queryByText(/Upgraded \d+ files? to the current format/)).not.toBeInTheDocument();
+  });
+});
+
+describe("FilesView - the format badge in the details panel", () => {
+  const panel = () => screen.getByRole("complementary", { name: "Details" });
+  const toggle = () =>
+    fireEvent.click(within(screen.getByRole("region", { name: "Selection" })).getByRole("button", { name: "Details" }));
+  const OLD = `${HOME}\\old.qre`;
+  const NEW = `${HOME}\\new.qre`;
+  let formats: Record<string, number>;
+
+  beforeEach(() => {
+    formats = { [OLD]: 6, [NEW]: 8, [`${HOME}\\old2.qre`]: 7 };
+    listings[HOME] = [listedFile("secret.txt"), listedFile("old.qre"), listedFile("old2.qre"), listedFile("new.qre")];
+    handlers.get_file_timelock_status = (a) => ({ is_locked: false, locked_until: 0, format_version: formats[a.qrePath] ?? 0 });
+  });
+
+  it("marks a file made by an older version, with its version number", async () => {
+    setup();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre");
+    toggle();
+    expect(within(panel()).getByText("Older format (version 6)")).toHaveClass("ui-badge--warn");
+    expect(within(panel()).getByText(/Right-click it and choose Upgrade Format/)).toBeInTheDocument();
+  });
+
+  it("marks a current file as current", async () => {
+    setup();
+    await loaded("new.qre");
+    await settle();
+    await select("new.qre");
+    toggle();
+    expect(within(panel()).getByText("Current format")).toHaveClass("ui-badge--ok");
+  });
+
+  it("follows the selection from an old file to a current one", async () => {
+    setup();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre");
+    toggle();
+    expect(within(panel()).getByText("Older format (version 6)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("new.qre"));
+    expect(within(panel()).queryByText(/Older format/)).not.toBeInTheDocument();
+    expect(within(panel()).getByText("Current format")).toBeInTheDocument();
+  });
+
+  it("shows no format for a plain file", async () => {
+    setup();
+    await loaded("old.qre");
+    await settle();
+    await select("secret.txt");
+    toggle();
+    expect(within(panel()).queryByText("Format")).not.toBeInTheDocument();
+  });
+
+  it("counts the older files when several are selected", async () => {
+    setup();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre", "old2.qre", "new.qre");
+    toggle();
+    expect(within(panel()).getByText("2 files")).toHaveClass("ui-badge--warn");
+  });
+
+  it("shows nothing about the format until the version has arrived", async () => {
+    const answer = deferred<unknown>();
+    handlers.get_file_timelock_status = () => answer.promise;
+    setup();
+    await loaded("old.qre");
+    await select("old.qre");
+    toggle();
+    expect(within(panel()).queryByText("Format")).not.toBeInTheDocument();
+    await act(async () => answer.resolve({ is_locked: false, locked_until: 0, format_version: 6 }));
+    expect(await within(panel()).findByText("Older format (version 6)")).toBeInTheDocument();
+  });
+
+  it("updates after the file is upgraded", async () => {
+    handlers.relock_file = (a) =>
+      (a.filePaths as string[]).map((p) => {
+        formats[p] = 8;
+        return { name: p.split("\\").pop(), success: true, message: "Upgraded to the current format" };
+      });
+    setup();
+    await loaded("old.qre");
+    await settle();
+    await select("old.qre");
+    toggle();
+    expect(within(panel()).getByText("Older format (version 6)")).toBeInTheDocument();
+
+    // The name is in the list and in the panel; the list comes first.
+    fireEvent.contextMenu(screen.getAllByText("old.qre")[0]);
+    fireEvent.click(screen.getByText("Upgrade Format"));
+    await waitFor(() => expect(calls("relock_file")).toHaveLength(1));
+    // Reloading the folder clears the selection, so pick the file again: its format has been re-read.
+    await settle();
+    fireEvent.click(screen.getByText("old.qre"));
+    expect(await within(panel()).findByText("Current format")).toBeInTheDocument();
+    expect(within(panel()).queryByText(/Older format/)).not.toBeInTheDocument();
+  });
+});
+
+// ─── Cancelling a job that is running ────────────────────────────────────────
+
+describe("FilesView - cancelling a lock, unlock or upgrade", () => {
+  const cancelCalls = () => calls("cancel_operation");
+  const cancelled = (name: string) => ({ name, success: false, message: "Cancelled." });
+  const notStarted = (n: number) => ({ name: n === 1 ? "1 more file" : `${n} more files`, success: false, message: "Cancelled. Not started." });
+  const overlay = () => screen.queryByRole("dialog", { name: "Processing" });
+  const cancelButton = () => within(overlay()!).getByRole("button", { name: "Cancel" });
+  const escape = () => fireEvent.keyDown(window, { key: "Escape" });
+
+  function renderWithToasts() {
+    const props = {
+      onShowBackupReminder: jest.fn(),
+      portable: { drives: [] as PortableDriveState[], isScanning: false, scanDrives: jest.fn(), lockVault: jest.fn() },
+      onInitDrive: jest.fn(),
+      onUnlockDrive: jest.fn(),
+    };
+    render(
+      <ToastProvider>
+        <FilesView {...props} />
+      </ToastProvider>,
+    );
+    return props;
+  }
+
+  async function startLock(names: string[] = ["secret.txt"]) {
+    const run = deferred<unknown>();
+    handlers.lock_file = () => run.promise;
+    const props = renderWithToasts();
+    await loaded();
+    await select(...names);
+    fireEvent.click(toolbarLock());
+    await waitFor(() => expect(overlay()).toBeInTheDocument());
+    return { run, props };
+  }
+
+  describe("the overlay", () => {
+    it("offers Cancel while a lock runs, and says Esc does the same", async () => {
+      await startLock();
+      expect(cancelButton()).toBeEnabled();
+      expect(within(overlay()!).getByText(/Or press Esc/)).toBeInTheDocument();
+    });
+
+    it("Cancel asks the backend to stop, once, and the overlay says it is stopping", async () => {
+      const { run } = await startLock();
+      fireEvent.click(cancelButton());
+      await waitFor(() => expect(cancelCalls()).toHaveLength(1));
+      expect(await within(overlay()!).findByRole("heading", { name: "Cancelling..." })).toBeInTheDocument();
+      expect(within(overlay()!).getByRole("button", { name: "Stopping..." })).toBeDisabled();
+      await act(async () => run.resolve([cancelled("secret.txt")]));
+    });
+
+    it("Escape does the same as the button", async () => {
+      const { run } = await startLock();
+      escape();
+      await waitFor(() => expect(cancelCalls()).toHaveLength(1));
+      escape();
+      await act(async () => {});
+      expect(cancelCalls()).toHaveLength(1);
+      await act(async () => run.resolve([cancelled("secret.txt")]));
+    });
+
+    it("goes away when the job has stopped, and a new job can be started and cancelled", async () => {
+      const { run } = await startLock();
+      escape();
+      await act(async () => run.resolve([cancelled("secret.txt")]));
+      await waitFor(() => expect(overlay()).not.toBeInTheDocument());
+
+      const second = deferred<unknown>();
+      handlers.lock_file = () => second.promise;
+      // The folder reload that follows a job clears the selection, so pick the file again.
+      await select("secret.txt");
+      fireEvent.click(toolbarLock());
+      await waitFor(() => expect(overlay()).toBeInTheDocument());
+      expect(within(overlay()!).queryByRole("heading", { name: "Cancelling..." })).not.toBeInTheDocument();
+      escape();
+      await waitFor(() => expect(cancelCalls()).toHaveLength(2));
+      await act(async () => second.resolve([cancelled("secret.txt")]));
+    });
+
+    it("Escape with nothing running asks for nothing", async () => {
+      renderWithToasts();
+      await loaded();
+      escape();
+      await act(async () => {});
+      expect(cancelCalls()).toHaveLength(0);
+    });
+
+    it("shows no Cancel for progress that is not a lock, unlock or upgrade", async () => {
+      renderWithToasts();
+      await loaded();
+      await act(async () => progressHandler?.({ payload: { status: "Deleting: old.txt", percentage: 40 } }));
+      expect(overlay()).toBeInTheDocument();
+      expect(within(overlay()!).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+      escape();
+      await act(async () => {});
+      expect(cancelCalls()).toHaveLength(0);
+    });
+  });
+
+  describe("after a lock was cancelled", () => {
+    it("says so and does not call it a failure or ask for a backup", async () => {
+      const { run, props } = await startLock();
+      escape();
+      await act(async () => run.resolve([cancelled("secret.txt")]));
+      expect(await screen.findByText("Cancelled. Nothing was changed.")).toBeInTheDocument();
+      expect(screen.queryByText(/Locking failed/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Error")).not.toBeInTheDocument();
+      expect(props.onShowBackupReminder).not.toHaveBeenCalled();
+    });
+
+    it("says how many files were finished before the stop", async () => {
+      const { run } = await startLock(["secret.txt", "vault.qre"]);
+      escape();
+      await act(async () => run.resolve([ok("secret.txt"), cancelled("vault.qre"), notStarted(2)]));
+      expect(
+        await screen.findByText("Cancelled. 1 file was locked before you stopped. The rest were left as they were."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Locking failed/)).not.toBeInTheDocument();
+    });
+
+    it("still reports a real failure, without the cancelled lines", async () => {
+      const { run } = await startLock(["secret.txt", "vault.qre"]);
+      escape();
+      await act(async () => run.resolve([fail("secret.txt", "Local Vault is locked."), cancelled("vault.qre"), notStarted(1)]));
+      const msg = await screen.findByText(/Locking failed for some items/);
+      expect(msg).toHaveTextContent("secret.txt: Local Vault is locked.");
+      expect(msg).not.toHaveTextContent("Cancelled");
+      expect(msg).not.toHaveTextContent("more file");
+    });
+
+    it("refreshes the folder so the finished files show", async () => {
+      const { run } = await startLock();
+      const before = listedPaths().length;
+      escape();
+      await act(async () => run.resolve([cancelled("secret.txt")]));
+      await waitFor(() => expect(listedPaths().length).toBeGreaterThan(before));
+    });
+
+    it("a lock that finished normally still asks for a backup", async () => {
+      const { run, props } = await startLock();
+      await act(async () => run.resolve([ok("secret.txt")]));
+      await waitFor(() => expect(props.onShowBackupReminder).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  describe("after an unlock was cancelled", () => {
+    const OLD = `${HOME}\\old.qre`;
+
+    async function startUnlock(autoUpgrade: boolean) {
+      if (autoUpgrade) localStorage.setItem("qre_upgrade_when_unlocking", "1");
+      listings[HOME] = [listedFile("secret.txt"), listedFile("old.qre")];
+      handlers.get_file_timelock_status = (a) => ({ is_locked: false, locked_until: 0, format_version: a.qrePath === OLD ? 6 : 0 });
+      const run = deferred<unknown>();
+      handlers.unlock_file = () => run.promise;
+      renderWithToasts();
+      await loaded("old.qre");
+      await settle();
+      await select("old.qre");
+      fireEvent.click(toolbarUnlock());
+      await waitFor(() => expect(overlay()).toBeInTheDocument());
+      return run;
+    }
+
+    it("says so, and does not call it an unlock failure", async () => {
+      const run = await startUnlock(false);
+      escape();
+      await act(async () => run.resolve([cancelled("old.qre")]));
+      expect(await screen.findByText("Cancelled. Nothing was changed.")).toBeInTheDocument();
+      expect(screen.queryByText(/Unlock failed/)).not.toBeInTheDocument();
+      expect(screen.queryByText("Error")).not.toBeInTheDocument();
+    });
+
+    it("does not start the automatic upgrade after the user stopped the unlock", async () => {
+      const run = await startUnlock(true);
+      escape();
+      await act(async () => run.resolve([ok("old.qre"), cancelled("old.qre")].slice(1)));
+      await screen.findByText("Cancelled. Nothing was changed.");
+      await act(async () => {});
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("counts a file that was unlocked before the stop, and does not upgrade after the stop", async () => {
+      const run = await startUnlock(true);
+      escape();
+      await act(async () => run.resolve([ok("old.qre"), notStarted(1)]));
+      expect(
+        await screen.findByText("Cancelled. 1 file was unlocked before you stopped. The rest were left as they were."),
+      ).toBeInTheDocument();
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+
+    it("still shows a real unlock failure next to the stop", async () => {
+      const run = await startUnlock(false);
+      escape();
+      await act(async () => run.resolve([fail("old.qre", "Wrong password"), notStarted(1)]));
+      const msg = await screen.findByText(/Unlock failed/);
+      expect(msg).toHaveTextContent("old.qre: Wrong password");
+      expect(msg).not.toHaveTextContent("Cancelled");
+    });
+  });
+
+  describe("after an upgrade was cancelled", () => {
+    const OLD = `${HOME}\\old.qre`;
+
+    async function startUpgrade() {
+      listings[HOME] = [listedFile("secret.txt"), listedFile("old.qre")];
+      handlers.get_file_timelock_status = (a) => ({ is_locked: false, locked_until: 0, format_version: a.qrePath === OLD ? 6 : 0 });
+      const run = deferred<unknown>();
+      handlers.relock_file = () => run.promise;
+      renderWithToasts();
+      await loaded("old.qre");
+      await settle();
+      rightClick("old.qre");
+      fireEvent.click(screen.getByText("Upgrade Format"));
+      await waitFor(() => expect(overlay()).toBeInTheDocument());
+      return run;
+    }
+
+    it("says so and shows no failure", async () => {
+      const run = await startUpgrade();
+      escape();
+      await waitFor(() => expect(cancelCalls()).toHaveLength(1));
+      await act(async () =>
+        run.resolve([{ name: "old.qre", success: false, message: "Cancelled. The old file was not changed." }]),
+      );
+      expect(await screen.findByText("Cancelled. Nothing was changed.")).toBeInTheDocument();
+      expect(screen.queryByText(/Upgrade failed/)).not.toBeInTheDocument();
+    });
+
+    it("says how many were upgraded before the stop", async () => {
+      const run = await startUpgrade();
+      escape();
+      await act(async () =>
+        run.resolve([{ name: "a.qre", success: true, message: "Upgraded to the current format" }, cancelled("old.qre")]),
+      );
+      expect(
+        await screen.findByText("Cancelled. 1 file was upgraded before you stopped. The rest were left as they were."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Upgraded 1 file to the current format/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("an unlock to a chosen folder (USB vault)", () => {
+    it("says so when it was stopped, and does not start the automatic upgrade", async () => {
+      localStorage.setItem("qre_upgrade_when_unlocking", "1");
+      listings[HOME] = [{ name: "sealed.qre", is_directory: false, path: "e:\\usb\\sealed.qre", size: 100, modified: null }];
+      handlers.get_file_timelock_status = () => ({ is_locked: false, locked_until: 0, format_version: 6 });
+      const run = deferred<unknown>();
+      handlers.unlock_file = () => run.promise;
+      render(
+        <ToastProvider>
+          <FilesView
+            onShowBackupReminder={jest.fn()}
+            portable={{ drives: [drive("E:\\usb\\")], isScanning: false, scanDrives: jest.fn(), lockVault: jest.fn() }}
+            onInitDrive={jest.fn()}
+            onUnlockDrive={jest.fn()}
+          />
+        </ToastProvider>,
+      );
+      await loaded("sealed.qre");
+      await settle();
+      await select("sealed.qre");
+      fireEvent.click(toolbarUnlock());
+      await screen.findByText("Extract Files");
+      fireEvent.click(within(extractDialog()).getByText("Desktop"));
+      await waitFor(() => expect(overlay()).toBeInTheDocument());
+      escape();
+      await act(async () => run.resolve([cancelled("sealed.qre")]));
+      expect(await screen.findByText("Cancelled. Nothing was changed.")).toBeInTheDocument();
+      expect(screen.queryByText(/Unlock failed/)).not.toBeInTheDocument();
+      expect(calls("relock_file")).toHaveLength(0);
+    });
+  });
+});
+
+// ─── Copy and paste with other programs ──────────────────────────────────────
+
+describe("FilesView - the system clipboard", () => {
+  const OTHER = "D:\\from explorer\\photo.jpg";
+  const OTHER2 = "D:\\from explorer\\notes.txt";
+  const NOT_SUPPORTED = "Copying files to the system clipboard is not supported on this system.";
+  let osClip: { supported: boolean; paths: string[]; cut: boolean };
+  const emptyClip = () => ({ supported: true, paths: [] as string[], cut: false });
+
+  /** A Windows-like clipboard: what the app sets is what it reads back, and another program can replace it. */
+  function windowsClipboard() {
+    osClip = emptyClip();
+    handlers.set_clipboard_files = (a) => {
+      osClip = { supported: true, paths: a.paths, cut: a.cut };
+      return null;
+    };
+    handlers.get_clipboard_files = () => osClip;
+    handlers.clear_clipboard_files = () => {
+      osClip = emptyClip();
+      return null;
+    };
+  }
+
+  /** What the other systems do: the calls say "not supported" and the screen keeps its own list. */
+  function noSystemClipboard() {
+    handlers.set_clipboard_files = () => {
+      throw NOT_SUPPORTED;
+    };
+    handlers.get_clipboard_files = () => ({ supported: false, paths: [], cut: false });
+  }
+
+  function renderWithToasts() {
+    render(
+      <ToastProvider>
+        <FilesView
+          onShowBackupReminder={jest.fn()}
+          portable={{ drives: [], isScanning: false, scanDrives: jest.fn(), lockVault: jest.fn() }}
+          onInitDrive={jest.fn()}
+          onUnlockDrive={jest.fn()}
+        />
+      </ToastProvider>,
+    );
+  }
+
+  // A shortcut can start async work (the copy goes on to the system clipboard), so it runs in act.
+  const ctrl = async (key: string, init: KeyboardEventInit = {}) => {
+    await act(async () => {
+      pressKey(key, { ctrlKey: true, ...init });
+    });
+  };
+  const pasteCalls = () => calls("paste_items");
+
+  beforeEach(() => windowsClipboard());
+
+  describe("copying and cutting", () => {
+    it("Copy in the menu puts the file on the system clipboard", async () => {
+      setup();
+      await loaded();
+      await runMenu("secret.txt", "Copy");
+      await waitFor(() => expect(calls("set_clipboard_files")).toEqual([{ paths: [SECRET], cut: false }]));
+    });
+
+    it("Cut in the menu puts the whole selection there, marked as a cut", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt", "vault.qre");
+      await runMenu("vault.qre", "Cut");
+      await waitFor(() => expect(calls("set_clipboard_files")).toEqual([{ paths: [SECRET, VAULT], cut: true }]));
+    });
+
+    it("Ctrl+C copies the selection", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(calls("set_clipboard_files")).toEqual([{ paths: [SECRET], cut: false }]));
+      expect(statusBar()).toHaveTextContent("1 item(s) copied");
+    });
+
+    it("Ctrl+X cuts the selection", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt", "vault.qre");
+      await ctrl("x");
+      await waitFor(() => expect(calls("set_clipboard_files")).toEqual([{ paths: [SECRET, VAULT], cut: true }]));
+      expect(statusBar()).toHaveTextContent("2 item(s) cut");
+    });
+
+    it("Cmd+C works the same on a Mac, and capital letters count (Caps Lock)", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      pressKey("c", { metaKey: true });
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      pressKey("C", { ctrlKey: true });
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(2));
+    });
+
+    it("Ctrl+C with nothing selected does nothing", async () => {
+      setup();
+      await loaded();
+      await ctrl("c");
+      await ctrl("x");
+      await act(async () => {});
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(statusBar()).not.toHaveTextContent("copied");
+    });
+
+    it("leaves Ctrl+C alone when the user has marked text on the page", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      jest.spyOn(window, "getSelection").mockReturnValue({ toString: () => "marked words" } as unknown as Selection);
+      const event = new KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      await act(async () => {});
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it("leaves Ctrl+C, X and V to a text box", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      const box = document.createElement("input");
+      document.body.appendChild(box);
+      for (const key of ["c", "x", "v"]) pressKey(key, { ctrlKey: true }, box);
+      await act(async () => {});
+      box.remove();
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(calls("get_clipboard_files")).toHaveLength(0);
+    });
+
+    it("ignores other combinations such as Ctrl+Shift+C and Ctrl+Alt+V", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c", { shiftKey: true });
+      await ctrl("v", { altKey: true });
+      await act(async () => {});
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(calls("get_clipboard_files")).toHaveLength(0);
+    });
+
+    it("ignores the shortcuts while a menu or a dialog is open", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      rightClick("secret.txt");
+      await ctrl("c");
+      await ctrl("v");
+      await act(async () => {});
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(pasteCalls()).toHaveLength(0);
+    });
+
+    it("tells the user when the file reached only the list inside QRE", async () => {
+      handlers.set_clipboard_files = () => {
+        throw "The clipboard is in use by another program. Try again.";
+      };
+      renderWithToasts();
+      await loaded();
+      await runMenu("secret.txt", "Copy");
+      expect(await screen.findByText(/Copied inside QRE only/)).toHaveTextContent("in use by another program");
+      expect(statusBar()).toHaveTextContent("1 item(s) copied");
+    });
+
+    it("says nothing extra where the system clipboard is simply not supported", async () => {
+      noSystemClipboard();
+      renderWithToasts();
+      await loaded();
+      await runMenu("secret.txt", "Copy");
+      await act(async () => {});
+      expect(screen.queryByText(/Copied inside QRE only/)).not.toBeInTheDocument();
+      expect(statusBar()).toHaveTextContent("1 item(s) copied");
+    });
+  });
+
+  describe("pasting what QRE copied", () => {
+    it("Ctrl+V pastes the copied file into the open folder", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      fireEvent.doubleClick(screen.getByText("sub"));
+      await loaded("inner.txt");
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [SECRET], destDir: SUB, isCut: false }]));
+    });
+
+    it("a copy stays on the clipboard after pasting, a cut does not", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toHaveLength(1));
+      await act(async () => {});
+      expect(calls("clear_clipboard_files")).toHaveLength(0);
+      expect(osClip.paths).toEqual([SECRET]);
+
+      await loaded();
+      await select("secret.txt");
+      await ctrl("x");
+      await waitFor(() => expect(osClip.cut).toBe(true));
+      await ctrl("v");
+      await waitFor(() => expect(calls("clear_clipboard_files")).toHaveLength(1));
+      expect(osClip.paths).toEqual([]);
+      await waitFor(() => expect(statusBar()).not.toHaveTextContent("cut"));
+    });
+
+    it("a cut that failed to paste stays on both clipboards", async () => {
+      handlers.paste_items = () => {
+        throw "backend down";
+      };
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("x");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      await ctrl("v");
+      await screen.findByText("backend down");
+      expect(calls("clear_clipboard_files")).toHaveLength(0);
+      expect(osClip.paths).toEqual([SECRET]);
+      expect(statusBar()).toHaveTextContent("1 item(s) cut");
+    });
+
+    it("a second Ctrl+V while the first paste runs does not paste twice", async () => {
+      const run = deferred<unknown>();
+      handlers.paste_items = () => run.promise;
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toHaveLength(1));
+      await ctrl("v");
+      await act(async () => {});
+      expect(pasteCalls()).toHaveLength(1);
+      await act(async () => run.resolve([ok(SECRET)]));
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toHaveLength(2));
+    });
+
+    it("Paste Here in the menu does the same as Ctrl+V", async () => {
+      setup();
+      await loaded();
+      await runMenu("secret.txt", "Copy");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      await openBackgroundMenu();
+      fireEvent.click(await within(document.querySelector(".dropdown-menu") as HTMLElement).findByText("Paste Here"));
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [SECRET], destDir: HOME, isCut: false }]));
+    });
+
+    it("Escape drops the copy on the system clipboard too", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(osClip.paths).toEqual([SECRET]));
+      pressKey("Escape");
+      await waitFor(() => expect(osClip.paths).toEqual([]));
+      expect(statusBar()).not.toHaveTextContent("copied");
+    });
+
+    it("Escape does not touch the system clipboard when QRE never put anything there", async () => {
+      setup();
+      await loaded();
+      osClip = { supported: true, paths: [OTHER], cut: false };
+      pressKey("Escape");
+      await act(async () => {});
+      expect(calls("clear_clipboard_files")).toHaveLength(0);
+      expect(osClip.paths).toEqual([OTHER]);
+    });
+  });
+
+  describe("pasting what another program copied", () => {
+    it("Ctrl+V pastes files copied in Explorer", async () => {
+      setup();
+      await loaded();
+      osClip = { supported: true, paths: [OTHER, OTHER2], cut: false };
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [OTHER, OTHER2], destDir: HOME, isCut: false }]));
+    });
+
+    it("moves them when they were cut in Explorer, and empties the clipboard after", async () => {
+      setup();
+      await loaded();
+      osClip = { supported: true, paths: [OTHER], cut: true };
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [OTHER], destDir: HOME, isCut: true }]));
+      await waitFor(() => expect(calls("clear_clipboard_files")).toHaveLength(1));
+    });
+
+    it("pastes what Explorer copied last, not what QRE copied before", async () => {
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(osClip.paths).toEqual([SECRET]));
+      osClip = { supported: true, paths: [OTHER], cut: false };
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()[0].sources).toEqual([OTHER]));
+    });
+
+    it("says so when the clipboard holds no files (the user copied text since)", async () => {
+      renderWithToasts();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(osClip.paths).toEqual([SECRET]));
+      osClip = emptyClip();
+      await ctrl("v");
+      expect(await screen.findByText("There are no copied files to paste.")).toBeInTheDocument();
+      expect(pasteCalls()).toHaveLength(0);
+      expect(statusBar()).not.toHaveTextContent("copied");
+    });
+
+    it("says so when nothing was ever copied", async () => {
+      renderWithToasts();
+      await loaded();
+      await ctrl("v");
+      expect(await screen.findByText("There are no copied files to paste.")).toBeInTheDocument();
+      expect(pasteCalls()).toHaveLength(0);
+    });
+
+    it("offers Paste Here for files copied in another program", async () => {
+      setup();
+      await loaded();
+      osClip = { supported: true, paths: [OTHER], cut: false };
+      await openBackgroundMenu();
+      expect(await within(document.querySelector(".dropdown-menu") as HTMLElement).findByText("Paste Here")).toBeInTheDocument();
+      fireEvent.click(menuItem("Paste Here"));
+      await waitFor(() => expect(pasteCalls()[0].sources).toEqual([OTHER]));
+    });
+
+    it("offers no Paste Here when the clipboard holds no files", async () => {
+      setup();
+      await loaded();
+      await openBackgroundMenu();
+      await waitFor(() => expect(calls("get_clipboard_files")).toHaveLength(1));
+      await act(async () => {});
+      expect(screen.queryByText("Paste Here")).not.toBeInTheDocument();
+    });
+
+    it("offers no Paste Here when asking the clipboard fails", async () => {
+      handlers.get_clipboard_files = () => {
+        throw "The clipboard is in use by another program. Try again.";
+      };
+      setup();
+      await loaded();
+      await openBackgroundMenu();
+      await waitFor(() => expect(calls("get_clipboard_files")).toHaveLength(1));
+      await act(async () => {});
+      expect(screen.queryByText("Paste Here")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("when the system clipboard cannot be used", () => {
+    it("Copy and paste still work inside QRE", async () => {
+      noSystemClipboard();
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await act(async () => {});
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [SECRET], destDir: HOME, isCut: false }]));
+    });
+
+    it("a cut is moved and the list is emptied", async () => {
+      noSystemClipboard();
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("x");
+      await act(async () => {});
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()[0].isCut).toBe(true));
+      await waitFor(() => expect(statusBar()).not.toHaveTextContent("cut"));
+    });
+
+    it("a copy that never reached the system clipboard is still pasted, even though it reports no files", async () => {
+      handlers.set_clipboard_files = () => {
+        throw "Could not put the files on the clipboard.";
+      };
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await act(async () => {});
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()).toEqual([{ sources: [SECRET], destDir: HOME, isCut: false }]));
+    });
+
+    it("falls back to the list inside QRE when reading the clipboard fails", async () => {
+      handlers.get_clipboard_files = () => {
+        throw "The clipboard is in use by another program. Try again.";
+      };
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await waitFor(() => expect(calls("set_clipboard_files")).toHaveLength(1));
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()[0].sources).toEqual([SECRET]));
+    });
+
+    it("an old backend that knows none of these commands still gets the list inside QRE", async () => {
+      // The fake backend answers null to commands it has no handler for.
+      delete handlers.set_clipboard_files;
+      delete handlers.get_clipboard_files;
+      delete handlers.clear_clipboard_files;
+      setup();
+      await loaded();
+      await select("secret.txt");
+      await ctrl("c");
+      await act(async () => {});
+      await ctrl("v");
+      await waitFor(() => expect(pasteCalls()[0].sources).toEqual([SECRET]));
+    });
+  });
+
+  describe("on Android", () => {
+    it("never calls the system clipboard, and copy and paste stay inside the app", async () => {
+      mockPlatform.mockReturnValue("android");
+      listings[ANDROID_HOME] = listings[HOME];
+      setup();
+      await loaded();
+      await runMenu("secret.txt", "Copy");
+      await openBackgroundMenu();
+      fireEvent.click(menuItem("Paste Here"));
+      await waitFor(() => expect(pasteCalls()).toHaveLength(1));
+      expect(calls("set_clipboard_files")).toHaveLength(0);
+      expect(calls("get_clipboard_files")).toHaveLength(0);
+      expect(calls("clear_clipboard_files")).toHaveLength(0);
+    });
   });
 });

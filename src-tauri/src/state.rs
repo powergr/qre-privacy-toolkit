@@ -1,3 +1,4 @@
+use crate::cancel::CancelFlag;
 use crate::keychain::MasterKey;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,10 @@ pub struct SessionState {
     ///   - Ghost-file detection: reject encrypt if source is on a portable drive.
     ///   - Vault routing: use the correct key when decrypting a file on a USB drive.
     pub portable_mounts: Arc<Mutex<HashMap<String, VaultId>>>,
+
+    /// Raised by the window's Cancel button. The one job that is running stops at its next step
+    /// (see cancel.rs). Each job clears it when it starts.
+    pub cancel: CancelFlag,
 }
 
 impl SessionState {
@@ -24,6 +29,7 @@ impl SessionState {
         Self {
             vaults: Arc::new(Mutex::new(HashMap::new())),
             portable_mounts: Arc::new(Mutex::new(HashMap::new())),
+            cancel: crate::cancel::new_flag(),
         }
     }
 }

@@ -208,3 +208,47 @@ describe("ContextMenu - positioning", () => {
     expect(menu().style.top).toBe("400px");
   });
 });
+
+describe("ContextMenu - Upgrade Format", () => {
+  const QRE = "C:\\docs\\old.qre";
+  const item = () => screen.getByText("Upgrade Format").closest(".dropdown-item") as HTMLElement;
+
+  it("is offered below Unlock for a locked file that can be upgraded", () => {
+    renderMenu({ targetPath: QRE, canUpgrade: true });
+    const labels = Array.from(document.querySelectorAll(".dropdown-menu .dropdown-item")).map((i) => i.textContent?.trim());
+    expect(labels.indexOf("Upgrade Format")).toBe(labels.indexOf("Unlock") + 1);
+  });
+
+  it("is not offered for a locked file already in the current format", () => {
+    renderMenu({ targetPath: QRE, canUpgrade: false });
+    expect(screen.queryByText("Upgrade Format")).not.toBeInTheDocument();
+    expect(screen.getByText("Unlock")).toBeInTheDocument();
+  });
+
+  it("is not offered when nothing says the file can be upgraded", () => {
+    renderMenu({ targetPath: QRE });
+    expect(screen.queryByText("Upgrade Format")).not.toBeInTheDocument();
+  });
+
+  it("is never offered for a file that is not locked, even if told it can be", () => {
+    renderMenu({ targetPath: FILE, canUpgrade: true });
+    expect(screen.queryByText("Upgrade Format")).not.toBeInTheDocument();
+  });
+
+  it("is not offered on the empty background", () => {
+    renderMenu({ targetPath: QRE, isBackground: true, canUpgrade: true });
+    expect(screen.queryByText("Upgrade Format")).not.toBeInTheDocument();
+  });
+
+  it("reports the action named upgrade, and nothing else", () => {
+    const { onAction } = renderMenu({ targetPath: QRE, canUpgrade: true });
+    fireEvent.click(item());
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith("upgrade");
+  });
+
+  it("says in a tooltip why it is there", () => {
+    renderMenu({ targetPath: QRE, canUpgrade: true });
+    expect(item()).toHaveAttribute("title", expect.stringContaining("shows its file name"));
+  });
+});

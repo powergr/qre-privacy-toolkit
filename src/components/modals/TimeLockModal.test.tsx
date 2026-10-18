@@ -64,6 +64,22 @@ describe("TimeLockModal - layout", () => {
     expect(screen.getByText("report.pdf")).toBeInTheDocument();
   });
 
+  it("says plainly that the lock is kept by the app and what it does not stop", () => {
+    setup();
+    const note = screen.getByTestId("timelock-honesty");
+    expect(note).toHaveTextContent("kept by the app, not by the encryption");
+    expect(note).toHaveTextContent("mistake or on impulse");
+    expect(note).toHaveTextContent("does not stop someone who knows your master password");
+  });
+
+  it("shows that note before any date is chosen, and while locking", async () => {
+    setup();
+    expect(screen.getByTestId("timelock-honesty")).toBeInTheDocument();
+    preset("1 Hour");
+    await confirm();
+    expect(screen.getByTestId("timelock-honesty")).toBeInTheDocument();
+  });
+
   it("is an accessible dialog and takes focus", () => {
     setup();
     const dialog = screen.getByRole("dialog");
@@ -99,7 +115,7 @@ describe("TimeLockModal - choosing a time", () => {
     expect(screen.getByText(`Unlocks in ${wording}`)).toBeInTheDocument();
     await confirm();
 
-    expect(lockCalls()[0][1]).toEqual({ filePath: FILE, unlockAt: NOW_SECS + secs, compressionMode: "auto" });
+    expect(lockCalls()[0][1]).toEqual({ filePath: FILE, unlockAt: NOW_SECS + secs, compressionMode: "auto", verifyAfter: null });
     expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 
@@ -261,12 +277,12 @@ describe("TimeLockModal - when the backend answers", () => {
 
     expect(screen.getByText("Locking…")).toBeInTheDocument();
     expect(lockButton()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "1 Week" })).toBeDisabled();
     expect(customInput()).toBeDisabled();
 
-    fireEvent.keyDown(window, { key: "Escape" });
+    // Cancel has become Stop: it asks the running lock to end and does not close the dialog.
+    expect(screen.getByRole("button", { name: "Stop (Esc)" })).toBeEnabled();
     fireEvent.click(document.querySelector("div[style*='position: fixed']")!);
     expect(onClose).not.toHaveBeenCalled();
 
@@ -298,5 +314,114 @@ describe("TimeLockModal - closing", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("dialog").parentElement!);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TimeLockModal - stopping a lock that is running", () => {
+  const cancelCalls = () => mockInvoke.mock.calls.filter(([c]) => c === "cancel_operation");
+  const stopButton = () => screen.getByRole("button", { name: /^Stop/ });
+
+  async function startLocking() {
+    let finish!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "cancel_operation") return Promise.resolve(null);
+      return new Promise((r) => {
+        finish = r;
+      });
+    });
+    const handlers = setup();
+    preset("1 Day");
+    await confirm();
+    return { ...handlers, finish: (v: unknown) => finish(v) };
+  }
+
+  it("offers Stop only while the lock runs; before that it is Cancel", async () => {
+    setup();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Stop/ })).not.toBeInTheDocument();
+    preset("1 Day");
+    mockInvoke.mockReturnValue(new Promise(() => {}));
+    await confirm();
+    expect(stopButton()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("Stop asks the backend to cancel, once, and says it is stopping", async () => {
+    await startLocking();
+    fireEvent.click(stopButton());
+    await act(async () => {});
+    expect(cancelCalls()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Stopping…" }));
+    expect(cancelCalls()).toHaveLength(1);
+  });
+
+  it("Escape stops a running lock too, and does not close the dialog by itself", async () => {
+    const { onClose } = await startLocking();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => {});
+    expect(cancelCalls()).toHaveLength(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes quietly, with no error and no success, once the lock has stopped", async () => {
+    const { onClose, onSuccess, finish } = await startLocking();
+    fireEvent.click(stopButton());
+    await act(async () => {
+      finish({ name: "report.pdf", success: false, message: "Cancelled." });
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("also closes when the stop came while the file was being checked", async () => {
+    const { onClose, finish } = await startLocking();
+    await act(async () => {
+      finish({
+        name: "report.pdf",
+        success: false,
+        message: "Cancelled. The new locked file was removed, because it was not checked. Your original file has not been touched.",
+      });
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("still shows a real failure as an error and stays open", async () => {
+    const { onClose, finish } = await startLocking();
+    await act(async () => {
+      finish({ name: "report.pdf", success: false, message: "Vault is locked. Unlock it first." });
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Vault is locked. Unlock it first.");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("lets the user try again after a stop that came too late and the lock succeeded", async () => {
+    const { onSuccess, finish } = await startLocking();
+    fireEvent.click(stopButton());
+    await act(async () => {
+      finish({ name: "report.pdf", success: true, message: "Time-locked for 1 day and verified" });
+    });
+    expect(onSuccess).toHaveBeenCalledWith("Time-locked for 1 day and verified");
+  });
+
+  it("goes back to Cancel if the stop request itself fails", async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "cancel_operation" ? Promise.reject("no") : new Promise(() => {}),
+    );
+    setup();
+    preset("1 Day");
+    await confirm();
+    fireEvent.click(stopButton());
+    await act(async () => {});
+    expect(stopButton()).toBeEnabled();
+  });
+
+  it("Escape closes the dialog as before when nothing is running", () => {
+    const { onClose } = setup();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(cancelCalls()).toHaveLength(0);
   });
 });

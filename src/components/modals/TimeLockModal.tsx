@@ -13,6 +13,8 @@ interface TimeLockModalProps {
   filePath: string;
   onClose: () => void;
   onSuccess: (message: string) => void;
+  /** Open the new locked file once to check it. Leave out to use the app's default (on). */
+  verifyAfter?: boolean;
 }
 
 interface BatchItemResult {
@@ -94,6 +96,7 @@ export function TimeLockModal({
   filePath,
   onClose,
   onSuccess,
+  verifyAfter,
 }: TimeLockModalProps) {
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
   const [customDatetime, setCustomDatetime] = useState<string>("");
@@ -120,9 +123,24 @@ export function TimeLockModal({
     modalRef.current?.focus();
   }, []);
 
-  // Escape to close
+  // True from the moment Stop is pressed until the lock has stopped.
+  const [stopping, setStopping] = useState(false);
+
+  // Stops a lock that is running. It ends at its next step and removes what it was writing.
+  async function stop() {
+    if (!loading || stopping) return;
+    setStopping(true);
+    try {
+      await invoke("cancel_operation");
+    } catch {
+      setStopping(false);
+    }
+  }
+
+  // Escape closes the dialog, or stops the lock while it runs.
   useEscapeKey(() => {
-    if (!loading) onClose();
+    if (loading) void stop();
+    else onClose();
   });
 
   function handlePresetClick(secs: number) {
@@ -160,10 +178,14 @@ export function TimeLockModal({
         filePath,
         unlockAt: resolvedUnixTs,
         compressionMode: "auto",
+        verifyAfter: verifyAfter ?? null,
       });
 
       if (result.success) {
         onSuccess(result.message);
+      } else if (result.message.startsWith("Cancelled")) {
+        // The user stopped it. Nothing was made, so there is nothing to report.
+        onClose();
       } else {
         setError(result.message);
       }
@@ -171,6 +193,7 @@ export function TimeLockModal({
       setError(typeof e === "string" ? e : "An unexpected error occurred.");
     } finally {
       setLoading(false);
+      setStopping(false);
     }
   }
 
@@ -495,6 +518,21 @@ export function TimeLockModal({
               </div>
             )}
 
+            {/* What the lock is and is not */}
+            <p
+              data-testid="timelock-honesty"
+              style={{
+                margin: 0,
+                fontSize: "0.78rem",
+                lineHeight: 1.5,
+                color: "var(--text-dim, #999)",
+              }}
+            >
+              This lock is kept by the app, not by the encryption. It stops you
+              opening the file early by mistake or on impulse. It does not stop
+              someone who knows your master password and has the right tools.
+            </p>
+
             {/* Error */}
             {error && (
               <div style={errorBoxStyle} role="alert">
@@ -506,8 +544,12 @@ export function TimeLockModal({
 
           {/* ── FOOTER ── */}
           <div style={footerStyle}>
-            <button style={cancelBtnStyle} onClick={onClose} disabled={loading}>
-              Cancel
+            <button
+              style={cancelBtnStyle}
+              onClick={loading ? stop : onClose}
+              disabled={stopping}
+            >
+              {stopping ? "Stopping…" : loading ? "Stop (Esc)" : "Cancel"}
             </button>
             <button
               style={confirmBtnStyle}

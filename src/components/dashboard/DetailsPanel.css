@@ -43,6 +43,12 @@
   font-weight: 600;
   word-break: break-word;
 }
+.details-panel__note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-sm, var(--font-md));
+  line-height: 1.45;
+}
 .details-panel__list {
   display: flex;
   flex-direction: column;

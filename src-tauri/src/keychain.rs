@@ -89,6 +89,29 @@ pub struct KeychainStore {
 // --- Internal Logic ---
 // ==========================================
 
+/// The most the app will let a keychain ask of the key derivation, in KiB of memory, passes and
+/// lanes. They are the largest values the app itself ever writes (the Paranoid portable tier is
+/// 1 GiB, 10 passes, 4 lanes), with room above for passes and lanes.
+///
+/// The values come from a plain JSON file that anyone with write access to the folder can edit.
+/// Without a limit, `"kdf_memory": 4000000` would make the app try to allocate almost 4 GiB the
+/// moment the user types a password. A tampered value can never weaken a keychain, because the
+/// slots only open with the parameters they were made with, so the limit only prevents a crash.
+pub(crate) const MAX_KDF_MEMORY_KIB: u32 = 1_048_576;
+pub(crate) const MAX_KDF_ITERATIONS: u32 = 16;
+pub(crate) const MAX_KDF_PARALLELISM: u32 = 16;
+
+/// Refuses key derivation settings larger than the app ever writes.
+pub(crate) fn check_kdf_limits(mem: u32, iter: u32, par: u32) -> Result<()> {
+    if mem > MAX_KDF_MEMORY_KIB || iter > MAX_KDF_ITERATIONS || par > MAX_KDF_PARALLELISM {
+        return Err(anyhow!(
+            "Invalid KDF parameters: the keychain asks for more than this app allows. \
+             The keychain file may have been changed."
+        ));
+    }
+    Ok(())
+}
+
 /// Derives a Key Encryption Key (KEK) from a weak human secret (password) using Argon2id.
 ///
 /// SECURITY: Returns a `Zeroizing` wrapper. This means the highly sensitive derived KEK
@@ -100,6 +123,7 @@ fn derive_kek(
     iter: u32,
     par: u32,
 ) -> Result<Zeroizing<[u8; 32]>> {
+    check_kdf_limits(mem, iter, par)?;
     // Set up Argon2 parameters dynamically based on the stored vault settings
     let params = Params::new(mem, iter, par, Some(32))
         .map_err(|e| anyhow!("Invalid KDF parameters: {}", e))?;
@@ -135,10 +159,16 @@ fn atomic_write_keychain(path: &Path, store: &KeychainStore) -> Result<()> {
     let tmp_path = path.with_extension("tmp");
 
     // Step 1: Write to a temp file. If this fails, the real keychain is untouched.
-    let tmp_file = fs::File::create(&tmp_path)
+    let mut tmp_file = fs::File::create(&tmp_path)
         .context("Failed to create temporary keychain file for atomic write")?;
-    serde_json::to_writer_pretty(tmp_file, store)
+    serde_json::to_writer_pretty(&mut tmp_file, store)
         .context("Failed to serialize keychain to temp file")?;
+    // Make sure the bytes are on the disk before the swap. A rename can reach the disk before
+    // the data does, and a power cut in between would leave an empty keychain file.
+    tmp_file
+        .sync_all()
+        .context("Failed to write the keychain to disk")?;
+    drop(tmp_file);
 
     // Step 2: Atomically swap. If this fails, the temp file is left behind
     // (it will be overwritten on the next write attempt, which is harmless).

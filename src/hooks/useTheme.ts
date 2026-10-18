@@ -1,5 +1,33 @@
 import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
+import { useMediaQuery } from "./useMediaQuery";
+
+/** True while the phone or computer itself is set to its light appearance. */
+export const SYSTEM_LIGHT_QUERY = "(prefers-color-scheme: light)";
+
+/**
+ * Whether the app is showing a light background. "system" follows the device, anything
+ * unknown is treated as "system", as the style sheets do.
+ */
+export function isLightBackground(theme: string, systemPrefersLight: boolean): boolean {
+  if (theme === "light") return true;
+  if (theme === "dark") return false;
+  return systemPrefersLight;
+}
+
+/**
+ * Tells Android to draw its status bar and navigation bar icons dark on a light app
+ * background and white on a dark one. Without it they follow the phone's own dark mode and
+ * can vanish. On other systems the command does nothing, and a failure changes nothing.
+ */
+async function syncSystemBars(light: boolean) {
+  try {
+    await invoke("set_android_system_bars", { lightBackground: light });
+  } catch {
+    // Not Android, or too early in the start-up: the bars keep their current colour.
+  }
+}
 
 export function useTheme() {
   // Load saved theme or default to 'system'
@@ -10,6 +38,12 @@ export function useTheme() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  // The icons follow the app's theme, and, for "system", the device as it changes.
+  const systemPrefersLight = useMediaQuery(SYSTEM_LIGHT_QUERY);
+  useEffect(() => {
+    syncSystemBars(isLightBackground(theme, systemPrefersLight));
+  }, [theme, systemPrefersLight]);
 
   async function applyTheme(t: string) {
     // 1. Update DOM for CSS

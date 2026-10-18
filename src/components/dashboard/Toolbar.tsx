@@ -10,6 +10,8 @@ import {
   LockOpen,
   Check,
   Archive,
+  ShieldCheck,
+  CircleArrowUp,
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { platform } from "@tauri-apps/plugin-os";
@@ -26,6 +28,14 @@ interface ToolbarProps {
   selectKeyFile: () => void;
   isParanoid: boolean;
   setIsParanoid: (v: boolean) => void;
+  /** Open each new locked file once, to be sure it is whole, before calling the lock done. */
+  verifyAfterLock: boolean;
+  setVerifyAfterLock: (v: boolean) => void;
+  /** Opens the dialog that rewrites locked files made by older versions in the current format. */
+  onUpgradeFormat?: () => void;
+  /** Also rewrite a locked file in the current format right after an older one is unlocked. */
+  upgradeWhenUnlocking?: boolean;
+  setUpgradeWhenUnlocking?: (v: boolean) => void;
 
   compressionMode: string;
   onOpenCompression: () => void;
@@ -292,7 +302,7 @@ export function Toolbar(props: ToolbarProps) {
         {/* --- ADVANCED MENU --- */}
         <div className="dropdown-container" ref={advancedRef}>
           <button
-            className={`tool-btn ${props.keyFile || props.isParanoid || props.compressionMode !== "auto" ? "active-settings" : ""}`}
+            className={`tool-btn ${props.keyFile || props.isParanoid || props.compressionMode !== "auto" || !props.verifyAfterLock || props.upgradeWhenUnlocking ? "active-settings" : ""}`}
             onClick={() => {
               setShowAdvanced(!showAdvanced);
               setShowUsb(false);
@@ -305,7 +315,9 @@ export function Toolbar(props: ToolbarProps) {
             />
             {(props.keyFile ||
               props.isParanoid ||
-              props.compressionMode !== "auto") && (
+              props.compressionMode !== "auto" ||
+              !props.verifyAfterLock ||
+              props.upgradeWhenUnlocking) && (
               <div className="indicator-dot"></div>
             )}
           </button>
@@ -372,6 +384,65 @@ export function Toolbar(props: ToolbarProps) {
                   />
                 )}
               </div>
+              <div
+                className="dropdown-item"
+                role="menuitemcheckbox"
+                aria-checked={props.verifyAfterLock}
+                title="Opens each new locked file once to be sure it is whole. Takes about as long as locking again."
+                onClick={() => props.setVerifyAfterLock(!props.verifyAfterLock)}
+              >
+                <ShieldCheck
+                  size={16}
+                  color={props.verifyAfterLock ? "var(--accent)" : "currentColor"}
+                />
+                <span>Verify After Locking</span>
+                {props.verifyAfterLock && (
+                  <Check
+                    size={16}
+                    color="var(--accent)"
+                    style={{ marginLeft: "auto" }}
+                  />
+                )}
+              </div>
+              {props.onUpgradeFormat && (
+                <>
+                  <div className="dropdown-divider"></div>
+                  <div
+                    className="dropdown-item"
+                    role="menuitem"
+                    title="Rewrite locked files made by older versions in the current format, which hides their file names."
+                    onClick={() => {
+                      setShowAdvanced(false);
+                      props.onUpgradeFormat?.();
+                    }}
+                  >
+                    <CircleArrowUp size={16} />
+                    <span>Upgrade Older Locked Files…</span>
+                  </div>
+                </>
+              )}
+              {props.setUpgradeWhenUnlocking && (
+                <div
+                  className="dropdown-item"
+                  role="menuitemcheckbox"
+                  aria-checked={!!props.upgradeWhenUnlocking}
+                  title="When you unlock a file that an older version locked, also rewrite the locked copy in the current format. The new file is checked before it replaces the old one."
+                  onClick={() => props.setUpgradeWhenUnlocking?.(!props.upgradeWhenUnlocking)}
+                >
+                  <CircleArrowUp
+                    size={16}
+                    color={props.upgradeWhenUnlocking ? "var(--accent)" : "currentColor"}
+                  />
+                  <span>Upgrade Older Files When Unlocking</span>
+                  {props.upgradeWhenUnlocking && (
+                    <Check
+                      size={16}
+                      color="var(--accent)"
+                      style={{ marginLeft: "auto" }}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

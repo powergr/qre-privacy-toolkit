@@ -18,6 +18,7 @@ import {
   Copy,
   ClipboardPaste,
   CalendarClock,
+  CircleArrowUp,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { platform } from "@tauri-apps/plugin-os";
@@ -32,6 +33,8 @@ interface ContextMenuProps {
   canPaste?: boolean;
   /** Called when the user clicks "Time-Lock…" — parent opens TimeLockModal. */
   onTimeLock?: (filePath: string) => void;
+  /** True when this .qre file was locked by an older version and can be rewritten in the current format. */
+  canUpgrade?: boolean;
 }
 
 export function ContextMenu({
@@ -43,6 +46,7 @@ export function ContextMenu({
   onAction,
   canPaste,
   onTimeLock,
+  canUpgrade,
 }: ContextMenuProps) {
   const isQre = targetPath.endsWith(".qre");
 
@@ -125,9 +129,20 @@ export function ContextMenu({
         ) : (
           <>
             {isQre ? (
-              <div className="dropdown-item" onClick={() => onAction("unlock")}>
-                <Unlock size={16} color="var(--btn-danger)" /> Unlock
-              </div>
+              <>
+                <div className="dropdown-item" onClick={() => onAction("unlock")}>
+                  <Unlock size={16} color="var(--btn-danger)" /> Unlock
+                </div>
+                {canUpgrade && (
+                  <div
+                    className="dropdown-item"
+                    title="This file was locked by an older version and shows its file name. Rewrite it in the current format."
+                    onClick={() => onAction("upgrade")}
+                  >
+                    <CircleArrowUp size={16} color="var(--accent)" /> Upgrade Format
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <div className="dropdown-item" onClick={() => onAction("lock")}>

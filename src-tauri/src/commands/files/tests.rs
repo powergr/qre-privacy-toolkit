@@ -20,8 +20,8 @@ fn critical_example() -> &'static str {
 
 #[test]
 fn test_compression_level_store_and_extreme_ignore_the_file_type() {
-    assert_eq!(compression_level("store", "notes.txt"), 0);
-    assert_eq!(compression_level("store", "photo.jpg"), 0);
+    assert_eq!(compression_level("store", "notes.txt"), -7);
+    assert_eq!(compression_level("store", "photo.jpg"), -7);
     assert_eq!(compression_level("extreme", "notes.txt"), 19);
     assert_eq!(compression_level("extreme", "photo.jpg"), 19);
 }
@@ -330,4 +330,48 @@ fn test_macos_temp_exemption_does_not_open_the_rest_of_var() {
 fn test_linux_still_protects_var_folders() {
     // The temp exemption is a macOS rule only.
     assert!(is_unix_critical("/var/folders/x", false));
+}
+
+// ─── Verify after locking: the request and its progress bar ──────────────────
+
+#[test]
+fn verification_is_on_unless_the_request_turns_it_off() {
+    assert!(should_verify(None), "a request that says nothing must still get the safe behaviour");
+    assert!(should_verify(Some(true)));
+    assert!(!should_verify(Some(false)));
+}
+
+#[test]
+fn without_verification_the_bar_is_the_encryption_alone() {
+    for pct in [0u8, 1, 50, 99, 100] {
+        assert_eq!(lock_progress_percent(pct, false, false), pct);
+    }
+}
+
+#[test]
+fn with_verification_locking_fills_the_first_half_of_the_bar() {
+    assert_eq!(lock_progress_percent(0, true, false), 0);
+    assert_eq!(lock_progress_percent(50, true, false), 25);
+    assert_eq!(lock_progress_percent(100, true, false), 50);
+}
+
+#[test]
+fn with_verification_the_check_fills_the_second_half_of_the_bar() {
+    assert_eq!(lock_progress_percent(0, true, true), 50);
+    assert_eq!(lock_progress_percent(50, true, true), 75);
+    assert_eq!(lock_progress_percent(100, true, true), 100);
+}
+
+#[test]
+fn the_bar_never_goes_backwards_from_locking_into_checking() {
+    let end_of_locking = lock_progress_percent(100, true, false);
+    let start_of_check = lock_progress_percent(0, true, true);
+    assert!(start_of_check >= end_of_locking);
+}
+
+#[test]
+fn a_value_over_one_hundred_cannot_push_the_bar_past_the_end() {
+    assert_eq!(lock_progress_percent(250, true, true), 100);
+    assert_eq!(lock_progress_percent(250, false, false), 100);
+    assert_eq!(lock_progress_percent(250, true, false), 50);
 }

@@ -974,7 +974,10 @@ mod tests {
         let encrypted = dir.join("v.txt.qre").to_str().unwrap().to_owned();
         let mk = mk(45);
 
-        crypto_stream::encrypt_file_stream(
+        // The app writes format 8 by default now; format 6 is still written on request and
+        // still read, so old files and old tools keep working.
+        crypto_stream::encrypt_file_stream_as(
+            crypto_stream::FileFormat::Classic,
             &input,
             &encrypted,
             &mk,

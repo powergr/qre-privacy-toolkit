@@ -214,7 +214,7 @@ describe("choosers", () => {
 
   it.each([
     ["Extreme (Slow)", "extreme"],
-    ["Store (None)", "store"],
+    ["Fastest (Minimal)", "store"],
     ["Auto (Smart)", "auto"],
   ])("CompressionModal saves %s as %s", (label, id) => {
     const onSave = jest.fn();
@@ -547,5 +547,70 @@ describe("DriveInitSuccessModal", () => {
     const { onClose } = setup();
     fireEvent.click(screen.getByRole("button", { name: /I have saved both/ }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("ProcessingModal - stopping the job", () => {
+  it("has no Cancel button for work that cannot be stopped", () => {
+    render(<ProcessingModal status="Deleting a.txt" percentage={10} />);
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/press Esc/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Processing..." })).toBeInTheDocument();
+  });
+
+  it("offers Cancel and says Esc does the same, when the job can be stopped", () => {
+    render(<ProcessingModal status="Encrypting: a.txt" percentage={42} onCancel={() => {}} />);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.getByText(/Or press Esc/)).toBeInTheDocument();
+    expect(screen.getByText(/Files already finished stay finished/)).toBeInTheDocument();
+  });
+
+  it("the button asks for a stop once", () => {
+    const onCancel = jest.fn();
+    render(<ProcessingModal status="x" percentage={1} onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape asks for a stop too", () => {
+    const onCancel = jest.fn();
+    render(<ProcessingModal status="x" percentage={1} onCancel={onCancel} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape does nothing when the job cannot be stopped", () => {
+    const { container } = render(<ProcessingModal status="x" percentage={1} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(container).toBeInTheDocument();
+  });
+
+  it("says it is stopping, disables the button, and ignores a second Escape", () => {
+    const onCancel = jest.fn();
+    render(<ProcessingModal status="x" percentage={50} onCancel={onCancel} cancelling />);
+    expect(screen.getByRole("heading", { name: "Cancelling..." })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stopping..." })).toBeDisabled();
+    expect(screen.getByText(/Finishing the current step and cleaning up/)).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Stopping..." }));
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("is a labelled modal dialog, and still shows the status and the percentage", () => {
+    render(<ProcessingModal status="Encrypting: big.bin" percentage={7} onCancel={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Processing" })).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByText("Encrypting: big.bin")).toBeInTheDocument();
+    expect(screen.getByText("7%")).toBeInTheDocument();
+  });
+
+  it("Escape stops only the job overlay when another dialog is open underneath", () => {
+    const underneath = jest.fn();
+    const onCancel = jest.fn();
+    render(<ResetConfirmModal onConfirm={() => {}} onCancel={underneath} />);
+    render(<ProcessingModal status="x" percentage={1} onCancel={onCancel} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(underneath).not.toHaveBeenCalled();
   });
 });

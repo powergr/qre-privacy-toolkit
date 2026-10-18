@@ -263,18 +263,32 @@ export function ErrorModal({
 export function ProcessingModal({
   status,
   percentage,
+  onCancel,
+  cancelling = false,
 }: {
   status: string;
   percentage: number;
+  /** Stops the job. Leave it out for work that cannot be stopped. */
+  onCancel?: () => void;
+  /** True after Cancel was pressed, until the job has stopped. */
+  cancelling?: boolean;
 }) {
+  // Escape does the same as the button, but only once: a second press changes nothing.
+  useEscapeKey(() => onCancel?.(), Boolean(onCancel) && !cancelling);
   return (
-    <div className="modal-overlay" style={{ zIndex: 100000 }}>
+    <div
+      className="modal-overlay"
+      style={{ zIndex: 100000 }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Processing"
+    >
       <div
         className="auth-card"
         style={{ width: 350, textAlign: "center", padding: 30 }}
       >
         <h3 style={{ marginTop: 0, color: "var(--text-main)" }}>
-          Processing...
+          {cancelling ? "Cancelling..." : "Processing..."}
         </h3>
 
         <p
@@ -302,6 +316,24 @@ export function ProcessingModal({
         >
           {percentage}%
         </p>
+        {onCancel && (
+          <>
+            <button
+              type="button"
+              className="secondary-btn"
+              style={{ marginTop: 6 }}
+              disabled={cancelling}
+              onClick={onCancel}
+            >
+              {cancelling ? "Stopping..." : "Cancel"}
+            </button>
+            <p style={{ margin: "10px 0 0", color: "var(--text-dim)", fontSize: "0.8rem" }}>
+              {cancelling
+                ? "Finishing the current step and cleaning up."
+                : "Or press Esc. Files already finished stay finished."}
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -587,8 +619,8 @@ export function CompressionModal({
               },
               {
                 id: "store",
-                label: "Store (None)",
-                desc: "No compression. Instant.",
+                label: "Fastest (Minimal)",
+                desc: "Almost no compression. The quickest, for files that do not shrink.",
               },
             ].map((opt) => (
               <div

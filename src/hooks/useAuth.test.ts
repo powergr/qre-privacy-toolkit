@@ -180,3 +180,148 @@ describe("useAuth - when the app will lock", () => {
     expect(result.current.idleDeadlineRef.current).toBe(0);
   });
 });
+
+describe("useAuth - the real clock decides when the app locks", () => {
+  const MIN = 60 * 1000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === "check_auth_status" ? Promise.resolve("unlocked") : Promise.resolve(null),
+    );
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  async function signedIn() {
+    const hook = renderHook(() => useAuth(), { wrapper: StrictMode });
+    await waitFor(() => expect(hook.result.current.view).toBe("dashboard"));
+    return hook;
+  }
+  /** The device slept or the app sat in the background: the clock moved on, the timers did not run. */
+  const timePasses = (ms: number) => jest.setSystemTime(Date.now() + ms);
+  const comeBack = () => act(() => void document.dispatchEvent(new Event("visibilitychange")));
+  const logouts = () => mockInvoke.mock.calls.filter(([c]) => c === "logout").length;
+
+  it("locks when the app comes to the front after the deadline has passed", async () => {
+    const { result } = await signedIn();
+    timePasses(20 * MIN);
+    comeBack();
+    await waitFor(() => expect(result.current.view).toBe("login"));
+    expect(result.current.sessionExpired).toBe(true);
+    expect(logouts()).toBe(1);
+  });
+
+  it("locks when the window gets focus back, which is how a woken computer shows up", async () => {
+    const { result } = await signedIn();
+    timePasses(16 * MIN);
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(result.current.view).toBe("login"));
+  });
+
+  it("locks when the page is shown again from the back-forward cache", async () => {
+    const { result } = await signedIn();
+    timePasses(16 * MIN);
+    act(() => void window.dispatchEvent(new Event("pageshow")));
+    await waitFor(() => expect(result.current.view).toBe("login"));
+  });
+
+  it("shows the warning with the time that is really left when it returns during the last minute", async () => {
+    const { result } = await signedIn();
+    timePasses(14 * MIN + 40 * 1000);
+    comeBack();
+    await waitFor(() => expect(result.current.showTimeoutWarning).toBe(true));
+    expect(result.current.countdown).toBe(20);
+    expect(result.current.view).toBe("dashboard");
+    act(() => void jest.advanceTimersByTime(20 * 1000));
+    await waitFor(() => expect(result.current.view).toBe("login"));
+  });
+
+  it("counts down one second per second even if several events announce the return", async () => {
+    const { result } = await signedIn();
+    timePasses(14 * MIN + 40 * 1000);
+    comeBack();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    act(() => void window.dispatchEvent(new Event("pageshow")));
+    act(() => void jest.advanceTimersByTime(5 * 1000));
+    expect(result.current.countdown).toBe(15);
+  });
+
+  it("does nothing when it returns well before the deadline", async () => {
+    const { result } = await signedIn();
+    timePasses(5 * MIN);
+    comeBack();
+    expect(result.current.showTimeoutWarning).toBe(false);
+    expect(result.current.countdown).toBe(60);
+    expect(result.current.view).toBe("dashboard");
+    expect(logouts()).toBe(0);
+  });
+
+  it("does nothing while the app is still hidden", async () => {
+    const { result } = await signedIn();
+    timePasses(20 * MIN);
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    comeBack();
+    expect(result.current.view).toBe("dashboard");
+    expect(logouts()).toBe(0);
+  });
+
+  it("locks, instead of giving another minute, when the warning timer runs late", async () => {
+    const { result } = await signedIn();
+    timePasses(30 * MIN);
+    act(() => void jest.advanceTimersByTime(14 * MIN));
+    await waitFor(() => expect(result.current.view).toBe("login"));
+    expect(result.current.showTimeoutWarning).toBe(false);
+    expect(result.current.sessionExpired).toBe(true);
+  });
+
+  it("still warns for a full minute when the timer fires on time", async () => {
+    const { result } = await signedIn();
+    act(() => void jest.advanceTimersByTime(14 * MIN));
+    await waitFor(() => expect(result.current.showTimeoutWarning).toBe(true));
+    expect(result.current.countdown).toBe(60);
+  });
+
+  it("does not lock a second time once it is locked", async () => {
+    const { result } = await signedIn();
+    timePasses(20 * MIN);
+    comeBack();
+    await waitFor(() => expect(result.current.view).toBe("login"));
+    comeBack();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    expect(logouts()).toBe(1);
+  });
+
+  it("stops watching when the app is closed", async () => {
+    const { unmount } = await signedIn();
+    unmount();
+    timePasses(20 * MIN);
+    comeBack();
+    act(() => void window.dispatchEvent(new Event("focus")));
+    act(() => void window.dispatchEvent(new Event("pageshow")));
+    expect(logouts()).toBe(0);
+  });
+
+  it("rounds a part of a second up, so the count never shows zero before the app locks", async () => {
+    const { result } = await signedIn();
+    timePasses(14 * MIN + 40 * 1000 + 400);
+    comeBack();
+    await waitFor(() => expect(result.current.showTimeoutWarning).toBe(true));
+    expect(result.current.countdown).toBe(20);
+  });
+
+  it("starts the 15 minutes again after the user does something", async () => {
+    const { result } = await signedIn();
+    timePasses(10 * MIN);
+    act(() => void window.dispatchEvent(new Event("touchstart")));
+    timePasses(10 * MIN);
+    comeBack();
+    expect(result.current.view).toBe("dashboard");
+    expect(logouts()).toBe(0);
+  });
+});

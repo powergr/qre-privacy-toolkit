@@ -282,3 +282,48 @@
   border-color: var(--text-main);
   box-shadow: 0 0 0 2px var(--bg-card);
 }
+
+/* --- HEADER ON NARROW SCREENS ---
+   The title, the search box and the buttons no longer sit in one row that scrolls sideways.
+   They wrap, and on a phone they stack: title and view switch, search, then the buttons with
+   Add New first and as wide as the room allows. */
+.vault-header {
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .vault-view {
+    padding: var(--space-4);
+  }
+  .vault-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .vault-header > div:first-child {
+    justify-content: space-between;
+  }
+  .vault-view .search-container {
+    flex: none;
+    width: 100%;
+    max-width: none;
+  }
+  .vault-header > div:last-child {
+    width: 100%;
+  }
+  .vault-primary-btn {
+    order: -1;
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+@media (pointer: coarse) {
+  .vault-action-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .vault-primary-btn,
+  .vault-view .search-container {
+    height: 44px;
+  }
+}

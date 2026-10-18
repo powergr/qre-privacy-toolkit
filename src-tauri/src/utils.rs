@@ -169,6 +169,42 @@ pub fn process_keyfile(path_opt: Option<String>) -> Result<Option<Vec<u8>>, Stri
     }
 }
 
+/// Writes `bytes` to `path` so that the file is either the old one or the new one, never a
+/// cut-off mix of the two.
+///
+/// Creating a file and writing into it empties it at once. If the program stops, the disk fills
+/// or the power goes out before the last byte is written, what is left is a truncated file and
+/// the old content is gone. For a vault that means every saved password. So the new content goes
+/// to a temporary file in the same folder, is forced onto the disk, and only then replaces the
+/// real file in one step. Any failure removes the temporary file and leaves the old file alone.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write_with(path, |file| file.write_all(bytes))
+}
+
+/// Like `atomic_write`, but the caller writes the content. If `write` fails, however far it got,
+/// the real file is left exactly as it was. It exists so that failure can be tested.
+pub fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{}.{}.tmp", name, Uuid::new_v4().simple()));
+
+    let written = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&tmp)?;
+        write(&mut file)?;
+        file.sync_all()
+    })();
+
+    match written.and_then(|()| fs::rename(&tmp, path)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 /// Generates a unique, non-colliding filename to prevent accidentally overwriting existing files.
 ///
 /// Example:
@@ -243,10 +279,22 @@ pub fn move_to_trash(path: &Path) -> Result<(), String> {
 /// Zipping first and compressing later is faster and yields smaller encrypted files.
 pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<(), String> {
     let file = fs::File::create(output_zip_path).map_err(|e| e.to_string())?;
+    let result = write_directory_zip(dir_path, file);
+    if result.is_err() {
+        // A zip of only part of the folder is a plain copy of the user's data that nothing
+        // will ever clean up, so it does not stay behind.
+        let _ = fs::remove_file(output_zip_path);
+    }
+    result
+}
+
+fn write_directory_zip(dir_path: &Path, file: fs::File) -> Result<(), String> {
     let mut zip = zip::ZipWriter::new(file);
 
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored)
+        // Without this a single file of 4 GiB or more makes the whole folder fail partway.
+        .large_file(true)
         .unix_permissions(0o755); // Standardize permissions to avoid cross-OS extraction issues
 
     let prefix = dir_path.parent().unwrap_or(Path::new(""));
@@ -256,6 +304,7 @@ pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<
     // or `/etc` could cause the application to ZIP and expose arbitrary system files
     // (a form of Directory Traversal attack).
     for entry in WalkDir::new(dir_path).follow_links(false) {
+        crate::cancel::check().map_err(|e| e.to_string())?;
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
 
@@ -277,7 +326,17 @@ pub fn zip_directory_to_file(dir_path: &Path, output_zip_path: &Path) -> Result<
 
             // Stream the file content directly into the zip archive chunk by chunk
             let mut f = fs::File::open(path).map_err(|e| e.to_string())?;
-            std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
+            // Not std::io::copy: a single huge file must still be stoppable, so it is copied in
+            // pieces with a look at the stop flag between them.
+            let mut piece = vec![0u8; 1024 * 1024];
+            loop {
+                crate::cancel::check().map_err(|e| e.to_string())?;
+                let n = f.read(&mut piece).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                zip.write_all(&piece[..n]).map_err(|e| e.to_string())?;
+            }
         } else if path.is_dir() && !name.is_empty() {
             zip.add_directory(name, options)
                 .map_err(|e| e.to_string())?;

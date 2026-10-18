@@ -32,6 +32,8 @@ function setup(over: Record<string, unknown> = {}) {
     selectKeyFile: jest.fn(),
     isParanoid: false,
     setIsParanoid: jest.fn(),
+    verifyAfterLock: true,
+    setVerifyAfterLock: jest.fn(),
     compressionMode: "auto",
     onOpenCompression: jest.fn(),
     portable: {
@@ -115,12 +117,14 @@ describe("Toolbar - advanced menu", () => {
   it("flips Paranoid Mode and shows a check only while it is on", () => {
     const { props, rerender } = setup();
     fireEvent.click(advancedButton());
-    expect(document.querySelector("svg.lucide-check")).toBeNull();
+    // Only Paranoid Mode's own row: the verify row has its own check, which is on by default.
+    const paranoidCheck = () => screen.getByText("Paranoid Mode").closest(".dropdown-item")!.querySelector("svg.lucide-check");
+    expect(paranoidCheck()).toBeNull();
     fireEvent.click(screen.getByText("Paranoid Mode"));
     expect(props.setIsParanoid).toHaveBeenLastCalledWith(true);
 
     rerender(<Toolbar {...props} isParanoid />);
-    expect(document.querySelector("svg.lucide-check")).not.toBeNull();
+    expect(paranoidCheck()).not.toBeNull();
     fireEvent.click(screen.getByText("Paranoid Mode"));
     expect(props.setIsParanoid).toHaveBeenLastCalledWith(false);
   });
@@ -142,6 +146,7 @@ describe("Toolbar - advanced menu", () => {
       { keyFile: "k" },
       { isParanoid: true },
       { compressionMode: "store" },
+      { verifyAfterLock: false },
     ]) {
       const { unmount } = setup(over);
       expect(advancedButton()).toHaveClass("active-settings");
@@ -366,5 +371,150 @@ describe("Toolbar - Android", () => {
     });
     setup();
     expect(usbButton()).toBeInTheDocument();
+  });
+});
+
+describe("Toolbar - Verify After Locking", () => {
+  const item = () => screen.getByRole("menuitemcheckbox", { name: /Verify After Locking/ });
+
+  it("is offered in the options menu, below Paranoid Mode", () => {
+    setup();
+    fireEvent.click(advancedButton());
+    const labels = Array.from(document.querySelectorAll(".dropdown-menu .dropdown-item")).map((i) => i.textContent);
+    expect(labels.indexOf("Verify After Locking")).toBeGreaterThan(labels.indexOf("Paranoid Mode"));
+  });
+
+  it("shows whether it is on", () => {
+    const { unmount } = setup({ verifyAfterLock: true });
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("aria-checked", "true");
+    expect(item().querySelector("svg.lucide-check")).not.toBeNull();
+    unmount();
+
+    setup({ verifyAfterLock: false });
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("aria-checked", "false");
+    expect(item().querySelector("svg.lucide-check")).toBeNull();
+  });
+
+  it("switches it off when it is on, and on when it is off, and keeps the menu open", () => {
+    const on = setup({ verifyAfterLock: true });
+    fireEvent.click(advancedButton());
+    fireEvent.click(item());
+    expect(on.props.setVerifyAfterLock).toHaveBeenCalledWith(false);
+    expect(screen.getByText("Verify After Locking")).toBeInTheDocument();
+    on.unmount();
+
+    const off = setup({ verifyAfterLock: false });
+    fireEvent.click(advancedButton());
+    fireEvent.click(item());
+    expect(off.props.setVerifyAfterLock).toHaveBeenCalledWith(true);
+  });
+
+  it("explains itself in a tooltip", () => {
+    setup();
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("title", expect.stringContaining("Opens each new locked file once"));
+  });
+});
+
+describe("Toolbar - Upgrade Older Locked Files", () => {
+  const entry = () => screen.getByText("Upgrade Older Locked Files…").closest(".dropdown-item") as HTMLElement;
+
+  it("is not offered when nothing is wired to it", () => {
+    setup();
+    fireEvent.click(advancedButton());
+    expect(screen.queryByText("Upgrade Older Locked Files…")).not.toBeInTheDocument();
+  });
+
+  it("is offered in the options menu, below Verify After Locking", () => {
+    setup({ onUpgradeFormat: jest.fn() });
+    fireEvent.click(advancedButton());
+    const labels = Array.from(document.querySelectorAll(".dropdown-menu .dropdown-item")).map((i) => i.textContent);
+    expect(labels.indexOf("Upgrade Older Locked Files…")).toBeGreaterThan(labels.indexOf("Verify After Locking"));
+  });
+
+  it("opens the upgrade and closes the menu", () => {
+    const onUpgradeFormat = jest.fn();
+    setup({ onUpgradeFormat });
+    fireEvent.click(advancedButton());
+    fireEvent.click(entry());
+    expect(onUpgradeFormat).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".dropdown-menu")).toBeNull();
+  });
+
+  it("says in a tooltip what it does", () => {
+    setup({ onUpgradeFormat: jest.fn() });
+    fireEvent.click(advancedButton());
+    expect(entry()).toHaveAttribute("title", expect.stringContaining("hides their file names"));
+  });
+
+  it("is a menu item that a screen reader can find", () => {
+    setup({ onUpgradeFormat: jest.fn() });
+    fireEvent.click(advancedButton());
+    expect(screen.getByRole("menuitem", { name: /Upgrade Older Locked Files/ })).toBeInTheDocument();
+  });
+});
+
+describe("Toolbar - Upgrade Older Files When Unlocking", () => {
+  const item = () => screen.getByRole("menuitemcheckbox", { name: /Upgrade Older Files When Unlocking/ });
+
+  it("is not offered when nothing is wired to it", () => {
+    setup();
+    fireEvent.click(advancedButton());
+    expect(screen.queryByText("Upgrade Older Files When Unlocking")).not.toBeInTheDocument();
+  });
+
+  it("is offered below the upgrade entry", () => {
+    setup({ onUpgradeFormat: jest.fn(), upgradeWhenUnlocking: false, setUpgradeWhenUnlocking: jest.fn() });
+    fireEvent.click(advancedButton());
+    const labels = Array.from(document.querySelectorAll(".dropdown-menu .dropdown-item")).map((i) => i.textContent);
+    expect(labels.indexOf("Upgrade Older Files When Unlocking")).toBeGreaterThan(labels.indexOf("Upgrade Older Locked Files…"));
+  });
+
+  it("shows whether it is on", () => {
+    const off = setup({ upgradeWhenUnlocking: false, setUpgradeWhenUnlocking: jest.fn() });
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("aria-checked", "false");
+    expect(item().querySelector("svg.lucide-check")).toBeNull();
+    off.unmount();
+
+    setup({ upgradeWhenUnlocking: true, setUpgradeWhenUnlocking: jest.fn() });
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("aria-checked", "true");
+    expect(item().querySelector("svg.lucide-check")).not.toBeNull();
+  });
+
+  it("turns on and off with a click, and leaves the menu open", () => {
+    const setUpgradeWhenUnlocking = jest.fn();
+    const off = setup({ upgradeWhenUnlocking: false, setUpgradeWhenUnlocking });
+    fireEvent.click(advancedButton());
+    fireEvent.click(item());
+    expect(setUpgradeWhenUnlocking).toHaveBeenLastCalledWith(true);
+    expect(screen.getByText("Upgrade Older Files When Unlocking")).toBeInTheDocument();
+    off.unmount();
+
+    const on = setup({ upgradeWhenUnlocking: true, setUpgradeWhenUnlocking });
+    fireEvent.click(advancedButton());
+    fireEvent.click(item());
+    expect(setUpgradeWhenUnlocking).toHaveBeenLastCalledWith(false);
+    on.unmount();
+  });
+
+  it("explains itself in a tooltip", () => {
+    setup({ upgradeWhenUnlocking: false, setUpgradeWhenUnlocking: jest.fn() });
+    fireEvent.click(advancedButton());
+    expect(item()).toHaveAttribute("title", expect.stringContaining("checked before it replaces the old one"));
+  });
+
+  it("marks the options button while it is on, like the other settings that differ from the default", () => {
+    const off = setup({ upgradeWhenUnlocking: false, setUpgradeWhenUnlocking: jest.fn() });
+    expect(advancedButton()).not.toHaveClass("active-settings");
+    expect(document.querySelector(".indicator-dot")).toBeNull();
+    off.unmount();
+
+    setup({ upgradeWhenUnlocking: true, setUpgradeWhenUnlocking: jest.fn() });
+    expect(advancedButton()).toHaveClass("active-settings");
+    expect(document.querySelector(".indicator-dot")).not.toBeNull();
   });
 });

@@ -9,6 +9,7 @@
 //     files.rs now handles time-locked files natively, since decrypt_file_stream
 //     checks the timestamp and returns a TIME_LOCKED: error when appropriate.
 
+use crate::cancel;
 use super::files::{
     compression_level, is_on_portable_mount, reject_critical_path, BatchItemResult, CommandResult,
 };
@@ -39,6 +40,7 @@ pub async fn lock_file_with_timelock(
     file_path: String,
     unlock_at: u64,
     compression_mode: Option<String>,
+    verify_after: Option<bool>,
 ) -> CommandResult<BatchItemResult> {
     validate_timelock_source_path(&file_path)?;
 
@@ -47,9 +49,41 @@ pub async fn lock_file_with_timelock(
 
     let vaults_arc = state.vaults.clone();
     let portable_mounts_arc = state.portable_mounts.clone();
+    let verify = super::files::should_verify(verify_after);
+    let progress = super::files::window_progress(&app);
+    let stop = state.cancel.clone();
+    cancel::reset(&stop);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let path = Path::new(&file_path);
+        cancel::run_with(&stop, || {
+            lock_with_timelock_blocking(
+                &file_path,
+                unlock_at,
+                compression_mode,
+                verify,
+                &vaults_arc,
+                &portable_mounts_arc,
+                &progress,
+            )
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The work of `lock_file_with_timelock`, without the window (see `lock_files_blocking`). The
+/// path and the date have been validated by the command.
+pub(crate) fn lock_with_timelock_blocking(
+    file_path: &str,
+    unlock_at: u64,
+    compression_mode: Option<String>,
+    verify: bool,
+    vaults_arc: &super::files::Vaults,
+    portable_mounts_arc: &super::files::Mounts,
+    progress: &super::files::Progress,
+) -> CommandResult<BatchItemResult> {
+    {
+        let path = Path::new(file_path);
         let filename = path
             .file_name()
             .unwrap_or_default()
@@ -61,7 +95,7 @@ pub async fn lock_file_with_timelock(
             let mounts = portable_mounts_arc
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if is_on_portable_mount(&file_path, &mounts) {
+            if is_on_portable_mount(file_path, &mounts) {
                 return Ok(BatchItemResult {
                     name: filename,
                     success: false,
@@ -103,20 +137,20 @@ pub async fn lock_file_with_timelock(
         let mode_str = compression_mode.unwrap_or_else(|| "auto".to_string());
         let level = compression_level(&mode_str, &filename);
 
-        utils::emit_progress(&app, &format!("Time-locking: {}", filename), 10);
+        progress(&format!("Time-locking: {}", filename), 10);
 
-        let app_handle = app.clone();
+        let progress_for_cb = progress.clone();
         let fname_clone = filename.clone();
         let progress_cb = move |processed: u64, total: u64| {
             if total > 0 {
                 let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(95);
-                utils::emit_progress(&app_handle, &format!("Encrypting: {}", fname_clone), pct);
+                progress_for_cb(&format!("Encrypting: {}", fname_clone), super::files::lock_progress_percent(pct, verify, false));
             }
         };
 
         // Encrypt with embedded time-lock (no external keyfile, no sidecar)
         match crypto_stream::encrypt_file_stream(
-            &file_path,
+            file_path,
             &final_qre_str,
             &master_key,
             "local",
@@ -127,13 +161,30 @@ pub async fn lock_file_with_timelock(
             progress_cb,
         ) {
             Ok(()) => {
-                utils::emit_progress(&app, &format!("Locked: {}", filename), 100);
+                // Open the new file once before calling it done. The check skips the time-lock,
+                // so it reads neither the clock nor the network, and it never changes the file.
+                if verify {
+                    progress(&format!("Verifying: {}", filename), 50);
+                    let progress_for_check = progress.clone();
+                    let name_for_check = filename.clone();
+                    let check_progress = move |processed: u64, total: u64| {
+                        if total > 0 {
+                            let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
+                            progress_for_check(&format!("Verifying: {}", name_for_check), super::files::lock_progress_percent(pct, true, true));
+                        }
+                    };
+                    if let Err(message) = crypto_stream::verify_or_remove(&final_qre_str, &master_key, None, check_progress) {
+                        return Ok(BatchItemResult { name: filename, success: false, message });
+                    }
+                }
+                progress(&format!("Locked: {}", filename), 100);
                 Ok(BatchItemResult {
                     name: filename,
                     success: true,
                     message: format!(
-                        "Time-locked for {}",
-                        timelock::format_duration(unlock_at.saturating_sub(timelock::now_secs()))
+                        "Time-locked for {}{}",
+                        timelock::format_duration(unlock_at.saturating_sub(timelock::now_secs())),
+                        if verify { " and verified" } else { "" }
                     ),
                 })
             }
@@ -143,13 +194,11 @@ pub async fn lock_file_with_timelock(
                 Ok(BatchItemResult {
                     name: filename,
                     success: false,
-                    message: format!("Encryption failed: {}", e),
+                    message: if cancel::is_cancel_error(&e) { cancel::CANCELLED.to_string() } else { format!("Encryption failed: {}", e) },
                 })
             }
         }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 // ==========================================
@@ -170,11 +219,20 @@ pub fn get_file_timelock_status(qre_path: String) -> CommandResult<TimeLockStatu
         return Err("Path traversal not allowed.".to_string());
     }
 
-    let locked_until = crypto_stream::read_timelock_header(&qre_path)
+    Ok(file_timelock_status(&qre_path, timelock::now_secs()))
+}
+
+/// The status of one file as the Files screen shows it: whether a time-lock is running and the
+/// format version. Reads only the start of the file, needs no key, and gives an unreadable file
+/// no lock and version 0.
+pub(crate) fn file_timelock_status(qre_path: &str, now: u64) -> TimeLockStatus {
+    let locked_until = crypto_stream::read_timelock_header(qre_path)
         .ok()
         .flatten()
         .map(|meta| meta.locked_until);
-    Ok(timelock_status_at(locked_until, timelock::now_secs()))
+    let mut status = timelock_status_at(locked_until, now);
+    status.format_version = crypto_stream::stream_version(qre_path).unwrap_or(0);
+    status
 }
 
 /// Builds the status the UI shows. `None` means not time-locked, a V5 file, or unreadable.
@@ -187,9 +245,9 @@ pub(crate) fn timelock_status_at(locked_until: Option<u64>, now: u64) -> TimeLoc
             } else {
                 String::new()
             };
-            TimeLockStatus { is_locked, locked_until: until, remaining_display }
+            TimeLockStatus { is_locked, locked_until: until, remaining_display, format_version: 0 }
         }
-        None => TimeLockStatus { is_locked: false, locked_until: 0, remaining_display: String::new() },
+        None => TimeLockStatus { is_locked: false, locked_until: 0, remaining_display: String::new(), format_version: 0 },
     }
 }
 

@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { Badge } from "../ui";
 import { FileEntry } from "../../types";
 import { formatSize, formatDate } from "../../utils/formatting";
 import "./DetailsPanel.css";
@@ -8,7 +9,16 @@ interface DetailsPanelProps {
   selected: FileEntry[];
   /** Locked-until time (seconds) of each time-locked file in the folder, by path. */
   timeLockInfo: Map<string, number>;
+  /** The format version (5 to 8) of each locked file in the folder, by path. */
+  formatVersions?: Map<string, number>;
   onClose: () => void;
+}
+
+const NO_VERSIONS = new Map<string, number>();
+
+/** Locked by an older version of the app: the file name is readable without the key. */
+export function isOlderFormat(version: number | undefined): boolean {
+  return version !== undefined && version >= 5 && version <= 7;
 }
 
 /** The folder a path sits in, whichever kind of slash it uses. */
@@ -44,11 +54,15 @@ function Row({ label, value }: { label: string; value: string }) {
  * Facts about the selected item, so a size, date or full path does not need a right-click.
  * It only describes what is already listed; it never reads file contents.
  */
-export function DetailsPanel({ selected, timeLockInfo, onClose }: DetailsPanelProps) {
+export function DetailsPanel({ selected, timeLockInfo, formatVersions = NO_VERSIONS, onClose }: DetailsPanelProps) {
   const total = selected.reduce((sum, e) => sum + (e.size ?? 0), 0);
   const folders = selected.filter((e) => e.isDirectory).length;
   const entry = selected.length === 1 ? selected[0] : null;
   const lockedUntil = entry ? timeLockInfo.get(entry.path) : undefined;
+  // Only a .qre file has a format. The map is filled for those alone, but the panel does not rely on it.
+  const isLocked = (e: FileEntry) => !e.isDirectory && !e.isDrive && e.name.toLowerCase().endsWith(".qre");
+  const version = entry && isLocked(entry) ? formatVersions.get(entry.path) : undefined;
+  const olderCount = selected.filter((e) => isLocked(e) && isOlderFormat(formatVersions.get(e.path))).length;
 
   return (
     <aside className="details-panel" aria-label="Details">
@@ -78,7 +92,25 @@ export function DetailsPanel({ selected, timeLockInfo, onClose }: DetailsPanelPr
             {lockedUntil !== undefined && (
               <Row label="Time lock" value={`Until ${new Date(lockedUntil * 1000).toLocaleString()}`} />
             )}
+            {version !== undefined && version >= 5 && version <= 8 && (
+              <div className="details-panel__row">
+                <dt>Format</dt>
+                <dd>
+                  {isOlderFormat(version) ? (
+                    <Badge tone="warn">Older format (version {version})</Badge>
+                  ) : (
+                    <Badge tone="ok">Current format</Badge>
+                  )}
+                </dd>
+              </div>
+            )}
           </dl>
+          {isOlderFormat(version) && (
+            <p className="details-panel__note">
+              An older version locked this file, so its file name is readable by anyone who has it. Right-click it and
+              choose Upgrade Format to fix that.
+            </p>
+          )}
         </>
       )}
 
@@ -89,7 +121,20 @@ export function DetailsPanel({ selected, timeLockInfo, onClose }: DetailsPanelPr
             <Row label="Folders" value={String(folders)} />
             <Row label="Files" value={String(selected.length - folders)} />
             <Row label="Total size" value={formatSize(total)} />
+            {olderCount > 0 && (
+              <div className="details-panel__row">
+                <dt>Older format</dt>
+                <dd>
+                  <Badge tone="warn">{olderCount === 1 ? "1 file" : `${olderCount} files`}</Badge>
+                </dd>
+              </div>
+            )}
           </dl>
+          {olderCount > 0 && (
+            <p className="details-panel__note">
+              Right-click an older file and choose Upgrade Format. The older files in the selection are upgraded together.
+            </p>
+          )}
         </>
       )}
     </aside>

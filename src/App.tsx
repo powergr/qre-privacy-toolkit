@@ -59,6 +59,7 @@ import {
 // Auth & Modals
 import { AuthOverlay } from "./components/auth/AuthOverlay";
 import { HelpModal } from "./components/modals/HelpModal";
+import { RecoveryCodeNoticeModal } from "./components/modals/RecoveryCodeNoticeModal";
 import {
   AboutModal,
   ResetConfirmModal,
@@ -97,6 +98,8 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  // After a password change or a recovery the recovery code still works. Say so, and offer a new one.
+  const [codeNotice, setCodeNotice] = useState<"password" | "recovery" | null>(null);
   const [showThemeModal, setShowThemeModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showBackupModal, setShowBackupModal] = useState(false);
@@ -141,6 +144,13 @@ function App() {
   const [changePassError, setChangePassError] = useState<string | null>(null);
   const [backupDone, setBackupDone] = useState(false);
 
+  /** Replaces the recovery code. The old one stops working, and the new one is shown to be saved. */
+  async function makeNewRecoveryCode() {
+    const res = await auth.handleReset2FA();
+    if (!res.success) setInfoMsg({ message: res.msg || "Reset failed", type: "error" });
+    else setBackupDone(false);
+  }
+
   // When the session ends (logout, inactivity timeout, recovery-code reset) every dialog
   // and everything typed into one must go with it. Otherwise the next sign-in would open on
   // a stale dialog, with an old USB vault password or a freshly shown recovery code still
@@ -150,6 +160,7 @@ function App() {
     setShowAbout(false);
     setShowChangePass(false);
     setShowResetConfirm(false);
+    setCodeNotice(null);
     setShowThemeModal(false);
     setShowHelpModal(false);
     setShowBackupModal(false);
@@ -289,7 +300,10 @@ function App() {
                 message: res.msg || "Recovery failed",
                 type: "error",
               });
-            else toast.success("Vault recovered successfully.");
+            else {
+              toast.success("Vault recovered successfully.");
+              setCodeNotice("recovery");
+            }
           }}
           onAckRecoveryCode={() => auth.setView("dashboard")}
           onSwitchToRecovery={() => auth.setView("recovery_entry")}
@@ -432,13 +446,20 @@ function App() {
       {showResetConfirm && (
         <ResetConfirmModal
           onConfirm={async () => {
-            const res = await auth.handleReset2FA();
-            if (!res.success)
-              setInfoMsg({ message: res.msg || "Reset failed", type: "error" });
-            else setBackupDone(false);
+            await makeNewRecoveryCode();
             setShowResetConfirm(false);
           }}
           onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
+      {codeNotice && (
+        <RecoveryCodeNoticeModal
+          reason={codeNotice}
+          onKeep={() => setCodeNotice(null)}
+          onMakeNew={async () => {
+            setCodeNotice(null);
+            await makeNewRecoveryCode();
+          }}
         />
       )}
       {showUpdateModal && (
@@ -471,6 +492,7 @@ function App() {
               setBackupDone(false);
               toast.success("Password updated successfully.");
               setShowChangePass(false);
+              setCodeNotice("password");
             }
           }}
           onCancel={() => {

@@ -145,3 +145,115 @@ describe("DetailsPanel", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("DetailsPanel - the format of a locked file", () => {
+  const qre = (name = "old.qre") => entry({ name, path: `C:\\Users\\me\\${name}`, size: 4096 });
+  const versions = (...pairs: [string, number][]) => new Map<string, number>(pairs.map(([n, v]) => [`C:\\Users\\me\\${n}`, v]));
+  const show = (selected: FileEntry[], formatVersions?: Map<string, number>) =>
+    render(<DetailsPanel selected={selected} timeLockInfo={none} formatVersions={formatVersions} onClose={() => {}} />);
+
+  it.each([5, 6, 7])("marks a version %i file as an older format, naming the version", (v) => {
+    show([qre()], versions(["old.qre", v]));
+    const badge = screen.getByText(`Older format (version ${v})`);
+    expect(badge).toHaveClass("ui-badge--warn");
+    expect(value("Format")).toBe(`Older format (version ${v})`);
+  });
+
+  it("says why it matters and how to fix it", () => {
+    show([qre()], versions(["old.qre", 6]));
+    expect(screen.getByText(/its file name is readable by anyone who has it/)).toBeInTheDocument();
+    expect(screen.getByText(/Right-click it and choose Upgrade Format/)).toBeInTheDocument();
+  });
+
+  it("marks a version 8 file as the current format, with no warning", () => {
+    show([qre()], versions(["old.qre", 8]));
+    const badge = screen.getByText("Current format");
+    expect(badge).toHaveClass("ui-badge--ok");
+    expect(screen.queryByText(/Upgrade Format/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Older format/)).not.toBeInTheDocument();
+  });
+
+  it.each([0, 1, 4, 9, 100])("shows nothing about the format for version %i", (v) => {
+    show([qre()], versions(["old.qre", v]));
+    expect(screen.queryByText("Format", { selector: "dt" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Upgrade Format/)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing about the format when the version is not known", () => {
+    show([qre()], versions());
+    expect(screen.queryByText("Format", { selector: "dt" })).not.toBeInTheDocument();
+  });
+
+  it("works without any version information at all", () => {
+    show([qre()]);
+    expect(screen.queryByText("Format", { selector: "dt" })).not.toBeInTheDocument();
+    expect(value("Type")).toBe("QRE encrypted file");
+  });
+
+  it("uses the version of the selected file, not of its neighbours", () => {
+    show([qre("new.qre")], versions(["old.qre", 6], ["new.qre", 8]));
+    expect(screen.getByText("Current format")).toBeInTheDocument();
+    expect(screen.queryByText(/Older format/)).not.toBeInTheDocument();
+  });
+
+  it("is shown together with a time-lock", () => {
+    render(
+      <DetailsPanel
+        selected={[qre()]}
+        timeLockInfo={new Map([["C:\\Users\\me\\old.qre", 4_000_000_000]])}
+        formatVersions={versions(["old.qre", 7])}
+        onClose={() => {}}
+      />,
+    );
+    expect(value("Time lock")).toContain("Until");
+    expect(value("Format")).toBe("Older format (version 7)");
+  });
+
+  it("counts the older files in a selection of several", () => {
+    show([qre("a.qre"), qre("b.qre"), qre("c.qre")], versions(["a.qre", 6], ["b.qre", 7], ["c.qre", 8]));
+    expect(value("Older format")).toBe("2 files");
+    expect(screen.getByText("2 files")).toHaveClass("ui-badge--warn");
+    expect(screen.getByText(/The older files in the selection are upgraded together/)).toBeInTheDocument();
+  });
+
+  it("says 1 file for a single older file in a selection", () => {
+    show([qre("a.qre"), qre("c.qre")], versions(["a.qre", 5], ["c.qre", 8]));
+    expect(value("Older format")).toBe("1 file");
+  });
+
+  it("adds nothing to a selection with no older files", () => {
+    show([qre("a.qre"), qre("c.qre")], versions(["a.qre", 8], ["c.qre", 8]));
+    expect(screen.queryByText("Older format", { selector: "dt" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Upgrade Format/)).not.toBeInTheDocument();
+  });
+
+  it("adds nothing for a selection of plain files and folders", () => {
+    show([entry(), entry({ name: "Taxes", isDirectory: true, size: null, path: "C:\\Users\\me\\Taxes" })], versions(["old.qre", 6]));
+    expect(screen.queryByText("Older format", { selector: "dt" })).not.toBeInTheDocument();
+  });
+
+  it("shows nothing for a folder or a plain file, whatever the map says about its path", () => {
+    show([entry({ name: "Taxes", isDirectory: true, size: null, path: "C:\\Users\\me\\Taxes" })], versions(["Taxes", 6]));
+    expect(value("Type")).toBe("Folder");
+    expect(screen.queryByText("Format", { selector: "dt" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Upgrade Format/)).not.toBeInTheDocument();
+  });
+
+  it("shows nothing for a plain file whose path is in the map", () => {
+    show([entry()], new Map([["C:\\Users\\me\\report.pdf", 6]]));
+    expect(screen.queryByText("Format", { selector: "dt" })).not.toBeInTheDocument();
+  });
+
+  it("does not count a folder or a plain file as an older file in a selection", () => {
+    show(
+      [qre("a.qre"), entry(), entry({ name: "Taxes", isDirectory: true, size: null, path: "C:\\Users\\me\\Taxes" })],
+      new Map([["C:\\Users\\me\\a.qre", 6], ["C:\\Users\\me\\report.pdf", 6], ["C:\\Users\\me\\Taxes", 6]]),
+    );
+    expect(value("Older format")).toBe("1 file");
+  });
+
+  it("recognises the .qre extension in capitals", () => {
+    show([qre("SHOUT.QRE")], versions(["SHOUT.QRE", 6]));
+    expect(value("Format")).toBe("Older format (version 6)");
+  });
+});

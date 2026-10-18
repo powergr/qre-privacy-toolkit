@@ -58,6 +58,9 @@ pub struct TimeLockStatus {
     pub locked_until: u64,
     /// Human-readable remaining duration, e.g. "3 days, 2 hours".
     pub remaining_display: String,
+    /// The format version at the start of the file (5 to 8 for a locked file), or 0 if the file
+    /// could not be read. The Files screen uses it to offer an upgrade for versions 5 to 7.
+    pub format_version: u32,
 }
 
 /// Formats a duration in seconds to a human-readable string.

@@ -6,6 +6,7 @@
 // In Rust, explicitly declaring `mod` tells the compiler to look for these files
 // (e.g., `analyzer.rs`, `bookmarks.rs`) and compile them into the binary tree.
 mod analyzer;
+mod cancel;
 mod bookmarks;
 mod breach;
 // `cleaner`, `crypto`, and `keychain` are private in normal builds — the fuzz
@@ -29,12 +30,35 @@ mod keychain;
 #[cfg(feature = "fuzzing")]
 pub mod keychain;
 mod notes;
+mod os_clipboard;
+#[cfg(test)]
+mod os_clipboard_tests; // Files on the system clipboard
+#[cfg(test)]
+mod vault_v8_tests; // Vault files in file format 8
 mod passwords;
 mod qr;
 mod registry_cleaner;
 mod shredder;
 mod state;
 mod system_cleaner;
+#[cfg(test)]
+mod crypto_failure_tests; // What happens to the files when locking or unlocking goes wrong
+#[cfg(test)]
+mod crypto_verify_tests; // Checking a new locked file before calling it done
+#[cfg(test)]
+mod crypto_command_tests; // The lock, unlock and time-lock commands, without a window
+#[cfg(test)]
+mod crypto_v8_messages_tests; // A wrong key and a damaged header give different errors
+#[cfg(test)]
+mod crypto_hardening_tests; // Chunk expansion limit and file name cleaning
+#[cfg(test)]
+mod crypto_cancel_tests; // Stopping a long job from the window
+#[cfg(test)]
+mod crypto_relock_tests; // Upgrading old locked files to the current format
+#[cfg(test)]
+mod keychain_limits_tests; // Limits on key derivation settings read from keychain.json
+#[cfg(test)]
+mod crypto_v8_tests; // File format 8: hidden file name, authenticated header and date
 #[cfg(test)]
 mod tests; // Only compiled when running `cargo test`
 mod timelock;
@@ -152,6 +176,12 @@ pub fn run() {
             // --- FILE COMMANDS (commands/files.rs) ---
             commands::files::lock_file,
             commands::files::unlock_file,
+            commands::files::relock_file,
+            commands::files::cancel_operation,
+            commands::files::set_clipboard_files,
+            commands::files::get_clipboard_files,
+            commands::files::clear_clipboard_files,
+            commands::files::find_old_format_files,
             commands::files::delete_items,
             commands::files::trash_items,
             commands::files::paste_items,
@@ -169,6 +199,7 @@ pub fn run() {
             commands::files::get_startup_file,
             commands::files::list_directory,
             commands::files::open_file_android,
+            commands::files::set_android_system_bars,
             commands::portable::enumerate_removable_drives,
             commands::portable::init_portable_vault,
             commands::portable::unlock_portable_vault,

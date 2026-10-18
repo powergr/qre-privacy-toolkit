@@ -118,3 +118,54 @@ describe("sign-in screen", () => {
     expect(css).toMatch(/@media \(pointer: coarse\)\s*{\s*\.auth-link\s*{\s*min-height:\s*44px/);
   });
 });
+
+describe("Passwords and Notes headers", () => {
+  const vault = read("components", "views", "VaultView.css");
+  const notes = read("components", "views", "NotesView.css");
+  const phoneOf = (css: string) => block(css, "@media (max-width: 600px)");
+
+  it.each([
+    ["Vault", ".vault-header", vault],
+    ["Notes", ".notes-header", notes],
+  ])("%s: the header wraps on any narrow window instead of scrolling sideways", (_name, selector, css) => {
+    expect(css).toMatch(new RegExp(`${selector.replace(".", "\\.")}\\s*{\\s*flex-wrap:\\s*wrap`));
+  });
+
+  it.each([
+    ["Vault", ".vault-header", vault],
+    ["Notes", ".notes-header", notes],
+  ])("%s: the header stacks in a column on a phone", (_name, selector, css) => {
+    const phone = phoneOf(css);
+    const rule = phone.slice(phone.indexOf(`${selector} {`), phone.indexOf("}", phone.indexOf(`${selector} {`)));
+    expect(rule).toMatch(/flex-direction:\s*column/);
+    expect(rule).toMatch(/align-items:\s*stretch/);
+  });
+
+  it.each([
+    ["Vault", vault],
+    ["Notes", notes],
+  ])("%s: the search box takes the full width on a phone", (_name, css) => {
+    expect(phoneOf(css)).toMatch(/\.search-container\s*{[^}]*width:\s*100%[^}]*max-width:\s*none/);
+  });
+
+  it("Vault: Add New comes first and fills the row, beside the three icon buttons", () => {
+    expect(phoneOf(vault)).toMatch(/\.vault-primary-btn\s*{[^}]*order:\s*-1[^}]*flex:\s*1 1 auto/);
+  });
+
+  it("Notes: New Note comes first on its own full-width line, and the controls wrap below it", () => {
+    expect(phoneOf(notes)).toMatch(/\.header-action-btn\s*{[^}]*order:\s*-1[^}]*flex:\s*1 1 100%/);
+    expect(notes).toMatch(/\.notes-controls-row\s*{[^}]*flex-wrap:\s*wrap/);
+  });
+
+  it("Notes: the sort menu may shrink so it never pushes the buttons out of the row", () => {
+    expect(phoneOf(notes)).toMatch(/\.custom-select-container\s*{[^}]*min-width:\s*0/);
+  });
+
+  it("make the header controls 44 pixels on touch screens", () => {
+    expect(vault).toMatch(/@media \(pointer: coarse\)\s*{\s*\.vault-action-btn\s*{\s*width:\s*44px;\s*height:\s*44px/);
+    expect(notes).toMatch(/\.notes-icon-btn\s*{\s*width:\s*44px/);
+  });
+});
+
+// Makes this file a module, so its helper names do not clash with those of other test files.
+export {};

@@ -935,7 +935,7 @@ export function NotesView() {
         </div>
 
         {/* Search */}
-        <div className="search-container" style={{ height: 40 }}>
+        <div className="search-container">
           <Search size={18} className="search-icon" />
           <input
             className="search-input"
@@ -943,7 +943,6 @@ export function NotesView() {
             placeholder="Search notes…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ height: "100%", boxSizing: "border-box" }}
           />
         </div>
 

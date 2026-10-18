@@ -70,6 +70,8 @@ const SHORTCUTS: [string, string, string][] = [
   ["Ctrl+F", "Vault, Bookmarks, Notes, Clipboard", "Jump to the search box."],
   ["Ctrl+F", "Inside a note", "Open find and replace."],
   ["Ctrl+L", "Files", "Edit the folder path in the address bar."],
+  ["Ctrl+C, Ctrl+X, Ctrl+V", "Files", "Copy, cut and paste the selected files. On Windows they can be pasted in Explorer, and files copied there can be pasted here."],
+  ["Esc", "Files, while locking or unlocking", "Cancel the job that is running. Files already finished stay finished."],
   ["Ctrl+S", "Vault, Bookmarks, Notes editor", "Save and close."],
   ["Ctrl+O", "Integrity Checker", "Choose a file to hash."],
   ["Ctrl+O", "File Analyzer, Privacy Check (Local Scanner)", "Choose a folder to scan."],
@@ -243,6 +245,12 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
             New <code>.qre</code> encrypted files are created next to the
             originals.
           </li>
+          <li>
+            By default the app then opens each new file once to check it. If
+            the check fails, the bad file is removed and your original is
+            untouched. You can switch this off under{" "}
+            <strong>Verify After Locking</strong> in the options menu.
+          </li>
         </ol>
         <div
           style={{
@@ -256,6 +264,64 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           automatically. Use the <strong>Shredder</strong> if you want to
           permanently destroy the originals after encryption.
         </div>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Stopping a Long Job
+        </h4>
+        <p>
+          A big folder can take a long time. Press <kbd>Esc</kbd> or click{" "}
+          <strong>Cancel</strong> on the progress card to stop locking,
+          unlocking, upgrading or time-locking. The app stops within a moment.
+          The file it was working on is removed, and your original is not
+          touched.
+        </p>
+        <p>
+          Files that were already finished before you stopped stay finished.
+          The message tells you how many. Copying, moving and deleting cannot be
+          stopped once they have started.
+        </p>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Copy and Paste Between Programs
+        </h4>
+        <p>
+          Select files, then press <kbd>Ctrl+C</kbd> to copy or{" "}
+          <kbd>Ctrl+X</kbd> to cut. The right-click menu does the same. On
+          Windows the files go on the system clipboard, so you can paste them in
+          Explorer. Files you copy in Explorer can be pasted into the open
+          folder with <kbd>Ctrl+V</kbd> or <strong>Paste Here</strong>.
+        </p>
+        <p>
+          On other systems, copy and paste work only inside QRE for now.
+          Pressing <kbd>Esc</kbd> clears the copy.
+        </p>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          What Time-Lock Does and Does Not Do
+        </h4>
+        <p>
+          Right-click a file and choose <strong>Time-Lock…</strong> to lock it
+          until a date. The app refuses to open it before then.
+        </p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            It is kept by the app, not by the encryption. It guards against
+            mistakes and impulse.
+          </li>
+          <li>
+            It does not stop someone who knows your master password and has
+            the right tools. Offline, setting the device clock forward can
+            also open the file.
+          </li>
+          <li>
+            The date is readable without the password. Anyone holding the file
+            can see when it unlocks.
+          </li>
+          <li>
+            For a secret that must stay closed even to you, do not rely on
+            this alone.
+          </li>
+        </ul>
 
         <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
           Finding Your Way Around
@@ -297,6 +363,73 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           </li>
           <li>The file will be decrypted to its original state.</li>
         </ol>
+
+        <h4 style={{ color: "var(--text-main)", marginTop: 20 }}>
+          Upgrading Older Locked Files
+        </h4>
+        <p>
+          Files locked by older versions of the app show their file names to
+          anyone who has them, and a copy that was cut short may not be
+          noticed. The current format hides the names and catches that. Old
+          files still open as before, and you can rewrite them whenever you
+          like.
+        </p>
+        <ol style={{ paddingLeft: 20 }}>
+          <li>
+            Open the folder that holds them, then open the options menu in the
+            toolbar and choose <strong>Upgrade Older Locked Files…</strong>
+          </li>
+          <li>
+            The app lists what it found. Leave <strong>Include sub folders</strong>{" "}
+            on to search inside folders too.
+          </li>
+          <li>
+            Press <strong>Upgrade</strong>. Each file is rewritten, checked from
+            start to finish, and only then replaces the old one. Nothing is
+            written to the disk in the clear, and if anything goes wrong that
+            file is left as it was.
+          </li>
+        </ol>
+        <p>
+          To see which files need it, select one and open <strong>Details</strong>.
+          A <code>.qre</code> file shows an <strong>Older format</strong> badge
+          with its version number, or a <strong>Current format</strong> badge.
+          With several files selected, Details counts the older ones.
+        </p>
+        <p>Two shortcuts save a trip to that dialog:</p>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            <strong>One file:</strong> right-click a <code>.qre</code> file that
+            an older version made and choose <strong>Upgrade Format</strong>. The
+            entry appears only for files that need it. If several files are
+            selected, the old ones among them are upgraded.
+          </li>
+          <li>
+            <strong>Automatically:</strong> turn on{" "}
+            <strong>Upgrade Older Files When Unlocking</strong> in the options
+            menu. After you unlock a file that an older version made, the app
+            also rewrites the locked copy. It is off until you turn it on,
+            because it replaces files without asking each time. It only touches
+            files that unlocked, and the same checks apply.
+          </li>
+        </ul>
+        <ul style={{ paddingLeft: 20 }}>
+          <li>
+            A file that is <strong>still time-locked</strong> is skipped. Upgrade
+            it after the lock ends. A lock that has ended is not carried over.
+          </li>
+          <li>
+            A file locked with a <strong>key file</strong> needs that key file.
+            Select it in the options menu first.
+          </li>
+          <li>
+            Files that belong to a USB vault need that vault to be unlocked.
+          </li>
+          <li>
+            Older versions of the app cannot open an upgraded file, so update
+            every device first.
+          </li>
+        </ul>
       </Section>
 
       <Section id="vault" title="Password Vault" icon={<Key />}>
@@ -722,6 +855,14 @@ export function HelpManual({ onScrollTo }: HelpManualProps) {
           Use the <strong>Recovery Code</strong> (<code>QRE-XXXX...</code>) that
           was displayed when you first created your account. Click "Forgot
           Password?" on the login screen to reset your master key.
+        </p>
+        <p>
+          <strong>The Recovery Code keeps working.</strong> Changing your
+          password, or using the code to get back in, does not replace it, so
+          anyone who has seen the code can still open your vault. After either,
+          the app offers to make a new code. You can do it at any time with{" "}
+          <strong>Reset 2FA</strong> in the sidebar or in Settings. The old code
+          stops working at once, so save the new one.
         </p>
       </Section>
 

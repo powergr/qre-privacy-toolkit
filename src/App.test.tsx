@@ -264,10 +264,17 @@ const click = (label: string) => fireEvent.click(screen.getByText(label));
 const tab = (id: string) => click(`tab: ${id}`);
 const activeTab = () => screen.getByTestId("active-tab").textContent;
 
-function renderApp(view = "dashboard", expired = false) {
+// Rendered inside an awaited act(), so the updates that follow the first render (the backup
+// check, for one) are finished before a test goes on, or ends. Without it they can land after a
+// short test is over and React warns that they were not wrapped in act(...).
+async function renderApp(view = "dashboard", expired = false) {
   mockInitialView = view;
   mockInitialExpired = expired;
-  return render(<App />);
+  let result!: ReturnType<typeof render>;
+  await act(async () => {
+    result = render(<App />);
+  });
+  return result;
 }
 
 function drive(path: string, name: string, uuid?: string) {
@@ -313,22 +320,22 @@ beforeEach(() => {
 describe("App - sign-in screens", () => {
   it.each(["loading", "setup", "login", "recovery_entry", "recovery_display"])(
     "shows the %s screen and none of the app",
-    (view) => {
-      renderApp(view);
+    async (view) => {
+      await renderApp(view);
       expect(screen.getByTestId("auth-view")).toHaveTextContent(view);
       expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument();
       expect(mockInvoke).not.toHaveBeenCalledWith("get_backup_done");
     },
   );
 
-  it("shows the app once signed in", () => {
-    renderApp("dashboard");
+  it("shows the app once signed in", async () => {
+    await renderApp("dashboard");
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
     expect(screen.queryByTestId("auth-overlay")).not.toBeInTheDocument();
   });
 
-  it("passes the password fields through to the sign-in screen", () => {
-    renderApp("login");
+  it("passes the password fields through to the sign-in screen", async () => {
+    await renderApp("login");
     act(() => mockOverlayProps.setPassword("pw"));
     expect(mockOverlayProps.password).toBe("pw");
     act(() => mockOverlayProps.setConfirmPass("pw2"));
@@ -337,22 +344,22 @@ describe("App - sign-in screens", () => {
     expect(mockOverlayProps.recoveryCode).toBe("CODE");
   });
 
-  it("moves between login and recovery", () => {
-    renderApp("login");
+  it("moves between login and recovery", async () => {
+    await renderApp("login");
     click("auth: to recovery");
     expect(screen.getByTestId("auth-view")).toHaveTextContent("recovery_entry");
     click("auth: cancel recovery");
     expect(screen.getByTestId("auth-view")).toHaveTextContent("login");
   });
 
-  it("enters the app after the recovery code is acknowledged", () => {
-    renderApp("recovery_display");
+  it("enters the app after the recovery code is acknowledged", async () => {
+    await renderApp("recovery_display");
     click("auth: ack");
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
   });
 
   it("says nothing after a successful login", async () => {
-    renderApp("login");
+    await renderApp("login");
     click("auth: login");
     await waitFor(() => expect(mockAuthFns.handleLogin).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Error")).not.toBeInTheDocument();
@@ -364,7 +371,7 @@ describe("App - sign-in screens", () => {
     ["recovery", "handleRecovery", "Recovery failed"],
     ["restore", "handleRestoreBackup", "Restore failed"],
   ] as const)("%s: shows the reason, or a default, when it fails", async (button, fn, fallback) => {
-    renderApp("login");
+    await renderApp("login");
     mockAuthFns[fn].mockResolvedValueOnce({ success: false, msg: "Wrong password" });
     click(`auth: ${button}`);
     expect(await screen.findByText("Wrong password")).toBeInTheDocument();
@@ -378,7 +385,7 @@ describe("App - sign-in screens", () => {
   });
 
   it("confirms a successful recovery", async () => {
-    renderApp("recovery_entry");
+    await renderApp("recovery_entry");
     click("auth: recovery");
     const toast = (await screen.findByText("Vault recovered successfully.")).closest(".ui-toast");
     expect(toast).toHaveClass("ui-toast--success");
@@ -387,7 +394,7 @@ describe("App - sign-in screens", () => {
   });
 
   it("confirms a restored backup, but stays quiet when the file picker was cancelled", async () => {
-    renderApp("login");
+    await renderApp("login");
     mockAuthFns.handleRestoreBackup.mockResolvedValueOnce({ success: true });
     click("auth: restore");
     await waitFor(() => expect(mockAuthFns.handleRestoreBackup).toHaveBeenCalled());
@@ -403,8 +410,8 @@ describe("App - sign-in screens", () => {
     expect(toast).toHaveClass("ui-toast--success");
   });
 
-  it("tells the user when the session timed out, and lets them dismiss it", () => {
-    renderApp("login", true);
+  it("tells the user when the session timed out, and lets them dismiss it", async () => {
+    await renderApp("login", true);
     expect(screen.getByText("Session timed out due to inactivity.")).toBeInTheDocument();
     click("OK");
     expect(screen.queryByText("Session timed out due to inactivity.")).not.toBeInTheDocument();
@@ -415,14 +422,14 @@ describe("App - sign-in screens", () => {
 // ─── Navigation ──────────────────────────────────────────────────────────────
 
 describe("App - navigation", () => {
-  it("starts on Home", () => {
-    renderApp();
+  it("starts on Home", async () => {
+    await renderApp();
     expect(activeTab()).toBe("home");
     expect(screen.getByTestId("view-home")).toBeInTheDocument();
   });
 
-  it.each(mockTabIds)("opens the %s screen and no other", (id) => {
-    renderApp();
+  it.each(mockTabIds)("opens the %s screen and no other", async (id) => {
+    await renderApp();
     tab(id);
     expect(activeTab()).toBe(id);
     expect(screen.getByTestId(`view-${id}`)).toBeInTheDocument();
@@ -431,15 +438,15 @@ describe("App - navigation", () => {
     }
   });
 
-  it("lets Home jump to Files", () => {
-    renderApp();
+  it("lets Home jump to Files", async () => {
+    await renderApp();
     click("home: go files");
     expect(screen.getByTestId("view-files")).toBeInTheDocument();
     expect(activeTab()).toBe("files");
   });
 
-  it("opens the password and recovery-code dialogs from Settings", () => {
-    renderApp();
+  it("opens the password and recovery-code dialogs from Settings", async () => {
+    await renderApp();
     tab("settings");
     click("st: password");
     expect(screen.getByText("Change Password")).toBeInTheDocument();
@@ -448,8 +455,8 @@ describe("App - navigation", () => {
     expect(screen.getByText("Reset Recovery Code?")).toBeInTheDocument();
   });
 
-  it("logs out from the sidebar and from Settings", () => {
-    renderApp();
+  it("logs out from the sidebar and from Settings", async () => {
+    await renderApp();
     click("sb: logout");
     tab("settings");
     click("st: logout");
@@ -463,8 +470,8 @@ describe("App - help, about, theme and update dialogs", () => {
   it.each([
     ["sidebar", "sb"],
     ["Help screen", "hv"],
-  ])("opens and closes the help dialog from the %s", (_where, prefix) => {
-    renderApp();
+  ])("opens and closes the help dialog from the %s", async (_where, prefix) => {
+    await renderApp();
     if (prefix === "hv") tab("help");
     click(`${prefix}: help`);
     expect(screen.getByTestId("help-modal")).toBeInTheDocument();
@@ -475,8 +482,8 @@ describe("App - help, about, theme and update dialogs", () => {
   it.each([
     ["sidebar", "sb"],
     ["Help screen", "hv"],
-  ])("opens and closes About from the %s", (_where, prefix) => {
-    renderApp();
+  ])("opens and closes About from the %s", async (_where, prefix) => {
+    await renderApp();
     if (prefix === "hv") tab("help");
     click(`${prefix}: about`);
     expect(document.querySelector('[style*="200000"]')).not.toBeNull();
@@ -487,8 +494,8 @@ describe("App - help, about, theme and update dialogs", () => {
   it.each([
     ["sidebar", "sb"],
     ["Settings", "st"],
-  ])("opens and closes the update dialog from %s", (_where, prefix) => {
-    renderApp();
+  ])("opens and closes the update dialog from %s", async (_where, prefix) => {
+    await renderApp();
     if (prefix === "st") tab("settings");
     click(`${prefix}: update`);
     expect(screen.getByTestId("update-modal")).toBeInTheDocument();
@@ -496,8 +503,8 @@ describe("App - help, about, theme and update dialogs", () => {
     expect(screen.queryByTestId("update-modal")).not.toBeInTheDocument();
   });
 
-  it("saves the chosen theme and closes the dialog", () => {
-    renderApp();
+  it("saves the chosen theme and closes the dialog", async () => {
+    await renderApp();
     click("sb: theme");
     click("Dark Mode");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -505,8 +512,8 @@ describe("App - help, about, theme and update dialogs", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
-  it("cancelling the theme dialog changes nothing", () => {
-    renderApp();
+  it("cancelling the theme dialog changes nothing", async () => {
+    await renderApp();
     tab("settings");
     click("st: theme");
     click("Dark Mode");
@@ -519,8 +526,8 @@ describe("App - help, about, theme and update dialogs", () => {
 // ─── Inactivity warning ──────────────────────────────────────────────────────
 
 describe("App - inactivity warning", () => {
-  it("shows the countdown and stays signed in on request", () => {
-    renderApp();
+  it("shows the countdown and stays signed in on request", async () => {
+    await renderApp();
     expect(screen.queryByText("42")).not.toBeInTheDocument();
     act(() => mockLatest.setShowTimeoutWarning(true));
     expect(screen.getByText("42")).toBeInTheDocument();
@@ -538,12 +545,12 @@ describe("App - keychain backup", () => {
   };
 
   it("asks the backend whether a backup exists, only once signed in", async () => {
-    renderApp();
+    await renderApp();
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
   });
 
   it("writes the keychain to the chosen file and records that a backup was made", async () => {
-    renderApp();
+    await renderApp();
     startBackup();
     expect(await screen.findByText(/Backup saved successfully/)).toBeInTheDocument();
 
@@ -561,7 +568,7 @@ describe("App - keychain backup", () => {
 
   it("does nothing more when the file picker is cancelled", async () => {
     mockSave.mockResolvedValue(null);
-    renderApp();
+    await renderApp();
     startBackup();
     await waitFor(() => expect(mockSave).toHaveBeenCalled());
     expect(mockWriteFile).not.toHaveBeenCalled();
@@ -572,7 +579,7 @@ describe("App - keychain backup", () => {
 
   it("reports a failed write and does not mark the backup as done", async () => {
     mockWriteFile.mockRejectedValue("disk full");
-    renderApp();
+    await renderApp();
     startBackup();
     expect(await screen.findByText("Backup failed: disk full")).toBeInTheDocument();
     expect(mockInvoke).not.toHaveBeenCalledWith("set_backup_done");
@@ -588,14 +595,14 @@ describe("App - keychain backup", () => {
     mockInvoke.mockImplementation((cmd: string) =>
       cmd === "get_keychain_data" ? Promise.reject("locked") : Promise.resolve(false),
     );
-    renderApp();
+    await renderApp();
     startBackup();
     expect(await screen.findByText("Backup failed: locked")).toBeInTheDocument();
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
 
-  it("cancelling the backup dialog saves nothing", () => {
-    renderApp();
+  it("cancelling the backup dialog saves nothing", async () => {
+    await renderApp();
     click("sb: backup");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText("Backup Keychain")).not.toBeInTheDocument();
@@ -603,7 +610,7 @@ describe("App - keychain backup", () => {
   });
 
   it("works from the Settings screen too", async () => {
-    renderApp();
+    await renderApp();
     tab("settings");
     click("st: backup");
     fireEvent.click(screen.getByRole("button", { name: "Save Backup..." }));
@@ -613,7 +620,7 @@ describe("App - keychain backup", () => {
 
 describe("App - backup reminder", () => {
   async function openFilesAndLock() {
-    renderApp();
+    await renderApp();
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
     tab("files");
     click("files: reminder");
@@ -626,7 +633,7 @@ describe("App - backup reminder", () => {
 
   it("stays away when a backup already exists", async () => {
     backupDone = true;
-    renderApp();
+    await renderApp();
     tab("files");
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
     await act(async () => {});
@@ -660,8 +667,8 @@ describe("App - backup reminder", () => {
 // ─── Re-creating the recovery code ───────────────────────────────────────────
 
 describe("App - reset recovery code", () => {
-  it("asks first, and Cancel does nothing", () => {
-    renderApp();
+  it("asks first, and Cancel does nothing", async () => {
+    await renderApp();
     click("sb: reset");
     expect(screen.getByText("Reset Recovery Code?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -670,7 +677,7 @@ describe("App - reset recovery code", () => {
   });
 
   it("resets, closes the dialog and shows nothing else on success", async () => {
-    renderApp();
+    await renderApp();
     click("sb: reset");
     fireEvent.click(screen.getByRole("button", { name: "Confirm Reset" }));
     await waitFor(() => expect(mockAuthFns.handleReset2FA).toHaveBeenCalledTimes(1));
@@ -679,7 +686,7 @@ describe("App - reset recovery code", () => {
   });
 
   it("shows the reason when the reset fails, or a default", async () => {
-    renderApp();
+    await renderApp();
     mockAuthFns.handleReset2FA.mockResolvedValueOnce({ success: false, msg: "Backend down" });
     click("sb: reset");
     fireEvent.click(screen.getByRole("button", { name: "Confirm Reset" }));
@@ -695,7 +702,7 @@ describe("App - reset recovery code", () => {
 
   it("makes the keychain count as not backed up again", async () => {
     backupDone = true;
-    renderApp();
+    await renderApp();
     tab("files");
     await act(async () => {});
     click("files: reminder");
@@ -717,8 +724,8 @@ describe("App - change password", () => {
   const open = () => click("sb: password");
   const update = () => fireEvent.click(screen.getByRole("button", { name: "Update" }));
 
-  it("fills the three fields and passes them on", () => {
-    renderApp();
+  it("fills the three fields and passes them on", async () => {
+    await renderApp();
     open();
     fireEvent.change(field("Current Password"), { target: { value: "old" } });
     fireEvent.change(field("New Password"), { target: { value: "new" } });
@@ -731,7 +738,7 @@ describe("App - change password", () => {
 
   it("shows a failure inline and keeps the dialog open", async () => {
     mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false, msg: "Too weak" });
-    renderApp();
+    await renderApp();
     open();
     update();
     expect(await screen.findByText(/Password change failed: Too weak/)).toBeInTheDocument();
@@ -740,7 +747,7 @@ describe("App - change password", () => {
 
   it("uses a default message when the failure has none", async () => {
     mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false });
-    renderApp();
+    await renderApp();
     open();
     update();
     expect(await screen.findByText(/Password change failed: Update failed/)).toBeInTheDocument();
@@ -750,7 +757,7 @@ describe("App - change password", () => {
     "clears the failure as soon as %s is edited",
     async (placeholder) => {
       mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false, msg: "Too weak" });
-      renderApp();
+      await renderApp();
       open();
       update();
       await screen.findByText(/Too weak/);
@@ -761,7 +768,7 @@ describe("App - change password", () => {
 
   it("confirms success, closes, and counts the keychain as not backed up", async () => {
     backupDone = true;
-    renderApp();
+    await renderApp();
     tab("files");
     await act(async () => {});
     open();
@@ -775,7 +782,7 @@ describe("App - change password", () => {
 
   it("Cancel closes the dialog and empties all three fields and the failure", async () => {
     mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false, msg: "Too weak" });
-    renderApp();
+    await renderApp();
     open();
     fireEvent.change(field("Current Password"), { target: { value: "old" } });
     fireEvent.change(field("New Password"), { target: { value: "new" } });
@@ -810,19 +817,19 @@ describe("App - formatting a USB drive", () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)")];
   });
 
-  function openInit(button = "files: init drive") {
-    renderApp();
+  async function openInit(button = "files: init drive") {
+    await renderApp();
     tab("files");
     click(button);
   }
 
-  it("hands the Files screen the drive list and the drive actions", () => {
-    openInit("files: init drive");
+  it("hands the Files screen the drive list and the drive actions", async () => {
+    await openInit("files: init drive");
     expect(mockFilesProps.portable).toBe(mockPortable);
   });
 
-  it("names the drive, or shows its path when it is not in the list", () => {
-    openInit();
+  it("names the drive, or shows its path when it is not in the list", async () => {
+    await openInit();
     expect(screen.getByText("Kingston (E:)")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     click("files: init unknown");
@@ -830,7 +837,7 @@ describe("App - formatting a USB drive", () => {
   });
 
   it("refuses an empty password or one that does not match, without calling the backend", async () => {
-    openInit();
+    await openInit();
     format();
     expect(await screen.findByText("Passwords do not match.")).toBeInTheDocument();
     type("abc", "abd");
@@ -841,7 +848,7 @@ describe("App - formatting a USB drive", () => {
   });
 
   it("formats with the chosen security level (Standard by default)", async () => {
-    openInit();
+    await openInit();
     type("correct horse");
     format();
     await waitFor(() => expect(mockPortable.initVault).toHaveBeenCalledTimes(1));
@@ -849,7 +856,7 @@ describe("App - formatting a USB drive", () => {
   });
 
   it("passes the level the user picked", async () => {
-    openInit();
+    await openInit();
     fireEvent.click(screen.getByText("Paranoid"));
     type("correct horse");
     format();
@@ -858,7 +865,7 @@ describe("App - formatting a USB drive", () => {
   });
 
   it("shows the recovery code and vault ID once, and empties the password fields", async () => {
-    openInit();
+    await openInit();
     type("correct horse");
     format();
     expect(await screen.findByText("AAAA-BBBB")).toBeInTheDocument();
@@ -875,7 +882,7 @@ describe("App - formatting a USB drive", () => {
 
   it("shows the reason when formatting fails, or a default, and keeps the dialog", async () => {
     mockPortable.initVault.mockResolvedValueOnce({ success: false, msg: "Drive is read-only" });
-    openInit();
+    await openInit();
     type("correct horse");
     format();
     expect(await screen.findByText("Drive is read-only")).toBeInTheDocument();
@@ -887,7 +894,7 @@ describe("App - formatting a USB drive", () => {
   });
 
   it("clears the message as soon as either password is edited", async () => {
-    openInit();
+    await openInit();
     format();
     await screen.findByText("Passwords do not match.");
     fireEvent.change(password(), { target: { value: "a" } });
@@ -899,8 +906,8 @@ describe("App - formatting a USB drive", () => {
     expect(screen.queryByText("Passwords do not match.")).not.toBeInTheDocument();
   });
 
-  it("Cancel closes the dialog and forgets what was typed", () => {
-    openInit();
+  it("Cancel closes the dialog and forgets what was typed", async () => {
+    await openInit();
     type("correct horse");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("Vault Password")).not.toBeInTheDocument();
@@ -918,14 +925,14 @@ describe("App - unlocking a USB drive", () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)", "vault-uuid-1")];
   });
 
-  function openUnlock() {
-    renderApp();
+  async function openUnlock() {
+    await renderApp();
     tab("files");
     click("files: unlock drive");
   }
 
-  it("first asks the user to confirm the computer is trusted, then shows the vault ID", () => {
-    openUnlock();
+  it("first asks the user to confirm the computer is trusted, then shows the vault ID", async () => {
+    await openUnlock();
     expect(screen.getByText("Trusted Computer Only")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Vault Password")).not.toBeInTheDocument();
     trust();
@@ -933,8 +940,8 @@ describe("App - unlocking a USB drive", () => {
     expect(password()).toBeInTheDocument();
   });
 
-  it("does not ask again for the same vault later in the session", () => {
-    openUnlock();
+  it("does not ask again for the same vault later in the session", async () => {
+    await openUnlock();
     trust();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     click("files: unlock drive");
@@ -942,8 +949,8 @@ describe("App - unlocking a USB drive", () => {
     expect(password()).toBeInTheDocument();
   });
 
-  it("asks again for a different vault", () => {
-    openUnlock();
+  it("asks again for a different vault", async () => {
+    await openUnlock();
     trust();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     mockPortable.drives = [drive("E:\\", "Other", "vault-uuid-2")];
@@ -953,23 +960,23 @@ describe("App - unlocking a USB drive", () => {
     expect(screen.getByText("Trusted Computer Only")).toBeInTheDocument();
   });
 
-  it("goes straight to the password for a drive with no vault ID", () => {
+  it("goes straight to the password for a drive with no vault ID", async () => {
     mockPortable.drives = [drive("E:\\", "Old vault")];
-    openUnlock();
+    await openUnlock();
     expect(screen.queryByText("Trusted Computer Only")).not.toBeInTheDocument();
     expect(password()).toBeInTheDocument();
   });
 
-  it("keeps a typed password through the trusted-device step", () => {
+  it("keeps a typed password through the trusted-device step", async () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)", "vault-uuid-1")];
-    openUnlock();
+    await openUnlock();
     trust();
     fireEvent.change(password(), { target: { value: "secret" } });
     expect(password().value).toBe("secret");
   });
 
   it("unlocks with the typed password and closes", async () => {
-    openUnlock();
+    await openUnlock();
     trust();
     fireEvent.change(password(), { target: { value: "secret" } });
     unlock();
@@ -979,7 +986,7 @@ describe("App - unlocking a USB drive", () => {
 
   it("shows the reason for a failure, or a default, and keeps the dialog open", async () => {
     mockPortable.unlockVault.mockResolvedValueOnce({ success: false, msg: "Vault file is damaged" });
-    openUnlock();
+    await openUnlock();
     trust();
     unlock();
     expect(await screen.findByText("Vault file is damaged")).toBeInTheDocument();
@@ -992,7 +999,7 @@ describe("App - unlocking a USB drive", () => {
 
   it("clears the message when the password is edited", async () => {
     mockPortable.unlockVault.mockResolvedValueOnce({ success: false });
-    openUnlock();
+    await openUnlock();
     trust();
     unlock();
     await screen.findByText("Incorrect password.");
@@ -1000,8 +1007,8 @@ describe("App - unlocking a USB drive", () => {
     expect(screen.queryByText("Incorrect password.")).not.toBeInTheDocument();
   });
 
-  it("Cancel forgets the typed password", () => {
-    openUnlock();
+  it("Cancel forgets the typed password", async () => {
+    await openUnlock();
     trust();
     fireEvent.change(password(), { target: { value: "secret" } });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -1013,9 +1020,9 @@ describe("App - unlocking a USB drive", () => {
 // ─── Leaving the app ─────────────────────────────────────────────────────────
 
 describe("App - when the session ends", () => {
-  function endAndResumeSession() {
-    act(() => mockLatest.setView("login"));
-    act(() => mockLatest.setView("dashboard"));
+  async function endAndResumeSession() {
+    await act(async () => mockLatest.setView("login"));
+    await act(async () => mockLatest.setView("dashboard"));
   }
 
   it.each([
@@ -1023,65 +1030,65 @@ describe("App - when the session ends", () => {
     ["backup", "sb: backup", "Backup Keychain"],
     ["reset", "sb: reset", "Reset Recovery Code?"],
     ["change password", "sb: password", "Change Password"],
-  ])("closes the %s dialog", (_n, button, marker) => {
-    renderApp();
+  ])("closes the %s dialog", async (_n, button, marker) => {
+    await renderApp();
     click(button);
     expect(screen.getByText(marker)).toBeInTheDocument();
-    endAndResumeSession();
+    await endAndResumeSession();
     expect(screen.queryByText(marker)).not.toBeInTheDocument();
   });
 
-  it("closes the help, about and update dialogs", () => {
-    renderApp();
+  it("closes the help, about and update dialogs", async () => {
+    await renderApp();
     click("sb: help");
     click("sb: about");
     click("sb: update");
-    endAndResumeSession();
+    await endAndResumeSession();
     expect(screen.queryByTestId("help-modal")).not.toBeInTheDocument();
     expect(screen.queryByTestId("update-modal")).not.toBeInTheDocument();
     expect(document.querySelector('[style*="200000"]')).toBeNull();
   });
 
   it("closes the backup reminder", async () => {
-    renderApp();
+    await renderApp();
     tab("files");
     click("files: reminder");
     expect(screen.getByText("Security Reminder")).toBeInTheDocument();
-    endAndResumeSession();
+    await endAndResumeSession();
     expect(screen.queryByText("Security Reminder")).not.toBeInTheDocument();
   });
 
   it("does not show an old change-password failure in the next session", async () => {
     mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false, msg: "Too weak" });
-    renderApp();
+    await renderApp();
     click("sb: password");
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
     await screen.findByText(/Too weak/);
-    endAndResumeSession();
+    await endAndResumeSession();
     click("sb: password");
     expect(screen.queryByText(/Too weak/)).not.toBeInTheDocument();
   });
 
-  it("forgets a USB vault password typed before the session ended", () => {
+  it("forgets a USB vault password typed before the session ended", async () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)")];
-    renderApp();
+    await renderApp();
     tab("files");
     click("files: init drive");
     fireEvent.change(screen.getByPlaceholderText("Vault Password"), { target: { value: "usb-secret" } });
-    endAndResumeSession();
+    await endAndResumeSession();
     tab("files");
     expect(screen.queryByPlaceholderText("Vault Password")).not.toBeInTheDocument();
     click("files: init drive");
     expect((screen.getByPlaceholderText("Vault Password") as HTMLInputElement).value).toBe("");
   });
 
-  it("does not leave an unlock prompt or its password behind", () => {
+  it("does not leave an unlock prompt or its password behind", async () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)")];
-    renderApp();
+    await renderApp();
     tab("files");
     click("files: unlock drive");
     fireEvent.change(screen.getByPlaceholderText("Vault Password"), { target: { value: "usb-secret" } });
-    endAndResumeSession();
+    await endAndResumeSession();
     tab("files");
     expect(screen.queryByPlaceholderText("Vault Password")).not.toBeInTheDocument();
     click("files: unlock drive");
@@ -1090,19 +1097,19 @@ describe("App - when the session ends", () => {
 
   it("does not show the recovery code of a vault that was just formatted", async () => {
     mockPortable.drives = [drive("E:\\", "Kingston (E:)")];
-    renderApp();
+    await renderApp();
     tab("files");
     click("files: init drive");
     fireEvent.change(screen.getByPlaceholderText("Vault Password"), { target: { value: "pw" } });
     fireEvent.change(screen.getByPlaceholderText("Confirm Password"), { target: { value: "pw" } });
     fireEvent.click(screen.getByRole("button", { name: "Format Drive" }));
     await screen.findByText("AAAA-BBBB");
-    endAndResumeSession();
+    await endAndResumeSession();
     expect(screen.queryByText("AAAA-BBBB")).not.toBeInTheDocument();
   });
 
   it("keeps a login error visible on the sign-in screen", async () => {
-    renderApp("login");
+    await renderApp("login");
     mockAuthFns.handleLogin.mockResolvedValueOnce({ success: false, msg: "Wrong password" });
     click("auth: login");
     expect(await screen.findByText("Wrong password")).toBeInTheDocument();
@@ -1115,30 +1122,30 @@ describe("App - jump bar", () => {
   const search = () => screen.getByRole("combobox", { name: "Jump to a tool or action" });
   const type = (text: string) => fireEvent.change(search(), { target: { value: text } });
 
-  it("opens with Ctrl K on the dashboard", () => {
-    renderApp();
+  it("opens with Ctrl K on the dashboard", async () => {
+    await renderApp();
     expect(palette()).not.toBeInTheDocument();
     ctrlK();
     expect(palette()).toBeInTheDocument();
     expect(search()).toHaveFocus();
   });
 
-  it("does not open on the sign-in screens", () => {
-    renderApp("login");
+  it("does not open on the sign-in screens", async () => {
+    await renderApp("login");
     ctrlK();
     expect(palette()).not.toBeInTheDocument();
   });
 
-  it("does not wait there and pop up after the next sign-in", () => {
-    renderApp("login");
+  it("does not wait there and pop up after the next sign-in", async () => {
+    await renderApp("login");
     ctrlK();
-    act(() => mockLatest.setView("dashboard"));
+    await act(async () => mockLatest.setView("dashboard"));
     expect(screen.getByRole("region", { name: "Vault status" })).toBeInTheDocument();
     expect(palette()).not.toBeInTheDocument();
   });
 
-  it("closes with Ctrl K, with Escape, and after a choice", () => {
-    renderApp();
+  it("closes with Ctrl K, with Escape, and after a choice", async () => {
+    await renderApp();
     ctrlK();
     ctrlK();
     expect(palette()).not.toBeInTheDocument();
@@ -1153,24 +1160,24 @@ describe("App - jump bar", () => {
     expect(palette()).not.toBeInTheDocument();
   });
 
-  it("opens the tool that is chosen", () => {
-    renderApp();
+  it("opens the tool that is chosen", async () => {
+    await renderApp();
     ctrlK();
     type("shred");
     fireEvent.keyDown(search(), { key: "Enter" });
     expect(activeTab()).toBe("shred");
   });
 
-  it("finds a tool by a word that is not in its name", () => {
-    renderApp();
+  it("finds a tool by a word that is not in its name", async () => {
+    await renderApp();
     ctrlK();
     type("wifi");
     fireEvent.keyDown(search(), { key: "Enter" });
     expect(activeTab()).toBe("qr");
   });
 
-  it("lists every tool and Home", () => {
-    renderApp();
+  it("lists every tool and Home", async () => {
+    await renderApp();
     ctrlK();
     const tools = screen.getAllByRole("option").map((o) => o.textContent ?? "");
     for (const name of ["Home", "Encrypt Files", "Secure Notes", "Passwords Vault", "Bookmarks Vault", "Secure Clipboard", "Privacy Check", "Integrity Check", "File Analyzer", "System Clean", "Metadata Cleaner", "Shredder", "QR Generator"]) {
@@ -1178,16 +1185,16 @@ describe("App - jump bar", () => {
     }
   });
 
-  it("locks the app from the jump bar", () => {
-    renderApp();
+  it("locks the app from the jump bar", async () => {
+    await renderApp();
     ctrlK();
     type("lock");
     fireEvent.keyDown(search(), { key: "Enter" });
     expect(mockAuthFns.logout).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the dialog an action needs, without closing it along with the bar", () => {
-    renderApp();
+  it("opens the dialog an action needs, without closing it along with the bar", async () => {
+    await renderApp();
     ctrlK();
     type("theme");
     fireEvent.keyDown(search(), { key: "Enter" });
@@ -1199,16 +1206,16 @@ describe("App - jump bar", () => {
     ["backup", "Backup Keychain"],
     ["master password", "Change Password"],
     ["recovery code", "Reset Recovery Code?"],
-  ])("runs the %s action", (text, heading) => {
-    renderApp();
+  ])("runs the %s action", async (text, heading) => {
+    await renderApp();
     ctrlK();
     type(text);
     fireEvent.keyDown(search(), { key: "Enter" });
     expect(screen.getByText(heading)).toBeInTheDocument();
   });
 
-  it("opens Settings, Help and the other pages and dialogs", () => {
-    renderApp();
+  it("opens Settings, Help and the other pages and dialogs", async () => {
+    await renderApp();
     ctrlK();
     type("settings");
     fireEvent.keyDown(search(), { key: "Enter" });
@@ -1220,21 +1227,21 @@ describe("App - jump bar", () => {
     expect(screen.getByTestId("update-modal")).toBeInTheDocument();
   });
 
-  it("does not open over another dialog", () => {
-    renderApp();
+  it("does not open over another dialog", async () => {
+    await renderApp();
     click("sb: theme");
     expect(screen.getByText("App Theme")).toBeInTheDocument();
     ctrlK();
     expect(palette()).not.toBeInTheDocument();
   });
 
-  it("goes away when the session ends", () => {
-    renderApp();
+  it("goes away when the session ends", async () => {
+    await renderApp();
     ctrlK();
     expect(palette()).toBeInTheDocument();
-    act(() => mockLatest.setView("login"));
+    await act(async () => mockLatest.setView("login"));
     expect(palette()).not.toBeInTheDocument();
-    act(() => mockLatest.setView("dashboard"));
+    await act(async () => mockLatest.setView("dashboard"));
     expect(palette()).not.toBeInTheDocument();
   });
 });
@@ -1242,17 +1249,17 @@ describe("App - jump bar", () => {
 describe("App - status bar", () => {
   const strip = () => screen.queryByRole("region", { name: "Vault status" });
 
-  it("shows on the dashboard and not on the sign-in screens", () => {
-    const { unmount } = renderApp();
+  it("shows on the dashboard and not on the sign-in screens", async () => {
+    const { unmount } = await renderApp();
     expect(strip()).toBeInTheDocument();
     unmount();
-    renderApp("login");
+    await renderApp("login");
     expect(strip()).not.toBeInTheDocument();
   });
 
   it("warns that the keychain is not backed up, and opens the backup dialog", async () => {
     backupDone = false;
-    renderApp();
+    await renderApp();
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
     fireEvent.click(screen.getByRole("button", { name: /Keychain not backed up/ }));
     expect(screen.getByText("Backup Keychain")).toBeInTheDocument();
@@ -1260,7 +1267,7 @@ describe("App - status bar", () => {
 
   it("confirms a backup once there is one", async () => {
     backupDone = true;
-    renderApp();
+    await renderApp();
     expect(await screen.findByText("Keychain backed up")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Keychain not backed up/ })).not.toBeInTheDocument();
   });
@@ -1268,28 +1275,28 @@ describe("App - status bar", () => {
   it("flips to backed up after a backup is made from the bar", async () => {
     backupDone = false;
     mockSave.mockResolvedValue("C:\\out\\QRE_Backup.json");
-    renderApp();
+    await renderApp();
     await waitFor(() => expect(mockInvoke).toHaveBeenCalledWith("get_backup_done"));
     fireEvent.click(screen.getByRole("button", { name: /Keychain not backed up/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save Backup..." }));
     expect(await screen.findByText("Keychain backed up")).toBeInTheDocument();
   });
 
-  it("locks from its Lock button", () => {
-    renderApp();
+  it("locks from its Lock button", async () => {
+    await renderApp();
     fireEvent.click(within(strip()!).getByRole("button", { name: "Lock" }));
     expect(mockAuthFns.logout).toHaveBeenCalledTimes(1);
   });
 
-  it("shows no countdown until the sign-in hook reports a lock time", () => {
-    renderApp();
+  it("shows no countdown until the sign-in hook reports a lock time", async () => {
+    await renderApp();
     expect(within(strip()!).queryByRole("timer")).not.toBeInTheDocument();
   });
 
-  it("shows the time left before the app locks itself", () => {
+  it("shows the time left before the app locks itself", async () => {
     jest.useFakeTimers();
     try {
-      renderApp();
+      await renderApp();
       mockLatest.idleDeadlineRef.current = Date.now() + 90_000;
       act(() => void jest.advanceTimersByTime(1000));
       expect(within(strip()!).getByRole("timer")).toHaveTextContent("Auto-lock in 1:29");
@@ -1304,12 +1311,12 @@ describe("App - Home screen", () => {
 
   it("knows whether the keychain is backed up", async () => {
     backupDone = true;
-    renderApp();
+    await renderApp();
     await waitFor(() => expect(screen.getByTestId("view-home")).toHaveAttribute("data-backup", "true"));
   });
 
-  it("opens the backup dialog and the jump bar from Home", () => {
-    renderApp();
+  it("opens the backup dialog and the jump bar from Home", async () => {
+    await renderApp();
     click("home: backup");
     expect(screen.getByText("Backup Keychain")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -1317,21 +1324,21 @@ describe("App - Home screen", () => {
     expect(screen.getByRole("dialog", { name: "Jump to a tool or action" })).toBeInTheDocument();
   });
 
-  it("starts with no recent tools", () => {
-    renderApp();
+  it("starts with no recent tools", async () => {
+    await renderApp();
     expect(recent()).toBe("");
   });
 
-  it("remembers the tools opened, newest first", () => {
-    renderApp();
+  it("remembers the tools opened, newest first", async () => {
+    await renderApp();
     tab("vault");
     tab("notes");
     tab("home");
     expect(recent()).toBe("notes,vault");
   });
 
-  it("moves a tool that is opened again to the front instead of listing it twice", () => {
-    renderApp();
+  it("moves a tool that is opened again to the front instead of listing it twice", async () => {
+    await renderApp();
     tab("vault");
     tab("notes");
     tab("vault");
@@ -1339,23 +1346,23 @@ describe("App - Home screen", () => {
     expect(recent()).toBe("vault,notes");
   });
 
-  it("keeps only the last four", () => {
-    renderApp();
+  it("keeps only the last four", async () => {
+    await renderApp();
     for (const id of ["vault", "notes", "qr", "hash", "shred"]) tab(id);
     tab("home");
     expect(recent()).toBe("shred,hash,qr,notes");
   });
 
-  it("does not list Home, Settings or Help, which are not tools", () => {
-    renderApp();
+  it("does not list Home, Settings or Help, which are not tools", async () => {
+    await renderApp();
     tab("settings");
     tab("help");
     tab("home");
     expect(recent()).toBe("");
   });
 
-  it("counts a tool opened from the jump bar too", () => {
-    renderApp();
+  it("counts a tool opened from the jump bar too", async () => {
+    await renderApp();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     fireEvent.change(screen.getByRole("combobox", { name: "Jump to a tool or action" }), { target: { value: "shred" } });
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Jump to a tool or action" }), { key: "Enter" });
@@ -1363,13 +1370,13 @@ describe("App - Home screen", () => {
     expect(recent()).toBe("shred");
   });
 
-  it("forgets them when the session ends", () => {
-    renderApp();
+  it("forgets them when the session ends", async () => {
+    await renderApp();
     tab("vault");
     tab("home");
     expect(recent()).toBe("vault");
-    act(() => mockLatest.setView("login"));
-    act(() => mockLatest.setView("dashboard"));
+    await act(async () => mockLatest.setView("login"));
+    await act(async () => mockLatest.setView("dashboard"));
     expect(recent()).toBe("");
   });
 });
@@ -1399,23 +1406,23 @@ describe("App - phone layout", () => {
   const bar = () => screen.getByRole("navigation", { name: "Main" });
   const go = (label: string) => fireEvent.click(within(bar()).getByRole("button", { name: label }));
 
-  it("shows the bottom bar instead of the sidebar", () => {
+  it("shows the bottom bar instead of the sidebar", async () => {
     usePhone(true);
-    renderApp();
+    await renderApp();
     expect(bar()).toBeInTheDocument();
     expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument();
   });
 
-  it("keeps the sidebar and no bottom bar on a wide window", () => {
+  it("keeps the sidebar and no bottom bar on a wide window", async () => {
     usePhone(false);
-    renderApp();
+    await renderApp();
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Main" })).not.toBeInTheDocument();
   });
 
-  it("switches layout when the window is resized", () => {
+  it("switches layout when the window is resized", async () => {
     const media = usePhone(false);
-    renderApp();
+    await renderApp();
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
     media.resize(true);
     expect(screen.queryByTestId("sidebar")).not.toBeInTheDocument();
@@ -1424,9 +1431,9 @@ describe("App - phone layout", () => {
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
   });
 
-  it("opens Files and Passwords from the bar", () => {
+  it("opens Files and Passwords from the bar", async () => {
     usePhone(true);
-    renderApp();
+    await renderApp();
     go("Files");
     expect(screen.getByTestId("view-files")).toBeInTheDocument();
     go("Passwords");
@@ -1435,9 +1442,9 @@ describe("App - phone layout", () => {
     expect(screen.getByTestId("view-home")).toBeInTheDocument();
   });
 
-  it("opens the list of tools, and a tool from it, with Tools still marked", () => {
+  it("opens the list of tools, and a tool from it, with Tools still marked", async () => {
     usePhone(true);
-    renderApp();
+    await renderApp();
     go("Tools");
     expect(screen.getByRole("heading", { name: "Tools" })).toBeInTheDocument();
     fireEvent.click(screen.getByText("Shredder", { selector: "strong" }));
@@ -1445,17 +1452,17 @@ describe("App - phone layout", () => {
     expect(within(bar()).getByRole("button", { name: "Tools" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("does not list the Tools screen itself as a recent tool", () => {
+  it("does not list the Tools screen itself as a recent tool", async () => {
     usePhone(true);
-    renderApp();
+    await renderApp();
     go("Tools");
     go("Home");
     expect(screen.getByTestId("view-home")).toHaveAttribute("data-recent", "");
   });
 
-  it("opens Settings from More, with Help and About in it", () => {
+  it("opens Settings from More, with Help and About in it", async () => {
     usePhone(true);
-    renderApp();
+    await renderApp();
     go("More");
     expect(screen.getByTestId("view-settings")).toBeInTheDocument();
     click("st: help");
@@ -1463,5 +1470,132 @@ describe("App - phone layout", () => {
     click("help-modal: close");
     click("st: about");
     expect(document.querySelector('[style*="200000"]')).not.toBeNull();
+  });
+});
+
+// ─── The recovery code still works after a password change or a recovery ─────
+
+describe("App - the recovery code notice", () => {
+  const openChange = () => click("sb: password");
+  const update = () => fireEvent.click(screen.getByRole("button", { name: "Update" }));
+  const keep = () => fireEvent.click(screen.getByRole("button", { name: "Keep my current code" }));
+  const makeNew = () => fireEvent.click(screen.getByRole("button", { name: "Make a new recovery code" }));
+
+  async function changePassword() {
+    await renderApp();
+    openChange();
+    update();
+    await screen.findByText("Password changed");
+  }
+
+  it("tells the user after a password change that the recovery code did not change", async () => {
+    await changePassword();
+    expect(screen.getByText(/recovery code did not change/i)).toBeInTheDocument();
+    expect(screen.getByText(/anyone else has seen the code/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep my current code" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make a new recovery code" })).toBeInTheDocument();
+  });
+
+  it("says the old code stops working at once, so the choice is clear", async () => {
+    await changePassword();
+    expect(screen.getByText(/old code stops working at once/i)).toBeInTheDocument();
+  });
+
+  it("does not appear when the password change fails", async () => {
+    mockAuthFns.handleChangePassword.mockResolvedValueOnce({ success: false, msg: "Too weak" });
+    await renderApp();
+    openChange();
+    update();
+    await screen.findByText(/Too weak/);
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
+  });
+
+  it("does not appear when the dialog is only opened and cancelled", async () => {
+    await renderApp();
+    openChange();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
+  });
+
+  it("Keep my current code closes it and does not touch the code", async () => {
+    await changePassword();
+    keep();
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
+    expect(mockAuthFns.handleReset2FA).not.toHaveBeenCalled();
+  });
+
+  it("Escape keeps the current code too", async () => {
+    await changePassword();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
+    expect(mockAuthFns.handleReset2FA).not.toHaveBeenCalled();
+  });
+
+  it("Make a new recovery code closes it and replaces the code once, without a second question", async () => {
+    await changePassword();
+    makeNew();
+    await waitFor(() => expect(mockAuthFns.handleReset2FA).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reset Recovery Code?")).not.toBeInTheDocument();
+  });
+
+  it("shows why a new code could not be made, with a default if there is none", async () => {
+    mockAuthFns.handleReset2FA.mockResolvedValueOnce({ success: false, msg: "Backend down" });
+    await changePassword();
+    makeNew();
+    expect(await screen.findByText("Backend down")).toBeInTheDocument();
+    click("OK");
+
+    mockAuthFns.handleReset2FA.mockResolvedValueOnce({ success: false });
+    openChange();
+    update();
+    await screen.findByText("Password changed");
+    makeNew();
+    expect(await screen.findByText("Reset failed")).toBeInTheDocument();
+  });
+
+  it("counts the keychain as not backed up once the code is replaced", async () => {
+    backupDone = true;
+    await renderApp();
+    tab("files");
+    await act(async () => {});
+    openChange();
+    update();
+    await screen.findByText("Password changed");
+    makeNew();
+    await waitFor(() => expect(mockAuthFns.handleReset2FA).toHaveBeenCalled());
+    await act(async () => {});
+    click("files: reminder");
+    expect(screen.getByText("Security Reminder")).toBeInTheDocument();
+  });
+
+  it("tells the user after a recovery that the code they used still works", async () => {
+    await renderApp("recovery_entry");
+    // Inside a click handler the test is already waiting in findByText, so a second awaited act
+    // here would overlap with it. A plain act is right for this one.
+    mockAuthFns.handleRecovery.mockImplementationOnce(async () => {
+      act(() => mockLatest.setView("dashboard"));
+      return { success: true };
+    });
+    click("auth: recovery");
+    expect(await screen.findByText("Vault recovered")).toBeInTheDocument();
+    expect(screen.getByText(/it still works/i)).toBeInTheDocument();
+    makeNew();
+    await waitFor(() => expect(mockAuthFns.handleReset2FA).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not appear after a recovery that failed", async () => {
+    await renderApp("recovery_entry");
+    mockAuthFns.handleRecovery.mockResolvedValueOnce({ success: false, msg: "Wrong code" });
+    click("auth: recovery");
+    await screen.findByText("Wrong code");
+    expect(screen.queryByText("Vault recovered")).not.toBeInTheDocument();
+  });
+
+  it("goes away with the session, so the next sign-in does not open on it", async () => {
+    await changePassword();
+    await act(async () => mockLatest.setView("login"));
+    await act(async () => mockLatest.setView("dashboard"));
+    expect(screen.queryByText("Password changed")).not.toBeInTheDocument();
   });
 });

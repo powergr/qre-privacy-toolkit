@@ -1,14 +1,19 @@
 // --- START OF FILE files.rs ---
 
+use crate::cancel;
 use crate::crypto;
 use crate::crypto_stream;
+use crate::keychain::MasterKey;
+use crate::os_clipboard::{self, ClipboardFiles};
 use crate::shredder;
 use crate::state::SessionState;
 use crate::utils;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 
 #[cfg(not(target_os = "android"))]
@@ -144,10 +149,17 @@ pub(crate) fn reject_path_traversal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The fastest zstd setting this app uses. Level 0 does not mean "none": in zstd it means "use the
+/// default level" (3), so "store" used to compress as much as Auto. A negative level is
+/// zstd's fast mode, which does almost no work and, on data that does not compress (video,
+/// archives, photos), writes it nearly as it is. True "no compression" would need a new
+/// marker in the file format, and older versions of the app could not open such files.
+pub(crate) const FASTEST_ZSTD_LEVEL: i32 = -7;
+
 /// Zstd level for a lock request. `mode` is "store", "extreme", or anything else for auto.
 pub(crate) fn compression_level(mode: &str, filename: &str) -> i32 {
     match mode {
-        "store" => 0,
+        "store" => FASTEST_ZSTD_LEVEL,
         "extreme" => 19,
         _ => {
             if is_already_compressed(filename) {
@@ -157,6 +169,23 @@ pub(crate) fn compression_level(mode: &str, filename: &str) -> i32 {
             }
         }
     }
+}
+
+/// Whether to open each new locked file once to check it. Checking is the default: a request
+/// that says nothing about it (an older caller) gets the safer behaviour.
+pub(crate) fn should_verify(verify_after: Option<bool>) -> bool {
+    verify_after.unwrap_or(true)
+}
+
+/// Progress shown while locking. With a check afterwards, locking fills the first half of the
+/// bar and the check the second half, so the bar never runs twice.
+pub(crate) fn lock_progress_percent(phase_percent: u8, verifying_after: bool, in_check: bool) -> u8 {
+    let pct = phase_percent.min(100) as u32;
+    if !verifying_after {
+        return pct as u8;
+    }
+    let half = pct / 2;
+    (if in_check { 50 + half } else { half }) as u8
 }
 
 /// True if `path` sits on a drive that is currently an unlocked portable vault.
@@ -171,7 +200,49 @@ pub(crate) fn is_on_portable_mount(
 
 // --- CRYPTO LOGIC ---
 
+/// Where progress goes. The commands send it to the window; the tests collect it.
+pub(crate) type Progress = Arc<dyn Fn(&str, u8) + Send + Sync>;
+
+/// What to report for the files a cancelled job did not get to: one line, not one per file.
+pub(crate) fn cancelled_rest(results: &mut Vec<BatchItemResult>, remaining: usize) {
+    if remaining == 0 {
+        return;
+    }
+    let name = if remaining == 1 { "1 more file".to_string() } else { format!("{} more files", remaining) };
+    results.push(BatchItemResult { name, success: false, message: format!("{} Not started.", cancel::CANCELLED) });
+}
+
+/// Stops the job that is running: locking, unlocking or upgrading. It ends at its next step, which
+/// is at most one chunk of 1 MiB away, and removes what it was writing. Files that were finished
+/// before the stop stay finished. Asking when nothing is running does nothing.
 #[tauri::command]
+pub fn cancel_operation(state: tauri::State<'_, SessionState>) {
+    cancel::request(&state.cancel);
+}
+
+/// The unlocked vaults, by id.
+pub(crate) type Vaults = Arc<Mutex<HashMap<String, MasterKey>>>;
+
+/// Drive mount paths of unlocked portable vaults, by vault id.
+pub(crate) type Mounts = Arc<Mutex<HashMap<String, String>>>;
+
+/// Progress that is shown in the app window.
+pub(crate) fn window_progress(app: &AppHandle) -> Progress {
+    let app = app.clone();
+    Arc::new(move |label: &str, percentage: u8| utils::emit_progress(&app, label, percentage))
+}
+
+/// What a lock request asks for, after the command has read the key file.
+pub(crate) struct LockRequest {
+    pub file_paths: Vec<String>,
+    pub keyfile_hash: Option<Vec<u8>>,
+    pub raw_entropy: Option<Vec<u8>>,
+    pub mode: String,
+    pub verify: bool,
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // the arguments are what the window sends
 pub async fn lock_file(
     app: AppHandle,
     state: tauri::State<'_, SessionState>,
@@ -180,6 +251,7 @@ pub async fn lock_file(
     keyfile_bytes: Option<Vec<u8>>,
     extra_entropy: Option<Vec<u8>>,
     compression_mode: Option<String>,
+    verify_after: Option<bool>,
 ) -> CommandResult<Vec<BatchItemResult>> {
     let keyfile_hash = if let Some(bytes) = keyfile_bytes {
         let mut hasher = Sha256::new();
@@ -189,16 +261,45 @@ pub async fn lock_file(
         utils::process_keyfile(keyfile_path)?
     };
 
-    let raw_entropy: Option<Vec<u8>> = extra_entropy;
-    let mode_str = compression_mode.unwrap_or("auto".to_string());
+    let request = LockRequest {
+        file_paths,
+        keyfile_hash,
+        raw_entropy: extra_entropy,
+        mode: compression_mode.unwrap_or("auto".to_string()),
+        verify: should_verify(verify_after),
+    };
 
     let vaults_arc = state.vaults.clone();
     let portable_mounts_arc = state.portable_mounts.clone();
+    let progress = window_progress(&app);
+    let stop = state.cancel.clone();
+    cancel::reset(&stop);
 
     tauri::async_runtime::spawn_blocking(move || {
+        cancel::run_with(&stop, || lock_files_blocking(request, &vaults_arc, &portable_mounts_arc, &progress))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The work of `lock_file`, without the window: it takes the vaults and a progress sink, so
+/// tests can run the same path the command runs.
+pub(crate) fn lock_files_blocking(
+    request: LockRequest,
+    vaults_arc: &Vaults,
+    portable_mounts_arc: &Mounts,
+    progress: &Progress,
+) -> CommandResult<Vec<BatchItemResult>> {
+    let LockRequest { file_paths, keyfile_hash, raw_entropy, mode: mode_str, verify } = request;
+    {
         let mut results = Vec::new();
+        let total = file_paths.len();
 
         for (file_index, file_path) in file_paths.into_iter().enumerate() {
+            if cancel::is_cancelled() {
+                cancelled_rest(&mut results, total - file_index);
+                break;
+            }
             let path = Path::new(&file_path);
 
             if let Err(e) = reject_critical_path(path) {
@@ -239,7 +340,7 @@ pub async fn lock_file(
             };
 
             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            utils::emit_progress(&app, &format!("Preparing: {}", filename), 5);
+            progress(&format!("Preparing: {}", filename), 5);
 
             let level = compression_level(&mode_str, &filename);
 
@@ -248,9 +349,9 @@ pub async fn lock_file(
                 let temp_zip_name = format!("{}.zip", filename);
                 let temp_zip_path = utils::get_unique_path(&parent.join(&temp_zip_name));
 
-                utils::emit_progress(&app, &format!("Zipping Folder: {}", filename), 10);
+                progress(&format!("Zipping Folder: {}", filename), 10);
                 if let Err(e) = utils::zip_directory_to_file(path, &temp_zip_path) {
-                    results.push(BatchItemResult { name: filename.to_string(), success: false, message: format!("Zip failed: {}", e) });
+                    results.push(BatchItemResult { name: filename.to_string(), success: false, message: if e == cancel::CANCELLED { e } else { format!("Zip failed: {}", e) } });
                     continue;
                 }
                 (temp_zip_path.to_string_lossy().to_string(), true)
@@ -269,14 +370,14 @@ pub async fn lock_file(
                 hasher.finalize().into()
             });
 
-            let app_handle = app.clone();
+            let progress_for_cb = progress.clone();
             let f_name_clone = filename.to_string();
 
             let progress_cb = move |processed: u64, total: u64| {
                 if total > 0 {
                     let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
                     let display_pct = if is_temp { 20u8.saturating_add((pct as f64 * 0.8) as u8).min(100) } else { pct };
-                    utils::emit_progress(&app_handle, &format!("Encrypting: {}", f_name_clone), display_pct);
+                    progress_for_cb(&format!("Encrypting: {}", f_name_clone), lock_progress_percent(display_pct, verify, false));
                 }
             };
 
@@ -287,6 +388,22 @@ let encryption_result = crypto_stream::encrypt_file_stream(
             if is_temp { let _ = fs::remove_file(&input_path_str); }
 
             match encryption_result {
+                Ok(_) if verify => {
+                    // Open the new file once, the way unlocking would, before calling it done.
+                    progress(&format!("Verifying: {}", filename), 50);
+                    let progress_for_check = progress.clone();
+                    let name_for_check = filename.clone();
+                    let check_progress = move |processed: u64, total: u64| {
+                        if total > 0 {
+                            let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
+                            progress_for_check(&format!("Verifying: {}", name_for_check), lock_progress_percent(pct, true, true));
+                        }
+                    };
+                    match crypto_stream::verify_or_remove(&final_path_str, &master_key, keyfile_hash.as_deref(), check_progress) {
+                        Ok(()) => results.push(BatchItemResult { name: filename.to_string(), success: true, message: "Locked and verified".into() }),
+                        Err(message) => results.push(BatchItemResult { name: filename.to_string(), success: false, message }),
+                    }
+                }
                 Ok(_) => results.push(BatchItemResult { name: filename.to_string(), success: true, message: "Locked".into() }),
                 Err(e) => {
                     let _ = fs::remove_file(&final_path);
@@ -295,9 +412,7 @@ let encryption_result = crypto_stream::encrypt_file_stream(
             }
         }
         Ok(results)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 #[tauri::command]
@@ -318,15 +433,38 @@ pub async fn unlock_file(
     };
 
     let vaults_arc = state.vaults.clone();
+    let progress = window_progress(&app);
+    let stop = state.cancel.clone();
+    cancel::reset(&stop);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut results = Vec::new();
+        cancel::run_with(&stop, || unlock_files_blocking(file_paths, keyfile_hash, output_dir, &vaults_arc, &progress))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
-        for file_path in file_paths {
+/// The work of `unlock_file`, without the window (see `lock_files_blocking`).
+pub(crate) fn unlock_files_blocking(
+    file_paths: Vec<String>,
+    keyfile_hash: Option<Vec<u8>>,
+    output_dir: Option<String>,
+    vaults_arc: &Vaults,
+    progress: &Progress,
+) -> CommandResult<Vec<BatchItemResult>> {
+    {
+        let mut results = Vec::new();
+        let total = file_paths.len();
+
+        for (file_index, file_path) in file_paths.into_iter().enumerate() {
+            if cancel::is_cancelled() {
+                cancelled_rest(&mut results, total - file_index);
+                break;
+            }
             let path = Path::new(&file_path);
             let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-            utils::emit_progress(&app, &format!("Checking: {}", filename), 5);
+            progress(&format!("Checking: {}", filename), 5);
 
             let mut file = match fs::File::open(path) {
                 Ok(f) => f,
@@ -348,7 +486,7 @@ pub async fn unlock_file(
 
             if version == 4 {
                 let master_key = {
-                    let guard = match utils::lock_or_clear(&vaults_arc) {
+                    let guard = match utils::lock_or_clear(vaults_arc) {
                         Ok(g) => g,
                         Err(e) => {
                             results.push(BatchItemResult { name: filename.clone(), success: false, message: e });
@@ -366,10 +504,10 @@ pub async fn unlock_file(
 
                 match crypto::EncryptedFileContainer::load(&file_path) {
                     Ok(container) => {
-                        utils::emit_progress(&app, &format!("Decrypting: {}", filename), 50);
+                        progress(&format!("Decrypting: {}", filename), 50);
                         match crypto::decrypt_file_with_master_key(&master_key, keyfile_hash.as_deref(), &container) {
                             Ok(payload) => {
-                                utils::emit_progress(&app, &format!("Writing: {}", payload.filename), 80);
+                                progress(&format!("Writing: {}", payload.filename), 80);
                                 let final_path = utils::get_unique_path(&target_dir_path.join(&payload.filename));
 
                                 if let Err(e) = fs::write(&final_path, &payload.content) {
@@ -384,15 +522,12 @@ pub async fn unlock_file(
                     }
                     Err(e) => results.push(BatchItemResult { name: filename, success: false, message: e.to_string() }),
                 }
-            } else if version == 5 || version == 6 || version == 7 {
-                let header: Result<crypto_stream::StreamHeader, _> = bincode::deserialize_from(&mut file);
-                let vault_id = match header {
-                    Ok(h) => h.vault_id.unwrap_or_else(|| "local".to_string()),
-                    Err(_) => "local".to_string(), 
-                };
+            } else if (5..=8).contains(&version) {
+                let vault_id = crypto_stream::read_vault_id(&file_path)
+                    .unwrap_or_else(|| "local".to_string());
 
                 let master_key = {
-                    let guard = match utils::lock_or_clear(&vaults_arc) {
+                    let guard = match utils::lock_or_clear(vaults_arc) {
                         Ok(g) => g,
                         Err(e) => {
                             results.push(BatchItemResult { name: filename.clone(), success: false, message: e });
@@ -412,13 +547,13 @@ pub async fn unlock_file(
                     }
                 };
 
-                let app_handle = app.clone();
+                let progress_for_cb = progress.clone();
                 let f_name = filename.clone();
 
                 let progress_cb = move |processed: u64, total: u64| {
                     if total > 0 {
                         let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
-                        utils::emit_progress(&app_handle, &format!("Decrypting: {}", f_name), pct);
+                        progress_for_cb(&format!("Decrypting: {}", f_name), pct);
                     }
                 };
 
@@ -431,9 +566,226 @@ pub async fn unlock_file(
             }
         }
         Ok(results)
+    }
+}
+
+// --- UPGRADING OLD LOCKED FILES ---
+
+/// A locked file in an older format (5, 6 or 7), as found by a scan of a folder.
+#[derive(serde::Serialize, Debug)]
+pub struct OldFormatFile {
+    pub path: String,
+    pub name: String,
+    pub version: u32,
+    /// For a time-locked file, the Unix time the lock ends. `None` otherwise.
+    pub locked_until: Option<u64>,
+}
+
+/// How deep and how wide a scan goes. A folder tree larger than this is cut off, not scanned
+/// forever.
+const SCAN_MAX_DEPTH: usize = 12;
+const SCAN_MAX_ENTRIES: usize = 50_000;
+
+/// Finds the `.qre` files in `dir` that are in format 5, 6 or 7, sorted by path. Symbolic links
+/// are not followed, and anything that cannot be read is skipped.
+pub(crate) fn find_old_format_files_in(dir: &Path, recursive: bool) -> Vec<OldFormatFile> {
+    let mut found = Vec::new();
+    let mut pending: Vec<(PathBuf, usize)> = vec![(dir.to_path_buf(), 0)];
+    let mut seen = 0usize;
+
+    while let Some((folder, depth)) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&folder) else { continue };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > SCAN_MAX_ENTRIES {
+                found.sort_by(|a: &OldFormatFile, b| a.path.cmp(&b.path));
+                return found;
+            }
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_dir() {
+                if recursive && depth < SCAN_MAX_DEPTH {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.to_lowercase().ends_with(".qre") {
+                continue;
+            }
+            let path_str = path.to_string_lossy().to_string();
+            let Some(version) = crypto_stream::stream_version(&path_str) else { continue };
+            if !crypto_stream::is_upgradable_version(version) {
+                continue;
+            }
+            let locked_until = crypto_stream::read_timelock_header(&path_str)
+                .ok()
+                .flatten()
+                .map(|meta| meta.locked_until);
+            found.push(OldFormatFile { path: path_str, name, version, locked_until });
+        }
+    }
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
+#[tauri::command]
+pub async fn find_old_format_files(folder: String, recursive: bool) -> CommandResult<Vec<OldFormatFile>> {
+    reject_path_traversal(Path::new(&folder))?;
+    if !Path::new(&folder).is_dir() {
+        return Err("Folder not found.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || find_old_format_files_in(Path::new(&folder), recursive))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Rewrites locked files from format 5, 6 or 7 as format 8. See `crypto_stream::relock_file_stream`
+/// for what happens to each file.
+#[tauri::command]
+pub async fn relock_file(
+    app: AppHandle,
+    state: tauri::State<'_, SessionState>,
+    file_paths: Vec<String>,
+    keyfile_path: Option<String>,
+    keyfile_bytes: Option<Vec<u8>>,
+) -> CommandResult<Vec<BatchItemResult>> {
+    let keyfile_hash = if let Some(bytes) = keyfile_bytes {
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Some(hasher.finalize().to_vec())
+    } else {
+        utils::process_keyfile(keyfile_path)?
+    };
+
+    let vaults_arc = state.vaults.clone();
+    let progress = window_progress(&app);
+    let stop = state.cancel.clone();
+    cancel::reset(&stop);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel::run_with(&stop, || relock_files_blocking(file_paths, keyfile_hash, &vaults_arc, &progress))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The work of `relock_file`, without the window (see `lock_files_blocking`).
+pub(crate) fn relock_files_blocking(
+    file_paths: Vec<String>,
+    keyfile_hash: Option<Vec<u8>>,
+    vaults_arc: &Vaults,
+    progress: &Progress,
+) -> CommandResult<Vec<BatchItemResult>> {
+    let mut results = Vec::new();
+    let total = file_paths.len();
+
+    for (file_index, file_path) in file_paths.into_iter().enumerate() {
+        if cancel::is_cancelled() {
+            cancelled_rest(&mut results, total - file_index);
+            break;
+        }
+        let path = Path::new(&file_path);
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let fail = |message: String| BatchItemResult { name: name.clone(), success: false, message };
+
+        if let Err(e) = reject_critical_path(path) {
+            results.push(fail(e));
+            continue;
+        }
+        if !name.to_lowercase().ends_with(".qre") {
+            results.push(fail("This is not a locked file (.qre).".to_string()));
+            continue;
+        }
+
+        match crypto_stream::stream_version(&file_path) {
+            Some(v) if crypto_stream::is_upgradable_version(v) => {}
+            Some(8) => {
+                results.push(BatchItemResult {
+                    name: name.clone(),
+                    success: true,
+                    message: "Already in the current format".into(),
+                });
+                continue;
+            }
+            _ => {
+                results.push(fail("This is not a locked file that can be upgraded.".to_string()));
+                continue;
+            }
+        }
+
+        let vault_id = crypto_stream::read_vault_id(&file_path).unwrap_or_else(|| "local".to_string());
+        let master_key = {
+            let guard = match utils::lock_or_clear(vaults_arc) {
+                Ok(g) => g,
+                Err(e) => {
+                    results.push(fail(e));
+                    continue;
+                }
+            };
+            match guard.get(&vault_id) {
+                Some(mk) => mk.clone(),
+                None => {
+                    results.push(fail(if vault_id == "local" {
+                        "Local Vault is locked.".to_string()
+                    } else {
+                        "This file belongs to a Portable USB Vault. Please unlock the USB drive first.".to_string()
+                    }));
+                    continue;
+                }
+            }
+        };
+
+        progress(&format!("Upgrading: {}", name), 5);
+        let level = compression_level("auto", &name);
+        let write_progress = {
+            let progress = progress.clone();
+            let name = name.clone();
+            move |processed: u64, total: u64| {
+                if total > 0 {
+                    let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
+                    progress(&format!("Upgrading: {}", name), lock_progress_percent(pct, true, false));
+                }
+            }
+        };
+        let check_progress = {
+            let progress = progress.clone();
+            let name = name.clone();
+            move |processed: u64, total: u64| {
+                if total > 0 {
+                    let pct = ((processed as f64 / total as f64 * 100.0) as u8).min(100);
+                    progress(&format!("Checking: {}", name), lock_progress_percent(pct, true, true));
+                }
+            }
+        };
+
+        match crypto_stream::relock_file_stream(&file_path, &master_key, keyfile_hash.as_deref(), level, write_progress, check_progress) {
+            Ok(()) => results.push(BatchItemResult {
+                name: name.clone(),
+                success: true,
+                message: "Upgraded to the current format".into(),
+            }),
+            Err(e) => {
+                let text = e.to_string();
+                let message = if text == cancel::CANCELLED {
+                    format!("{} The old file was not changed.", cancel::CANCELLED)
+                } else if let Some(rest) = text.strip_prefix("TIME_LOCKED:") {
+                    // "<unix time>:<sentence>". Say what to do about it.
+                    let sentence = rest.split_once(':').map(|(_, s)| s).unwrap_or(rest);
+                    format!("{} Upgrade it after the lock ends.", sentence)
+                } else if text.starts_with("Decryption Denied") {
+                    format!("{} If it was locked with a key file, select that key file and try again.", text)
+                } else {
+                    text
+                };
+                results.push(fail(message));
+            }
+        }
+    }
+    Ok(results)
 }
 
 // --- FILE OPERATIONS ---
@@ -582,6 +934,86 @@ pub(crate) fn paste_one(src: &Path, dest_base: &Path, is_cut: bool) -> BatchItem
     }
 }
 
+// --- FILES ON THE SYSTEM CLIPBOARD ---
+
+/// The window that owns the system clipboard while it holds files. Windows needs one; the other
+/// systems do not, and give 0.
+fn clipboard_owner(app: &AppHandle) -> isize {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        app.webview_windows()
+            .values()
+            .next()
+            .and_then(|window| window.hwnd().ok())
+            .map(|hwnd| hwnd.0 as isize)
+            .unwrap_or(0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        0
+    }
+}
+
+/// Checks the paths that are about to be put on the clipboard: there must be some, each must be a
+/// full path without "..", and each must exist. Putting a path on the clipboard only lets another
+/// program ask to read it, but a list of names that do not exist would make the paste fail later,
+/// away from the cause.
+pub(crate) fn check_clipboard_paths(paths: &[String]) -> CommandResult<()> {
+    if paths.is_empty() {
+        return Err("Nothing is selected to copy.".to_string());
+    }
+    for raw in paths {
+        let path = Path::new(raw);
+        if path.components().any(|c| c == Component::ParentDir) {
+            return Err("Path traversal not allowed.".to_string());
+        }
+        if !path.is_absolute() {
+            return Err(format!("\"{}\" is not a full path.", raw));
+        }
+        if fs::symlink_metadata(path).is_err() {
+            return Err(format!("\"{}\" no longer exists.", raw));
+        }
+    }
+    Ok(())
+}
+
+/// What another program put on the clipboard may name things that are gone by now, or paths with
+/// "..". Only existing items with plain paths are offered for pasting.
+pub(crate) fn usable_clipboard_paths(found: &mut ClipboardFiles) {
+    found.paths.retain(|raw| {
+        let path = Path::new(raw);
+        path.is_absolute()
+            && !path.components().any(|c| c == Component::ParentDir)
+            && fs::symlink_metadata(path).is_ok()
+    });
+}
+
+/// Puts the selected files on the system clipboard, as a copy or a cut, so they can be pasted in
+/// Explorer or another program. Where the system does not support it, this fails and the Files
+/// screen keeps using its own list.
+#[tauri::command]
+pub fn set_clipboard_files(app: AppHandle, paths: Vec<String>, cut: bool) -> CommandResult<()> {
+    check_clipboard_paths(&paths)?;
+    os_clipboard::set_files(&paths, cut, clipboard_owner(&app)).map_err(|e| e.to_string())
+}
+
+/// The files another program (or QRE) put on the system clipboard, if any, and whether they were cut.
+#[tauri::command]
+pub fn get_clipboard_files(app: AppHandle) -> CommandResult<ClipboardFiles> {
+    let mut found = os_clipboard::get_files(clipboard_owner(&app)).map_err(|e| e.to_string())?;
+    usable_clipboard_paths(&mut found);
+    Ok(found)
+}
+
+/// Takes a file list off the system clipboard after the files were moved by a cut and paste, so
+/// that no program is left holding a list of names that are gone. Text and pictures are left alone.
+#[tauri::command]
+pub fn clear_clipboard_files(app: AppHandle) -> CommandResult<()> {
+    os_clipboard::clear_files(clipboard_owner(&app)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn paste_items(
     app: AppHandle,
@@ -699,6 +1131,32 @@ pub fn open_file_android(app: AppHandle, path: String) -> CommandResult<()> {
         handle
             .0
             .run_mobile_plugin::<()>("openFile", serde_json::json!({ "path": path }))
+            .map_err(|e| e.to_string())
+    }
+}
+
+// Sets the colour of the Android status bar and navigation bar icons to suit the app's own
+// theme (see OpenFilePlugin.kt, setSystemBars, for why the phone's setting is not enough).
+// `light_background` is true when the app is showing its light theme, which needs dark icons.
+// Everywhere else the bars belong to the operating system and nothing needs doing, so this is
+// a no-op that succeeds, and the web side can call it without checking the platform first.
+#[tauri::command]
+pub fn set_android_system_bars(app: AppHandle, light_background: bool) -> CommandResult<()> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, light_background);
+        Ok(())
+    }
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let handle = app.state::<crate::AndroidOpenerHandle>();
+        handle
+            .0
+            .run_mobile_plugin::<()>(
+                "setSystemBars",
+                serde_json::json!({ "lightBackground": light_background }),
+            )
             .map_err(|e| e.to_string())
     }
 }

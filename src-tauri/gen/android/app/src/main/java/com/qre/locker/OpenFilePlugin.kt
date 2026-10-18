@@ -3,6 +3,7 @@ package com.qre.locker
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -13,6 +14,11 @@ import java.io.File
 @InvokeArg
 class OpenFileArgs {
   lateinit var path: String
+}
+
+@InvokeArg
+class SystemBarsArgs {
+  var lightBackground: Boolean = false
 }
 
 // Replaces tauri-plugin-opener's own open_path on Android, which is broken as of 2.5.4: its
@@ -40,6 +46,27 @@ class OpenFilePlugin(private val activity: android.app.Activity) : Plugin(activi
       intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       activity.applicationContext.startActivity(intent)
+      invoke.resolve()
+    } catch (ex: Exception) {
+      invoke.reject(ex.message)
+    }
+  }
+
+  // Chooses dark or light icons for the status bar (time, signal, battery) and the navigation
+  // bar. With edge-to-edge drawing, Android picks them from the PHONE's dark mode, not from the
+  // app's theme: a phone in dark mode shows white icons, which vanish when the app is set to its
+  // light theme. The web side calls this whenever the app's own theme changes. A light app
+  // background needs dark icons, which is what "light bars" means in Android's wording.
+  @Command
+  fun setSystemBars(invoke: Invoke) {
+    try {
+      val args = invoke.parseArgs(SystemBarsArgs::class.java)
+      activity.runOnUiThread {
+        val window = activity.window
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = args.lightBackground
+        controller.isAppearanceLightNavigationBars = args.lightBackground
+      }
       invoke.resolve()
     } catch (ex: Exception) {
       invoke.reject(ex.message)

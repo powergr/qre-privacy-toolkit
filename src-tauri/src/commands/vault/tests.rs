@@ -155,8 +155,8 @@ fn test_vault_file_roundtrip() {
     let path = dir.join("sample.qre");
     let value = Sample { title: "héllo".into(), count: 3 };
 
-    write_vault_file(&path, &key(5), "sample.json", &value).unwrap();
-    let loaded: Option<Sample> = read_vault_file(&path, &key(5), "bad").unwrap();
+    write_vault_file(&path, "local", &key(5), "sample.json", &value).unwrap();
+    let loaded: Option<Sample> = read_vault_file(&path, "local", &key(5), "sample.json", "bad").unwrap();
     assert_eq!(loaded, Some(value));
 
     let _ = fs::remove_dir_all(dir);
@@ -165,7 +165,7 @@ fn test_vault_file_roundtrip() {
 #[test]
 fn test_vault_file_missing_is_none_not_an_error() {
     let dir = temp_dir("missing");
-    let loaded: Option<Sample> = read_vault_file(&dir.join("nope.qre"), &key(5), "bad").unwrap();
+    let loaded: Option<Sample> = read_vault_file(&dir.join("nope.qre"), "local", &key(5), "sample.json", "bad").unwrap();
     assert!(loaded.is_none());
     let _ = fs::remove_dir_all(dir);
 }
@@ -176,14 +176,14 @@ fn test_vault_file_is_not_readable_in_plaintext_or_with_the_wrong_key() {
     let path = dir.join("sample.qre");
     let marker = "TOP-SECRET-MARKER";
     let value = Sample { title: marker.into(), count: 1 };
-    write_vault_file(&path, &key(5), "sample.json", &value).unwrap();
+    write_vault_file(&path, "local", &key(5), "sample.json", &value).unwrap();
 
     let raw = fs::read(&path).unwrap();
     assert!(
         !raw.windows(marker.len()).any(|w| w == marker.as_bytes()),
         "vault file must not contain the plaintext"
     );
-    assert!(read_vault_file::<Sample>(&path, &key(6), "bad").is_err());
+    assert!(read_vault_file::<Sample>(&path, "local", &key(6), "sample.json", "bad").is_err());
 
     let _ = fs::remove_dir_all(dir);
 }
@@ -192,9 +192,9 @@ fn test_vault_file_is_not_readable_in_plaintext_or_with_the_wrong_key() {
 fn test_vault_file_with_unexpected_shape_returns_the_parse_error_message() {
     let dir = temp_dir("wrong_shape");
     let path = dir.join("sample.qre");
-    write_vault_file(&path, &key(5), "x.json", &OtherShape { unrelated: vec![] }).unwrap();
+    write_vault_file(&path, "local", &key(5), "sample.json", &OtherShape { unrelated: vec![] }).unwrap();
 
-    let err = read_vault_file::<Sample>(&path, &key(5), "Failed to parse sample").unwrap_err();
+    let err = read_vault_file::<Sample>(&path, "local", &key(5), "sample.json", "Failed to parse sample").unwrap_err();
     assert_eq!(err, "Failed to parse sample");
 
     let _ = fs::remove_dir_all(dir);
@@ -205,10 +205,10 @@ fn test_vault_file_garbage_content_is_an_error_not_a_panic() {
     let dir = temp_dir("garbage");
     let path = dir.join("sample.qre");
     fs::write(&path, b"this is definitely not an encrypted container").unwrap();
-    assert!(read_vault_file::<Sample>(&path, &key(5), "bad").is_err());
+    assert!(read_vault_file::<Sample>(&path, "local", &key(5), "sample.json", "bad").is_err());
 
     fs::write(&path, b"").unwrap();
-    assert!(read_vault_file::<Sample>(&path, &key(5), "bad").is_err());
+    assert!(read_vault_file::<Sample>(&path, "local", &key(5), "sample.json", "bad").is_err());
 
     let _ = fs::remove_dir_all(dir);
 }

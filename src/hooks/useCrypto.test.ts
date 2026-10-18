@@ -82,6 +82,7 @@ describe("useCrypto - running lock and unlock", () => {
       keyfileBytes: null,
       extraEntropy: null,
       compressionMode: "extreme",
+      verifyAfter: true,
       outputDir: null,
     });
     expect(loadDir).toHaveBeenCalledWith("/d");
@@ -271,5 +272,287 @@ describe("useCrypto - key file", () => {
 
     expect(Array.from(bytes)).toEqual([0, 0, 0, 0]);
     expect(result.current.keyFile).toBeNull();
+  });
+});
+
+describe("useCrypto - verify after locking", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("is on by default", async () => {
+    const { result } = await renderCrypto();
+    expect(result.current.verifyAfterLock).toBe(true);
+  });
+
+  it("sends the choice with every lock request", async () => {
+    const { result } = await renderCrypto();
+    await act(async () => {
+      await result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    expect(mockInvoke.mock.calls.find(([c]) => c === "lock_file")![1].verifyAfter).toBe(true);
+
+    act(() => result.current.setVerifyAfterLock(false));
+    mockInvoke.mockClear();
+    await act(async () => {
+      await result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    expect(mockInvoke.mock.calls.find(([c]) => c === "lock_file")![1].verifyAfter).toBe(false);
+  });
+
+  it("sends nothing about it when unlocking", async () => {
+    const { result } = await renderCrypto();
+    await act(async () => {
+      await result.current.runCrypto("unlock_file", ["/d/a.txt.qre"], "/d");
+    });
+    expect(mockInvoke.mock.calls.find(([c]) => c === "unlock_file")![1].verifyAfter).toBeNull();
+  });
+
+  it("remembers the choice for next time", async () => {
+    const first = await renderCrypto();
+    act(() => first.result.current.setVerifyAfterLock(false));
+    expect(localStorage.getItem("qre_verify_after_lock")).toBe("0");
+    first.unmount();
+
+    const second = await renderCrypto();
+    expect(second.result.current.verifyAfterLock).toBe(false);
+    act(() => second.result.current.setVerifyAfterLock(true));
+    expect(localStorage.getItem("qre_verify_after_lock")).toBe("1");
+  });
+
+  it("stays on when the browser cannot store anything", async () => {
+    const spy = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { result } = await renderCrypto();
+    expect(result.current.verifyAfterLock).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("still changes for this session when the choice cannot be saved", async () => {
+    const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { result } = await renderCrypto();
+    act(() => result.current.setVerifyAfterLock(false));
+    expect(result.current.verifyAfterLock).toBe(false);
+    spy.mockRestore();
+  });
+});
+
+describe("useCrypto - upgrading older files when unlocking", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("is off by default", async () => {
+    const { result } = await renderCrypto();
+    expect(result.current.upgradeWhenUnlocking).toBe(false);
+  });
+
+  it("can run the upgrade command with the same key file fields as the others", async () => {
+    mockOpen.mockResolvedValue("/keys/mine.key");
+    const { result } = await renderCrypto();
+    await act(async () => {
+      await result.current.selectKeyFile();
+    });
+    await act(async () => {
+      await result.current.runCrypto("relock_file", ["/d/a.qre"], "/d");
+    });
+    const args = mockInvoke.mock.calls.find(([c]) => c === "relock_file")![1];
+    expect(args.filePaths).toEqual(["/d/a.qre"]);
+    expect(args.keyfilePath).toBe("/keys/mine.key");
+    // Nothing that belongs to locking is sent.
+    expect(args.verifyAfter).toBeNull();
+    expect(args.compressionMode).toBeNull();
+    expect(args.extraEntropy).toBeNull();
+    expect(loadDir).toHaveBeenCalledWith("/d");
+  });
+
+  it("remembers the choice for next time", async () => {
+    const first = await renderCrypto();
+    act(() => first.result.current.setUpgradeWhenUnlocking(true));
+    expect(localStorage.getItem("qre_upgrade_when_unlocking")).toBe("1");
+    first.unmount();
+
+    const second = await renderCrypto();
+    expect(second.result.current.upgradeWhenUnlocking).toBe(true);
+    act(() => second.result.current.setUpgradeWhenUnlocking(false));
+    expect(localStorage.getItem("qre_upgrade_when_unlocking")).toBe("0");
+  });
+
+  it("ignores anything but an explicit yes in the saved value", async () => {
+    localStorage.setItem("qre_upgrade_when_unlocking", "true");
+    const { result } = await renderCrypto();
+    expect(result.current.upgradeWhenUnlocking).toBe(false);
+  });
+
+  it("stays off when the browser cannot store anything", async () => {
+    const spy = jest.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { result } = await renderCrypto();
+    expect(result.current.upgradeWhenUnlocking).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("still changes for this session when the choice cannot be saved", async () => {
+    const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const { result } = await renderCrypto();
+    act(() => result.current.setUpgradeWhenUnlocking(true));
+    expect(result.current.upgradeWhenUnlocking).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("is kept apart from the verify setting", async () => {
+    const { result } = await renderCrypto();
+    act(() => result.current.setUpgradeWhenUnlocking(true));
+    expect(result.current.verifyAfterLock).toBe(true);
+    expect(localStorage.getItem("qre_verify_after_lock")).toBeNull();
+  });
+});
+
+
+describe("useCrypto - cancelling a running job", () => {
+  const cancelCalls = () => mockInvoke.mock.calls.filter(([c]) => c === "cancel_operation");
+
+  function slowJob() {
+    let finish!: (v: unknown) => void;
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "cancel_operation") return Promise.resolve(null);
+      return new Promise((r) => {
+        finish = r;
+      });
+    });
+    return (v: unknown) => finish(v);
+  }
+
+  it("cannot be cancelled when nothing is running, and asking does nothing", async () => {
+    const { result } = await renderCrypto();
+    expect(result.current.canCancel).toBe(false);
+    expect(result.current.cancelling).toBe(false);
+    await act(async () => {
+      await result.current.cancel();
+    });
+    expect(cancelCalls()).toHaveLength(0);
+    expect(result.current.cancelling).toBe(false);
+  });
+
+  it("can be cancelled from the moment a job starts until it ends", async () => {
+    const finish = slowJob();
+    const { result } = await renderCrypto();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    expect(result.current.canCancel).toBe(true);
+    await act(async () => {
+      finish([]);
+      await run;
+    });
+    expect(result.current.canCancel).toBe(false);
+  });
+
+  it("asks the backend to stop, once, and reports that it is stopping", async () => {
+    const finish = slowJob();
+    const { result } = await renderCrypto();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    await act(async () => {
+      await result.current.cancel();
+      await result.current.cancel();
+    });
+    expect(cancelCalls()).toHaveLength(1);
+    expect(result.current.cancelling).toBe(true);
+    await act(async () => {
+      finish([{ name: "a.txt", success: false, message: "Cancelled." }]);
+      await run;
+    });
+    expect(result.current.cancelling).toBe(false);
+    expect(result.current.canCancel).toBe(false);
+  });
+
+  it.each(["lock_file", "unlock_file", "relock_file"] as const)("%s can be cancelled", async (cmd) => {
+    const finish = slowJob();
+    const { result } = await renderCrypto();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runCrypto(cmd, ["/d/a.qre"], "/d");
+    });
+    expect(result.current.canCancel).toBe(true);
+    await act(async () => {
+      finish([]);
+      await run;
+    });
+  });
+
+  it("returns what the job answered when it was stopped, so the screen can say so", async () => {
+    const finish = slowJob();
+    const { result } = await renderCrypto();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    await act(async () => {
+      await result.current.cancel();
+      finish([{ name: "a.txt", success: false, message: "Cancelled." }]);
+    });
+    await expect(run).resolves.toEqual([{ name: "a.txt", success: false, message: "Cancelled." }]);
+    expect(loadDir).toHaveBeenCalledWith("/d");
+  });
+
+  it("a new job does not start out cancelled", async () => {
+    let finish = slowJob();
+    const { result } = await renderCrypto();
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    await act(async () => {
+      await result.current.cancel();
+      finish([]);
+      await run;
+    });
+    finish = slowJob();
+    act(() => {
+      run = result.current.runCrypto("lock_file", ["/d/b.txt"], "/d");
+    });
+    expect(result.current.cancelling).toBe(false);
+    expect(result.current.canCancel).toBe(true);
+    await act(async () => {
+      finish([]);
+      await run;
+    });
+  });
+
+  it("goes back to normal if the stop request itself fails", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockImplementation((cmd: string) => (cmd === "cancel_operation" ? Promise.reject("no") : new Promise(() => {})));
+    const { result } = await renderCrypto();
+    act(() => {
+      void result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    await act(async () => {
+      await result.current.cancel();
+    });
+    expect(result.current.cancelling).toBe(false);
+    expect(result.current.canCancel).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("is also cleared when the job itself fails", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockInvoke.mockRejectedValue("backend down");
+    const { result } = await renderCrypto();
+    await act(async () => {
+      await result.current.runCrypto("lock_file", ["/d/a.txt"], "/d");
+    });
+    expect(result.current.canCancel).toBe(false);
+    expect(result.current.cancelling).toBe(false);
+    spy.mockRestore();
   });
 });

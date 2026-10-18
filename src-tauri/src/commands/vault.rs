@@ -3,6 +3,7 @@
 use crate::bookmarks::BookmarksVault;
 use crate::clipboard_store::ClipboardVault;
 use crate::crypto;
+use crate::crypto_stream;
 use crate::keychain;
 use crate::notes::NotesVault;
 use crate::passwords::PasswordVault;
@@ -126,37 +127,57 @@ fn vault_file_path(app: &AppHandle, vault_id: &str, file_name: &str) -> CommandR
     Ok(dir.join(file_name))
 }
 
+/// The version number at the start of a vault file written before file format 8.
+const LEGACY_VAULT_VERSION: u32 = 4;
+
 /// Decrypts and parses a vault file. `Ok(None)` means the file doesn't exist yet.
-fn read_vault_file<T: serde::de::DeserializeOwned>(
+///
+/// Vault files are written in file format 8 (see `seal_vault_file`). A file from an earlier app
+/// version, in the old container format, is still read, and is rewritten in format 8 at once so
+/// that no vault stays in the old format. That rewrite is only tried after the content has been
+/// read and parsed, and it never replaces the old file unless the new one can be read back. If it
+/// fails for any reason the old file stays and the vault opens as before.
+pub(crate) fn read_vault_file<T: serde::de::DeserializeOwned>(
     path: &Path,
+    vault_id: &str,
     key: &keychain::MasterKey,
+    inner_name: &str,
     parse_error: &str,
 ) -> CommandResult<Option<T>> {
     if !path.exists() {
         return Ok(None);
     }
-    let container =
-        crypto::EncryptedFileContainer::load(path_to_str(path)?).map_err(|e| e.to_string())?;
-    let payload =
-        crypto::decrypt_file_with_master_key(key, None, &container).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&payload.content)
-        .map(Some)
-        .map_err(|_| parse_error.to_string())
+    let path_text = path_to_str(path)?;
+    let legacy = crypto_stream::stream_version(path_text) == Some(LEGACY_VAULT_VERSION);
+
+    let content: zeroize::Zeroizing<Vec<u8>> = if legacy {
+        let container =
+            crypto::EncryptedFileContainer::load(path_text).map_err(|e| e.to_string())?;
+        let payload = crypto::decrypt_file_with_master_key(key, None, &container)
+            .map_err(|e| e.to_string())?;
+        zeroize::Zeroizing::new(payload.content.clone())
+    } else {
+        crypto_stream::open_vault_file(path, key, inner_name).map_err(|e| e.to_string())?
+    };
+
+    let value: T = serde_json::from_slice(&content).map_err(|_| parse_error.to_string())?;
+    if legacy {
+        let _ = crypto_stream::seal_vault_file(path, vault_id, key, inner_name, &content);
+    }
+    Ok(Some(value))
 }
 
-/// Serializes, encrypts and writes a vault file. `inner_name` is the name stored inside it.
-fn write_vault_file<T: serde::Serialize>(
+/// Serializes, encrypts and writes a vault file in file format 8. `inner_name` is the name sealed
+/// inside it, and it is checked again when the file is read.
+pub(crate) fn write_vault_file<T: serde::Serialize>(
     path: &Path,
+    vault_id: &str,
     key: &keychain::MasterKey,
     inner_name: &str,
     value: &T,
 ) -> CommandResult<()> {
-    let json_data = serde_json::to_vec(value).map_err(|e| e.to_string())?;
-    let container =
-        crypto::encrypt_file_with_master_key(key, None, inner_name, &json_data, None, 3)
-            .map_err(|e| e.to_string())?;
-    container
-        .save(path_to_str(path)?)
+    let json_data = zeroize::Zeroizing::new(serde_json::to_vec(value).map_err(|e| e.to_string())?);
+    crypto_stream::seal_vault_file(path, vault_id, key, inner_name, &json_data)
         .map_err(|e| e.to_string())
 }
 
@@ -246,7 +267,9 @@ pub(crate) fn restore_keychain_to(dest: &Path, backup_path: &Path) -> Result<(),
     serde_json::from_slice::<keychain::KeychainStore>(&bytes)
         .map_err(|_| "This file doesn't look like a valid QRE keychain backup.".to_string())?;
 
-    fs::write(dest, &bytes).map_err(|e| format!("Failed to write keychain: {e}"))?;
+    // Written safely: a restore cut short must not leave half a keychain at the real path,
+    // because a keychain file that exists but is broken blocks both login and any new restore.
+    crate::utils::atomic_write(dest, &bytes).map_err(|e| format!("Failed to write keychain: {e}"))?;
     Ok(())
 }
 
@@ -472,8 +495,14 @@ pub fn load_password_vault(
 ) -> CommandResult<PasswordVault> {
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "passwords.qre")?;
-    Ok(read_vault_file(&path, &master_key, "Failed to parse vault")?
-        .unwrap_or_else(PasswordVault::new))
+    Ok(read_vault_file(
+        &path,
+        &vault_id,
+        &master_key,
+        "passwords.json",
+        "Failed to parse vault",
+    )?
+    .unwrap_or_else(PasswordVault::new))
 }
 
 #[tauri::command]
@@ -487,7 +516,7 @@ pub fn save_password_vault(
 
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "passwords.qre")?;
-    write_vault_file(&path, &master_key, "passwords.json", &vault)
+    write_vault_file(&path, &vault_id, &master_key, "passwords.json", &vault)
 }
 
 // ==========================================
@@ -502,8 +531,14 @@ pub fn load_notes_vault(
 ) -> CommandResult<NotesVault> {
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "notes.qre")?;
-    Ok(read_vault_file(&path, &master_key, "Failed to parse notes")?
-        .unwrap_or_else(NotesVault::new))
+    Ok(read_vault_file(
+        &path,
+        &vault_id,
+        &master_key,
+        "notes.json",
+        "Failed to parse notes",
+    )?
+    .unwrap_or_else(NotesVault::new))
 }
 
 #[tauri::command]
@@ -517,7 +552,7 @@ pub fn save_notes_vault(
 
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "notes.qre")?;
-    write_vault_file(&path, &master_key, "notes.json", &vault)
+    write_vault_file(&path, &vault_id, &master_key, "notes.json", &vault)
 }
 
 // ==========================================
@@ -532,10 +567,14 @@ pub fn load_bookmarks_vault(
 ) -> CommandResult<BookmarksVault> {
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "bookmarks.qre")?;
-    Ok(
-        read_vault_file(&path, &master_key, "Failed to parse bookmarks data")?
-            .unwrap_or_else(BookmarksVault::new),
-    )
+    Ok(read_vault_file(
+        &path,
+        &vault_id,
+        &master_key,
+        "bookmarks.json",
+        "Failed to parse bookmarks data",
+    )?
+    .unwrap_or_else(BookmarksVault::new))
 }
 
 #[tauri::command]
@@ -549,7 +588,7 @@ pub fn save_bookmarks_vault(
 
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "bookmarks.qre")?;
-    write_vault_file(&path, &master_key, "bookmarks.json", &vault)
+    write_vault_file(&path, &vault_id, &master_key, "bookmarks.json", &vault)
 }
 
 #[tauri::command]
@@ -584,8 +623,13 @@ pub fn load_clipboard_vault(
 ) -> CommandResult<ClipboardVault> {
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "clipboard.qre")?;
-    let Some(mut vault) =
-        read_vault_file::<ClipboardVault>(&path, &master_key, "Failed to parse clipboard data")?
+    let Some(mut vault) = read_vault_file::<ClipboardVault>(
+        &path,
+        &vault_id,
+        &master_key,
+        "clipboard.json",
+        "Failed to parse clipboard data",
+    )?
     else {
         return Ok(ClipboardVault::new());
     };
@@ -596,7 +640,7 @@ pub fn load_clipboard_vault(
         .as_millis() as i64;
 
     if drop_expired_clipboard_entries(&mut vault, now_ms, retention_hours) {
-        write_vault_file(&path, &master_key, "clipboard.json", &vault)?;
+        write_vault_file(&path, &vault_id, &master_key, "clipboard.json", &vault)?;
     }
 
     Ok(vault)
@@ -613,7 +657,7 @@ pub fn save_clipboard_vault(
 
     let master_key = session_key(&state, &vault_id)?;
     let path = vault_file_path(&app, &vault_id, "clipboard.qre")?;
-    write_vault_file(&path, &master_key, "clipboard.json", &vault)
+    write_vault_file(&path, &vault_id, &master_key, "clipboard.json", &vault)
 }
 
 #[tauri::command]

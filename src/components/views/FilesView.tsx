@@ -1,6 +1,6 @@
 // --- START OF FILE src/components/views/FilesView.tsx ---
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { platform } from "@tauri-apps/plugin-os";
@@ -43,8 +43,11 @@ import {
   ErrorModal,
   TimeLockModal,
 } from "../modals/AppModals";
+import { UpgradeFormatModal } from "../modals/UpgradeFormatModal";
+import { useToast } from "../ui";
+import { cancelNotice, isCancelledResult, summarizeCancel } from "../../utils/cancelled";
 
-import { BatchResult, FileEntry } from "../../types";
+import { BatchResult, ClipboardFiles, FileEntry } from "../../types";
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +68,7 @@ interface FilesViewProps {
 export function FilesView(props: FilesViewProps) {
   const fs = useFileSystem("dashboard");
   const crypto = useCrypto(fs.loadDir);
+  const toast = useToast();
 
   // A known upstream Tauri bug (tauri-apps/tauri#11705, #11708): a path containing an
   // unmatched bracket - picked via any file/folder dialog anywhere in the app, or dropped
@@ -120,10 +124,17 @@ export function FilesView(props: FilesViewProps) {
   const [pendingUnlockTargets, setPendingUnlockTargets] = useState<
     string[] | null
   >(null);
+  // What Copy and Cut put aside. `viaOs` is true when the same list also reached the system
+  // clipboard, so Explorer can paste it. If it did not (Android, Linux, a busy clipboard), the list
+  // here is the only copy and Paste uses it.
   const [fileClipboard, setFileClipboard] = useState<{
     paths: string[];
     isCut: boolean;
+    viaOs: boolean;
   } | null>(null);
+  // True when the system clipboard holds files that another program put there.
+  const [osHasFiles, setOsHasFiles] = useState(false);
+  const pasting = useRef(false);
   const [menuData, setMenuData] = useState<{
     x: number;
     y: number;
@@ -141,6 +152,15 @@ export function FilesView(props: FilesViewProps) {
   // ── Time-lock state ─────────────────────────────────────────────────────────
   /** Path of the plaintext file to time-lock (opens TimeLockModal). */
   const [timeLockTarget, setTimeLockTarget] = useState<string | null>(null);
+  /** The dialog that rewrites locked files made by older versions in the current format. */
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  /** The format version of each readable .qre file in this folder, by path. */
+  const [qreVersions, setQreVersions] = useState<Map<string, number>>(new Map());
+  /** True for a .qre file that an older version made (format 5, 6 or 7). */
+  const isOldFormat = (path: string) => {
+    const version = qreVersions.get(path) ?? 0;
+    return version >= 5 && version <= 7;
+  };
   /**
    * Map of .qre path → locked_until timestamp for files in the current directory.
    * Populated by loadTimeLockStatuses on every directory change.
@@ -151,6 +171,14 @@ export function FilesView(props: FilesViewProps) {
   );
 
   // ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────
+
+  // The shortcut handler below is set up once per selection, so it reaches the copy and paste
+  // functions through this box, which always holds the ones from the latest render.
+  const clipboardActions = useRef({
+    put: (_paths: string[], _isCut: boolean) => {},
+    paste: () => {},
+    forget: () => {},
+  });
 
   // Any dialog or menu on top of the list. Shortcuts such as Backspace (go up) and Delete must
   // not act on the list behind it.
@@ -181,10 +209,23 @@ export function FilesView(props: FilesViewProps) {
         e.preventDefault();
         setItemsToDelete(fs.selectedPaths);
       }
+      // Copy, cut and paste, as in Explorer. Text the user has marked on the page is left to the browser.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const key = e.key.toLowerCase();
+        const markedText = Boolean(window.getSelection()?.toString());
+        if ((key === "c" || key === "x") && fs.selectedPaths.length > 0 && !markedText) {
+          e.preventDefault();
+          clipboardActions.current.put(fs.selectedPaths, key === "x");
+        }
+        if (key === "v") {
+          e.preventDefault();
+          clipboardActions.current.paste();
+        }
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         fs.clearSelection();
-        setFileClipboard(null);
+        clipboardActions.current.forget();
       }
       if (e.key === "Backspace") fs.goUp();
       if (e.key === "Enter" && fs.selectedPaths.length === 1) {
@@ -221,12 +262,13 @@ export function FilesView(props: FilesViewProps) {
     );
     if (qreFiles.length === 0) {
       setTimeLockInfo(new Map());
+      setQreVersions(new Map());
       return;
     }
 
     const results = await Promise.allSettled(
       qreFiles.map((e) =>
-        invoke<{ is_locked: boolean; locked_until: number }>(
+        invoke<{ is_locked: boolean; locked_until: number; format_version?: number }>(
           "get_file_timelock_status",
           { qrePath: e.path },
         ),
@@ -235,12 +277,15 @@ export function FilesView(props: FilesViewProps) {
     if (isStale()) return;
 
     const info = new Map<string, number>();
+    const versions = new Map<string, number>();
     results.forEach((r, i) => {
-      if (r.status === "fulfilled" && r.value.is_locked) {
-        info.set(qreFiles[i].path, r.value.locked_until);
-      }
+      if (r.status !== "fulfilled") return;
+      if (r.value.is_locked) info.set(qreFiles[i].path, r.value.locked_until);
+      const version = r.value.format_version ?? 0;
+      if (version > 0) versions.set(qreFiles[i].path, version);
     });
     setTimeLockInfo(info);
+    setQreVersions(versions);
   }
 
   // ─── PORTABLE DRIVE HELPERS ───────────────────────────────────────────────
@@ -290,18 +335,54 @@ export function FilesView(props: FilesViewProps) {
         explicitEntropy,
       );
       if (results) {
-        const failures = results.filter((r) => !r.success);
-        if (failures.length > 0) {
+        const { cancelled, finished, problems } = summarizeCancel(results);
+        if (problems.length > 0) {
           crypto.setErrorMsg(
             "Locking failed for some items:\n" +
-              failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+              problems.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
           );
-        } else {
+        } else if (!cancelled) {
           props.onShowBackupReminder();
         }
+        if (cancelled) toast.info(cancelNotice(finished, "locked"));
       }
     }
   };
+
+  // ─── UPGRADING FILES MADE BY OLDER VERSIONS ───────────────────────────────
+
+  /**
+   * Rewrites these locked files in the current format. Returns a text about the files that
+   * could not be upgraded, or null if all went well, so a caller that has its own problems to
+   * report can show both in one message.
+   */
+  async function upgradeFiles(paths: string[]): Promise<string | null> {
+    if (paths.length === 0) return null;
+    const results = await crypto.runCrypto("relock_file", paths, fs.currentPath);
+    if (!results) return null; // runCrypto has already shown why
+    const { cancelled, problems: failures } = summarizeCancel(results);
+    const done = results.filter((r) => r.success && r.message.startsWith("Upgraded")).length;
+    if (cancelled) {
+      toast.info(cancelNotice(done, "upgraded"));
+    } else if (done > 0) {
+      toast.success(done === 1 ? "Upgraded 1 file to the current format." : `Upgraded ${done} files to the current format.`);
+    }
+    if (failures.length === 0) return null;
+    return (
+      "Upgrade failed for some items:\n" + failures.map((f) => `• ${f.name}: ${f.message}`).join("\n")
+    );
+  }
+
+  /**
+   * With the setting on, a file that was unlocked and was in an older format also gets its locked
+   * copy rewritten. Only files that unlocked are touched, so a wrong key file or a time-lock
+   * that has not ended never starts an upgrade. Results are in the order of the targets.
+   */
+  async function upgradeAfterUnlock(targets: string[], results: BatchResult[]): Promise<string | null> {
+    if (!crypto.upgradeWhenUnlocking) return null;
+    const unlockedOld = targets.filter((p, i) => isOldFormat(p) && results[i]?.success);
+    return upgradeFiles(unlockedOld);
+  }
 
   // ─── UNLOCK — handles time-locked files transparently ────────────────────
   //
@@ -328,7 +409,7 @@ export function FilesView(props: FilesViewProps) {
           (r) => !r.success && r.message.startsWith("TIME_LOCKED:"),
         );
         const realFailures = results.filter(
-          (r) => !r.success && !r.message.startsWith("TIME_LOCKED:"),
+          (r) => !r.success && !r.message.startsWith("TIME_LOCKED:") && !isCancelledResult(r),
         );
 
         // Show both kinds in one message; a second setErrorMsg would replace the first.
@@ -347,6 +428,13 @@ export function FilesView(props: FilesViewProps) {
               realFailures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
           );
         }
+        if (results.some(isCancelledResult)) {
+          // The user stopped the job, so nothing else is started after it.
+          toast.info(cancelNotice(results.filter((r) => r.success).length, "unlocked"));
+        } else {
+          const upgradeProblems = await upgradeAfterUnlock(targets, results);
+          if (upgradeProblems) sections.push(upgradeProblems);
+        }
         if (sections.length > 0) crypto.setErrorMsg(sections.join("\n\n"));
       }
 
@@ -355,7 +443,7 @@ export function FilesView(props: FilesViewProps) {
     },
     // See the matching comment on requestLock — `crypto` must be a dependency
     // so this callback always uses the current keyfile/crypto state.
-    [props.portable.drives, fs.currentPath, crypto],
+    [props.portable.drives, fs.currentPath, crypto, qreVersions],
   );
 
   const handleEntropyComplete = async (entropy: number[]) => {
@@ -383,6 +471,12 @@ export function FilesView(props: FilesViewProps) {
   function handleContextMenu(e: React.MouseEvent, path: string | null) {
     e.preventDefault();
     e.stopPropagation();
+    // Files copied in another program make Paste available too. Asked as the menu opens.
+    if (!path && !isAndroid) {
+      invoke<ClipboardFiles>("get_clipboard_files")
+        .then((os) => setOsHasFiles(Boolean(os?.supported) && os.paths.length > 0))
+        .catch(() => setOsHasFiles(false));
+    }
     setMenuData({
       x: e.clientX,
       y: e.clientY,
@@ -390,6 +484,94 @@ export function FilesView(props: FilesViewProps) {
       isBg: !path,
     });
   }
+
+  // ─── COPY, CUT AND PASTE ──────────────────────────────────────────────────
+
+  /**
+   * Copies or cuts these items: keeps the list here, and also puts it on the system clipboard so
+   * Explorer can paste it. Where the system clipboard cannot be used, the list here still works
+   * inside QRE.
+   */
+  async function putOnClipboard(paths: string[], isCut: boolean) {
+    setFileClipboard({ paths, isCut, viaOs: false });
+    if (isAndroid) return;
+    try {
+      await invoke("set_clipboard_files", { paths, cut: isCut });
+      setFileClipboard((now) => (now && now.paths === paths ? { ...now, viaOs: true } : now));
+    } catch (e) {
+      const why = String(e);
+      if (!why.includes("not supported")) {
+        toast.info(`Copied inside QRE only. Other programs cannot paste these files. ${why}`);
+      }
+    }
+  }
+
+  /** Drops the pending copy or cut, here and on the system clipboard. */
+  function forgetClipboard() {
+    const wasShared = fileClipboard?.viaOs;
+    setFileClipboard(null);
+    if (wasShared) invoke("clear_clipboard_files").catch(() => {});
+  }
+
+  /** What Paste would paste: the system clipboard if the copy went there, else the list kept here. */
+  async function whatToPaste(): Promise<{ paths: string[]; isCut: boolean } | null> {
+    const kept = fileClipboard;
+    if (isAndroid) return kept;
+    try {
+      const os = await invoke<ClipboardFiles>("get_clipboard_files");
+      if (!os?.supported) return kept;
+      // A copy that never reached the system clipboard is the only one there is.
+      if (kept && !kept.viaOs) return kept;
+      return os.paths.length > 0 ? { paths: os.paths, isCut: os.cut } : null;
+    } catch {
+      return kept;
+    }
+  }
+
+  async function pasteIntoCurrentFolder() {
+    if (pasting.current) return;
+    pasting.current = true;
+    try {
+      const source = await whatToPaste();
+      if (!source) {
+        setFileClipboard(null);
+        setOsHasFiles(false);
+        toast.info("There are no copied files to paste.");
+        return;
+      }
+      crypto.setErrorMsg(null);
+      const results = await invoke<BatchResult[]>("paste_items", {
+        sources: source.paths,
+        destDir: fs.currentPath,
+        isCut: source.isCut,
+      });
+      const failures = results.filter((r) => !r.success);
+      if (failures.length > 0) {
+        crypto.setErrorMsg(
+          "Paste failed:\n" +
+            failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
+        );
+      }
+      if (source.isCut) {
+        // The files were moved, so no list of their old names may stay behind.
+        setFileClipboard(null);
+        setOsHasFiles(false);
+        if (!isAndroid) invoke("clear_clipboard_files").catch(() => {});
+      }
+      fs.loadDir(fs.currentPath);
+    } catch (e) {
+      crypto.setErrorMsg(String(e));
+    } finally {
+      pasting.current = false;
+      crypto.clearProgress(500);
+    }
+  }
+
+  clipboardActions.current = {
+    put: putOnClipboard,
+    paste: pasteIntoCurrentFolder,
+    forget: forgetClipboard,
+  };
 
   async function handleContextAction(action: string) {
     if (!menuData) return;
@@ -400,30 +582,7 @@ export function FilesView(props: FilesViewProps) {
     if (action === "new_folder")
       return setInputModal({ mode: "create", path: fs.currentPath });
 
-    if (action === "paste" && fileClipboard) {
-      try {
-        crypto.setErrorMsg(null);
-        const results = await invoke<BatchResult[]>("paste_items", {
-          sources: fileClipboard.paths,
-          destDir: fs.currentPath,
-          isCut: fileClipboard.isCut,
-        });
-        const failures = results.filter((r) => !r.success);
-        if (failures.length > 0) {
-          crypto.setErrorMsg(
-            "Paste failed:\n" +
-              failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
-          );
-        }
-        if (fileClipboard.isCut) setFileClipboard(null);
-        fs.loadDir(fs.currentPath);
-      } catch (e) {
-        crypto.setErrorMsg(String(e));
-      } finally {
-        crypto.clearProgress(500);
-      }
-      return;
-    }
+    if (action === "paste") return pasteIntoCurrentFolder();
 
     if (isBg) return;
 
@@ -432,6 +591,10 @@ export function FilesView(props: FilesViewProps) {
 
     if (action === "lock") requestLock(targets);
     if (action === "unlock") requestUnlock(targets);
+    if (action === "upgrade") {
+      const problems = await upgradeFiles(targets.filter(isOldFormat));
+      if (problems) crypto.setErrorMsg(problems);
+    }
     if (action === "share")
       invoke("show_in_folder", { path }).catch((e) =>
         crypto.setErrorMsg(String(e)),
@@ -447,8 +610,8 @@ export function FilesView(props: FilesViewProps) {
       );
     if (action === "rename") setInputModal({ mode: "rename", path });
     if (action === "delete") setItemsToDelete(targets);
-    if (action === "cut") setFileClipboard({ paths: targets, isCut: true });
-    if (action === "copy") setFileClipboard({ paths: targets, isCut: false });
+    if (action === "cut") putOnClipboard(targets, true);
+    if (action === "copy") putOnClipboard(targets, false);
   }
 
   // ─── DELETE ───────────────────────────────────────────────────────────────
@@ -508,13 +671,21 @@ export function FilesView(props: FilesViewProps) {
       dir,
     );
     if (results) {
-      const failures = results.filter((r) => !r.success);
+      const failures = results.filter((r) => !r.success && !isCancelledResult(r));
+      const sections: string[] = [];
       if (failures.length > 0) {
-        crypto.setErrorMsg(
+        sections.push(
           "Unlock failed:\n" +
             failures.map((f) => `• ${f.name}: ${f.message}`).join("\n"),
         );
       }
+      if (results.some(isCancelledResult)) {
+        toast.info(cancelNotice(results.filter((r) => r.success).length, "unlocked"));
+      } else {
+        const upgradeProblems = await upgradeAfterUnlock(pendingUnlockTargets, results);
+        if (upgradeProblems) sections.push(upgradeProblems);
+      }
+      if (sections.length > 0) crypto.setErrorMsg(sections.join("\n\n"));
     }
     setPendingUnlockTargets(null);
   };
@@ -546,6 +717,11 @@ export function FilesView(props: FilesViewProps) {
         selectKeyFile={crypto.selectKeyFile}
         isParanoid={crypto.isParanoid}
         setIsParanoid={crypto.setIsParanoid}
+        verifyAfterLock={crypto.verifyAfterLock}
+        setVerifyAfterLock={crypto.setVerifyAfterLock}
+        onUpgradeFormat={() => setShowUpgrade(true)}
+        upgradeWhenUnlocking={crypto.upgradeWhenUnlocking}
+        setUpgradeWhenUnlocking={crypto.setUpgradeWhenUnlocking}
         compressionMode={crypto.compressionMode}
         onOpenCompression={() => setShowCompression(true)}
         portable={props.portable}
@@ -622,6 +798,7 @@ export function FilesView(props: FilesViewProps) {
           <DetailsPanel
             selected={selectedEntries}
             timeLockInfo={timeLockInfo}
+            formatVersions={qreVersions}
             onClose={() => setShowDetails(false)}
           />
         )}
@@ -699,7 +876,8 @@ export function FilesView(props: FilesViewProps) {
           isBackground={menuData.isBg}
           onClose={() => setMenuData(null)}
           onAction={handleContextAction}
-          canPaste={fileClipboard !== null}
+          canPaste={fileClipboard !== null || osHasFiles}
+          canUpgrade={isOldFormat(menuData.path)}
           onTimeLock={(path) => {
             setMenuData(null);
             setTimeLockTarget(path);
@@ -1022,10 +1200,22 @@ export function FilesView(props: FilesViewProps) {
         </div>
       )}
 
+      {/* UPGRADE OLD LOCKED FILES - before the processing overlay, so progress shows on top of it */}
+      {showUpgrade && (
+        <UpgradeFormatModal
+          folder={fs.currentPath}
+          keyFile={crypto.keyFile}
+          onRun={(paths) => crypto.runCrypto("relock_file", paths, fs.currentPath)}
+          onClose={() => setShowUpgrade(false)}
+        />
+      )}
+
       {!showEntropyModal && crypto.progress && (
         <ProcessingModal
           status={crypto.progress.status}
           percentage={crypto.progress.percentage}
+          onCancel={crypto.canCancel ? crypto.cancel : undefined}
+          cancelling={crypto.cancelling}
         />
       )}
 
@@ -1033,6 +1223,7 @@ export function FilesView(props: FilesViewProps) {
       {timeLockTarget && (
         <TimeLockModal
           filePath={timeLockTarget}
+          verifyAfter={crypto.verifyAfterLock}
           onClose={() => setTimeLockTarget(null)}
           onSuccess={(_msg) => {
             crypto.clearProgress(0);

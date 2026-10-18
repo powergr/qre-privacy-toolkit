@@ -1,18 +1,29 @@
 // --- START OF FILE crypto.rs ---
+//
+// The old container format (version 4). The app no longer writes it. Vault files are saved in file
+// format 8 (see `crypto_stream::seal_vault_file`), and this module only reads what earlier
+// versions wrote: vault files, which are rewritten in format 8 as soon as they are read, and the
+// rare locked file in this format, which is unlocked from the Files screen. The code that writes
+// the format is kept for tests only, so that they can make old files to read.
 
 use crate::keychain::MasterKey;
 use aes_gcm::{
     aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
+    Aes256Gcm,
 };
+#[cfg(test)]
+use aes_gcm::Nonce;
 use anyhow::{anyhow, Context, Result};
+#[cfg(test)]
 use rand::{rngs::SysRng, Rng, SeedableRng, TryRng};
+#[cfg(test)]
 use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+#[cfg(test)]
 const AES_NONCE_LEN: usize = 12;
 const VALIDATION_MAGIC: &[u8] = b"QRE_VALID";
 
@@ -45,19 +56,20 @@ pub struct EncryptedFileContainer {
     pub ciphertext: Vec<u8>,
 }
 
+#[cfg(test)]
 impl EncryptedFileContainer {
+    /// Saves the container. The old file at `path` stays whole until the new one is complete
+    /// and on disk (see `utils::atomic_write`), so a crash or a full disk while saving cannot
+    /// leave a vault empty or cut off. Every vault file (passwords, notes, bookmarks, clipboard)
+    /// is saved this way.
     pub fn save(&self, path: &str) -> Result<()> {
-        let file = std::fs::File::create(path).context("Failed to create output file")?;
-        let mut writer = std::io::BufWriter::new(file);
-        bincode::serialize_into(&mut writer, self).context("Failed to write encrypted file")?;
-        // Explicit flush: BufWriter's Drop impl silently discards any I/O
-        // error from its implicit final flush, so without this a late
-        // failure (e.g. disk full) would let save() report success on a
-        // truncated file.
-        writer.flush().context("Failed to flush encrypted file to disk")?;
-        Ok(())
+        let bytes = bincode::serialize(self).context("Failed to write encrypted file")?;
+        crate::utils::atomic_write(std::path::Path::new(path), &bytes)
+            .context("Failed to write encrypted file to disk")
     }
+}
 
+impl EncryptedFileContainer {
     pub fn load(path: &str) -> Result<Self> {
         let mut file = std::fs::File::open(path).context("Failed to open encrypted file")?;
 
@@ -104,6 +116,7 @@ fn derive_wrapping_key(
     Zeroizing::new(key)
 }
 
+#[cfg(test)]
 fn compress_data(data: &[u8], level: i32) -> Result<Vec<u8>> {
     zstd::stream::encode_all(Cursor::new(data), level)
         .map_err(|e| anyhow!("Compression failed: {}", e))
@@ -128,6 +141,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 // --- ENCRYPTION LOGIC ---
 // ==========================================
 
+#[cfg(test)]
 pub fn encrypt_file_with_master_key(
     master_key: &MasterKey,
     keyfile_bytes: Option<&[u8]>,

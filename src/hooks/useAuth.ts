@@ -85,6 +85,33 @@ export function useAuth() {
     }
   }, [showTimeoutWarning, countdown, performLogout]);
 
+  // The timers below are only a convenience. Phones pause them while the app is in the
+  // background, and a computer that sleeps stops them too, so a 14 minute timer can take hours
+  // to run out. The deadline is the real clock time the app must lock at; this compares it with
+  // the clock every time the timer fires and every time the app comes back to the front.
+  // `warningDue` is true when the warning timer itself has just fired.
+  const applyClock = useCallback(
+    (warningDue: boolean) => {
+      const deadline = idleDeadlineRef.current;
+      if (deadline <= 0) return;
+      const msLeft = deadline - Date.now();
+      if (msLeft <= 0) {
+        performLogout();
+        return;
+      }
+      if (warningDue || msLeft <= COUNTDOWN_SECONDS * 1000) {
+        // Whatever the countdown showed before, it now shows the time that is really left.
+        setCountdown(Math.min(COUNTDOWN_SECONDS, Math.max(1, Math.ceil(msLeft / 1000))));
+        if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+        triggerWarning();
+      }
+    },
+    [performLogout, triggerWarning],
+  );
+  const applyClockRef = useRef(applyClock);
+  applyClockRef.current = applyClock;
+
   const resetIdleTimer = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (countdownIntervalRef.current)
@@ -95,11 +122,11 @@ export function useAuth() {
       idleDeadlineRef.current =
         Date.now() + WARNING_DELAY_MS + COUNTDOWN_SECONDS * 1000;
       idleTimerRef.current = setTimeout(
-        () => triggerWarning(),
+        () => applyClockRef.current(true),
         WARNING_DELAY_MS,
       );
     }
-  }, [view, triggerWarning]);
+  }, [view]);
 
   useEffect(() => {
     if (view !== "dashboard") {
@@ -111,7 +138,20 @@ export function useAuth() {
     const handler = () => resetIdleTimer();
     events.forEach((event) => window.addEventListener(event, handler));
     resetIdleTimer();
+
+    // Coming back to the app (unlocking the phone, switching back, waking the computer) is the
+    // moment to find out how much time really passed.
+    const checkClock = () => applyClockRef.current(false);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") checkClock();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", checkClock);
+    window.addEventListener("pageshow", checkClock);
     return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", checkClock);
+      window.removeEventListener("pageshow", checkClock);
       events.forEach((event) => window.removeEventListener(event, handler));
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       if (countdownIntervalRef.current)

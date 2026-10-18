@@ -91,6 +91,7 @@ fn derive_kek(
     iter: u32,
     par: u32,
 ) -> Result<Zeroizing<[u8; 32]>> {
+    crate::keychain::check_kdf_limits(mem, iter, par)?;
     let params =
         Params::new(mem, iter, par, Some(32)).map_err(|e| anyhow!("KDF param error: {}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);

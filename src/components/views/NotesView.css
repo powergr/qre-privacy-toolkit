@@ -749,3 +749,57 @@
 .md-table tr:hover td {
   background: var(--highlight, #2a2a3e);
 }
+
+/* ── Header on narrow screens ──────────────────────────────────────────────────
+   The header wraps instead of scrolling sideways. On a phone it stacks: title, search, then
+   the controls, with New Note first and full width, and sorting, layout and import below. */
+.notes-header {
+  flex-wrap: wrap;
+}
+.notes-controls-row {
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .notes-view {
+    padding: var(--space-4);
+  }
+  .notes-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+  .notes-view .search-container {
+    flex: none;
+    width: 100%;
+    max-width: none;
+  }
+  .notes-controls-row {
+    height: auto;
+    width: 100%;
+  }
+  .notes-controls-row > .header-action-btn {
+    order: -1;
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .notes-controls-row > .custom-select-container {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+@media (pointer: coarse) {
+  .notes-icon-btn,
+  .view-toggle {
+    height: 44px;
+  }
+  .notes-icon-btn {
+    width: 44px;
+  }
+  .notes-view .search-container {
+    height: 44px;
+  }
+  .notes-controls-row > .header-action-btn {
+    min-height: 44px;
+  }
+}
