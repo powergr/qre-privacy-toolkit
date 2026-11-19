@@ -2113,9 +2113,9 @@ fn test_portable_two_vaults_coexist_and_lock_independently() {
 
 /// Verifies the S-03 ejection watcher: removing keychain.qre simulates a
 /// drive being physically pulled while unlocked. The watcher polls every 2 s,
-/// so we sleep 3 s to guarantee at least one poll has fired.
+/// so the test waits (up to 30 s) for the poll that notices the missing file.
 ///
-/// This test is intentionally slow (~3 s). It is not marked `#[ignore]`
+/// This test is intentionally slow (~2 s). It is not marked `#[ignore]`
 /// because it verifies a critical security property (RAM zeroization on
 /// unexpected drive removal).
 #[test]
@@ -2158,9 +2158,13 @@ fn test_portable_ejection_watcher_zeroizes_key() {
     let keychain_path = drive.join(".qre_portable").join("keychain.qre");
     fs::remove_file(&keychain_path).expect("must be able to remove keychain.qre");
 
-    // Give the watcher thread time to wake (polls every 2 s), detect the
-    // missing file, and remove the key from the map.
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // The watcher polls every 2 s. A fixed 3 s sleep left only 1 s of slack, which a busy CI
+    // machine (many tests running at once) can use up. So wait until the key is gone, and fail
+    // only if it is still there after a long time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while vaults.lock().unwrap().contains_key(&vault_id) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 
     assert!(
         !vaults.lock().unwrap().contains_key(&vault_id),

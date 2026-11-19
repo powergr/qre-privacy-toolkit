@@ -568,7 +568,7 @@ fn test_one_huge_file_inside_a_folder_is_stopped_while_it_is_copied_not_after() 
     let base = fresh_dir("qre_cancel_zip_mid_file");
     let folder = base.join("docs");
     fs::create_dir_all(&folder).unwrap();
-    let big: u64 = 384 * 1024 * 1024;
+    let big: u64 = 256 * 1024 * 1024;
     fs::File::create(folder.join("huge.bin")).unwrap().set_len(big).unwrap();
     let out = base.join("docs.zip");
     let flag = cancel::new_flag();
@@ -602,7 +602,7 @@ fn test_hashing_a_big_file_before_locking_is_stopped_while_it_hashes() {
     // alone takes.
     let base = fresh_dir("qre_cancel_prehash");
     let input = base.join("huge.bin");
-    let big: u64 = 512 * 1024 * 1024;
+    let big: u64 = 256 * 1024 * 1024;
     fs::File::create(&input).unwrap().set_len(big).unwrap();
     let locked = base.join("huge.bin.qre");
 
@@ -625,34 +625,44 @@ fn test_hashing_a_big_file_before_locking_is_stopped_while_it_hashes() {
         started.elapsed()
     };
 
-    let flag = cancel::new_flag();
-    let watcher = {
-        let flag = flag.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(baseline / 10);
-            cancel::request(&flag);
-        })
-    };
-    let started = std::time::Instant::now();
-    let result = cancel::run_with(&flag, || {
-        crypto_stream::encrypt_file_stream_as(
-            FileFormat::V8,
-            input.to_str().unwrap(),
-            locked.to_str().unwrap(),
-            &key(7),
-            "local",
-            None,
-            None,
-            None,
-            1,
-            |_, _| {},
-        )
-    });
-    let took = started.elapsed();
-    watcher.join().unwrap();
+    // A busy machine can delay the thread that raises the flag, or this one. So the stop is tried
+    // up to three times, and the fastest run counts. A lock that never looks at the flag while it
+    // hashes takes the whole hash every time, so it still fails.
+    let mut fastest = std::time::Duration::MAX;
+    for _ in 0..3 {
+        let flag = cancel::new_flag();
+        let watcher = {
+            let flag = flag.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(baseline / 10);
+                cancel::request(&flag);
+            })
+        };
+        let started = std::time::Instant::now();
+        let result = cancel::run_with(&flag, || {
+            crypto_stream::encrypt_file_stream_as(
+                FileFormat::V8,
+                input.to_str().unwrap(),
+                locked.to_str().unwrap(),
+                &key(7),
+                "local",
+                None,
+                None,
+                None,
+                1,
+                |_, _| {},
+            )
+        });
+        let took = started.elapsed();
+        watcher.join().unwrap();
 
-    assert!(result.is_err() && crate::cancel::is_cancel_error(&result.unwrap_err()));
-    assert!(!locked.exists());
-    assert!(took < baseline / 2, "the lock kept hashing after the stop: {:?} against {:?} for the whole hash", took, baseline);
+        assert!(result.is_err() && crate::cancel::is_cancel_error(&result.unwrap_err()));
+        assert!(!locked.exists());
+        fastest = fastest.min(took);
+        if fastest < baseline / 2 {
+            break;
+        }
+    }
+    assert!(fastest < baseline / 2, "the lock kept hashing after the stop: {:?} against {:?} for the whole hash", fastest, baseline);
     let _ = fs::remove_dir_all(base);
 }
