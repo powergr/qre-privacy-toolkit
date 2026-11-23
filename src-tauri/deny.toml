@@ -70,20 +70,7 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    # GTK3 bindings — transitive through tauri → wry → webkit2gtk, cannot update
-    "RUSTSEC-2024-0411",  # gdkwayland-sys
-    "RUSTSEC-2024-0412",  # gdk
-    "RUSTSEC-2024-0413",  # atk
-    "RUSTSEC-2024-0414",  # gdkx11-sys
-    "RUSTSEC-2024-0415",  # gtk
-    "RUSTSEC-2024-0416",  # atk-sys
-    "RUSTSEC-2024-0417",  # gdkx11
-    "RUSTSEC-2024-0418",  # gdk-sys
-    "RUSTSEC-2024-0419",  # gtk3-macros
-    "RUSTSEC-2024-0420",  # gtk-sys
-
     # transitive through tauri → tauri-utils → urlpattern, cannot update
-    "RUSTSEC-2025-0057",  # fxhash
     "RUSTSEC-2025-0075",  # unic-char-range
     "RUSTSEC-2025-0080",  # unic-common
     "RUSTSEC-2025-0081",  # unic-char-property
