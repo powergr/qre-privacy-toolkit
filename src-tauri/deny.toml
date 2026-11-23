@@ -69,32 +69,27 @@ feature-depth = 1
 #db-urls = ["https://github.com/rustsec/advisory-db"]
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
+# Which crates an "unmaintained" notice is reported for. "workspace" means only the crates this
+# project depends on directly. A crate that only arrives through another dependency (paste through
+# lofty, zbus through the opener plugin, proc-macro-error through gtk) is not ours to replace, and
+# there is no patched version to update it to, so it is not reported. This is the default of the
+# newer cargo-deny, written down so that an older one behaves the same. Real vulnerabilities are
+# reported for every crate in the tree, whatever this says.
+unmaintained = "workspace"
 ignore = [
-    # GTK3 bindings — transitive through tauri → wry → webkit2gtk, cannot update
-    "RUSTSEC-2024-0411",  # gdkwayland-sys
-    "RUSTSEC-2024-0412",  # gdk
-    "RUSTSEC-2024-0413",  # atk
-    "RUSTSEC-2024-0414",  # gdkx11-sys
-    "RUSTSEC-2024-0415",  # gtk
-    "RUSTSEC-2024-0416",  # atk-sys
-    "RUSTSEC-2024-0417",  # gdkx11
-    "RUSTSEC-2024-0418",  # gdk-sys
-    "RUSTSEC-2024-0419",  # gtk3-macros
-    "RUSTSEC-2024-0420",  # gtk-sys
+    # Both of these are direct dependencies, so they are reported. Neither is a known
+    # vulnerability, and neither has a patched version to move to.
 
-    # transitive through tauri → tauri-utils → urlpattern, cannot update
-    "RUSTSEC-2025-0057",  # fxhash
-    "RUSTSEC-2025-0075",  # unic-char-range
-    "RUSTSEC-2025-0080",  # unic-common
-    "RUSTSEC-2025-0081",  # unic-char-property
-    "RUSTSEC-2025-0098",  # unic-ucd-version
-    "RUSTSEC-2025-0100",  # unic-ucd-ident
+    # Used directly, only to read the current time. It also comes in through lopdf and trash, so
+    # removing our own use would not remove the crate from the tree.
+    "RUSTSEC-2026-0543",  # chrono
 
-    # transitive through gtk → gtk3-macros, cannot update
-    "RUSTSEC-2024-0370",  # proc-macro-error
-
-    # OWNED — migrate to bincode v2 to remove this
-    # "RUSTSEC-2025-0141",  # bincode 1.x — left commented as a reminder
+    # OWNED. The file formats are defined as the bincode 1 layout (FILE_FORMAT.md section 2),
+    # and 1.3.3 is the final release, so there is no patch to apply. Moving to another crate would
+    # change the file format. The layout is small and fully specified, so a hand-written reader
+    # and writer is the way out if this ever has to go. Tests with fixed sample files and an
+    # independent decoder guard the layout.
+    "RUSTSEC-2025-0141",  # bincode 1.x
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -122,6 +117,11 @@ allow = [
     "OpenSSL",
     "Zlib",
     "CC0-1.0",
+    # Permissive licenses of crates that are already in the dependency tree (all are in
+    # Cargo.lock today). Each can be used, copied and shipped in a binary with the notice kept.
+    "BSL-1.0",              # Boost: clipboard-win and error-code, through arboard (clipboard plugin)
+    "bzip2-1.0.6",          # libbz2-rs-sys, through zip's bzip2 support
+    "CDLA-Permissive-2.0",  # webpki-roots and webpki-root-certs: the Mozilla root certificate data
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

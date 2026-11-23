@@ -1,0 +1,54 @@
+name: Dependency audit
+
+# Checks src-tauri/Cargo.lock against the RustSec advisory database with cargo-deny, so that
+# a crate with a known vulnerability is noticed when it enters the lock file, not months later.
+#
+# It is a separate workflow from ci.yml on purpose. A new advisory can be published for code
+# that has not changed, and that must not turn the quick checks in ci.yml red on an unrelated
+# pull request. So it runs when the dependency files change, and once a week, because the
+# advisory database keeps growing.
+#
+# Only the advisories check runs. The licenses, bans and sources checks pass as well, so they
+# can be added by changing the command below. The duplicate versions the bans check lists are
+# only warnings. See deny.toml for how each ignored advisory was decided.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/deny.toml"
+      - ".github/workflows/dependency-audit.yml"
+  pull_request:
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/deny.toml"
+      - ".github/workflows/dependency-audit.yml"
+  schedule:
+    # Monday 05:17 UTC. full-tests.yml has its own weekly slot.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # --locked: fail instead of quietly changing Cargo.lock. This replaces the action's
+      # default argument, --all-features, because deny.toml sets the features it wants checked.
+      # --config is a global option, so it belongs in arguments, before the check command.
+      # The same command line was run locally with cargo-deny 0.22.0, the version of the action.
+      - name: check advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ./src-tauri/Cargo.toml
+          command: check advisories
+          arguments: --locked --config ./src-tauri/deny.toml
